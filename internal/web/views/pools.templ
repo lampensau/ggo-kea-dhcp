@@ -1,0 +1,77 @@
+package views
+
+// Pools is the dedicated DHCP-pool management page (the "DHCP Pools" nav tab). It
+// renders each active scope's pool plan with the live Utilization column, reusing
+// the same PoolPlan component as the wizard so the layout is identical. Each scope
+// also carries a per-scope WiFi-uplink toggle and the DHCP Options card; the network
+// chrome (preset / VLAN / CIDR) stays in the wizard.
+templ Pools(v PoolsView) {
+	@Base(v.Page) {
+		@PageHead("DHCP Pools", "Live address-pool allocation for the active profile - edits reload Kea without re-IPing the appliance.") {
+			@configMenu(v.Profiles, v.Page.CSRFToken, false)
+		}
+		if len(v.Scopes) == 0 {
+			<div class="card">
+				<div class="empty">
+					@Icon("layers")
+					<div class="empty-title">No active pools</div>
+					<div>Apply a profile to allocate DHCP pools.</div>
+				</div>
+			</div>
+		} else {
+			@dhcpOptNames()
+			@dhcpOptionsScript()
+			@poolUplinkScript()
+			for _, sp := range v.Scopes {
+				// Each scope's editor is its own form so a Datastar @post with
+				// contentType:'form' serializes only that scope's pool fields (the op
+				// endpoint targets the scope by index). csrf_token rides the form. The
+				// form never natively submits (every control is a Datastar @post button);
+				// onsubmit="return false" defuses an accidental Enter-in-a-field submit
+				// without an empty data-on:submit (which would trip Datastar ValueRequired).
+				<form class="card" onsubmit="return false">
+					<input type="hidden" name="csrf_token" value={ v.Page.CSRFToken }/>
+					<div class="pools-scope-head">
+						<h3 class="pools-scope-title">{ sp.Title }</h3>
+						@poolUplinkToggle(sp)
+					</div>
+					// Network services first, then the pool plan whose foot "Save changes"
+					// button serializes the whole form - so one Save persists both halves.
+					@ScopeServices(sp.Services)
+					@PoolPlan(sp.Plan)
+				</form>
+			}
+		}
+	}
+}
+
+// poolUplinkToggle is the per-scope "route through the WiFi uplink" toggle on /pools -
+// the SAME pill-button toggle the setup wizard uses (scope-toggle-btn). The
+// SSID/password are box-level (Settings); this only flips whether THIS scope advertises
+// the gateway + is NATed, saved with the scope's single "Save changes" (it backs a
+// hidden checkbox the save handler reads). When the box-level uplink is off the button
+// is disabled with a hint, since it would be inert.
+templ poolUplinkToggle(sp PoolScopeView) {
+	<div class="pool-uplink-row">
+		if sp.UplinkAvailable {
+			<button type="button" class={ "btn btn-sm scope-toggle-btn", templ.KV("is-on", sp.UplinkEnabled) } aria-pressed={ attrBool(sp.UplinkEnabled) } onclick="ggoPoolUplinkToggle(this)">@Icon("globe") Route via Uplink</button>
+			<input type="checkbox" name="uplink" value="true" hidden checked?={ sp.UplinkEnabled }/>
+		} else {
+			<button type="button" class="btn btn-sm scope-toggle-btn" disabled title="Enable WiFi Uplink in Settings first">@Icon("globe") Route via Uplink</button>
+		}
+	</div>
+}
+
+// poolUplinkScript flips the pill button + its hidden checkbox, framework-free (the
+// same toggle behaviour as the wizard's ggoToggleUplink). Rendered once per page.
+templ poolUplinkScript() {
+	<script>
+		window.ggoPoolUplinkToggle = function (btn) {
+			var cb = btn.parentElement.querySelector("input[name='uplink']");
+			if (!cb) return;
+			cb.checked = !cb.checked;
+			btn.classList.toggle("is-on", cb.checked);
+			btn.setAttribute("aria-pressed", cb.checked ? "true" : "false");
+		};
+	</script>
+}

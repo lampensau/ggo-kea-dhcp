@@ -1,0 +1,306 @@
+package views
+
+// Pinning binds switch-port identities (Option-82) to fixed reservations. Phase C:
+// Pinned and Learnable Ports are split into their own tables; a port is pinned
+// through a confirm <dialog> (which also lets you name it); empty states guide
+// the no-MariaDB and no-Option-82 cases. Labels are edited inline on either table.
+templ Pinning(v PinningView) {
+	@Base(v.Page) {
+		@PageHead("Port Pinning", "Bind a switch port (DHCP Option-82) to a fixed IP so its device always keeps the same address, regardless of MAC.")
+		// data-signals declares the two port-display signals once on this never-morphed
+		// wrapper (the live ticker only re-renders the table bodies inside). Each table
+		// has its OWN ASCII/hex signal so the operator can read one table in ASCII and
+		// the other in hex independently: $portHexPinned drives the Pinned table,
+		// $portHexLearnable the Learnable table.
+		<div data-signals="{portHexPinned: false, portHexLearnable: false}">
+			if v.Error != "" {
+				<div class="card">
+					<div class="alert alert-warn" role="alert">@Icon("triangle-alert") <span>{ v.Error }</span></div>
+				</div>
+			} else {
+				@pinnedCard(v)
+				@learnableCard(v)
+				@pinDialog(v.Page.CSRFToken)
+				@pinningScript()
+			}
+		</div>
+	}
+}
+
+// portDisplayToggle is the ASCII/hex segmented control. It binds the per-table
+// signal named by sig (portHexPinned / portHexLearnable, declared on the wrapper),
+// so each table's toggle is independent; placed in each table header so it is
+// visible right where the identities are.
+templ portDisplayToggle(sig string) {
+	<div class="port-display">
+		<span class="port-display-label">Port display</span>
+		<span class="info-tip" tabindex="0" role="note" aria-label="What the ASCII / hex toggle does">
+			@Icon("info")
+			<span class="info-tip-text">The Option-82 remote &amp; circuit IDs are raw bytes. <strong>ASCII</strong> decodes them as text (when printable - e.g. a switch name); <strong>hex</strong> shows the exact bytes. It only changes the display, not what is stored.</span>
+		</span>
+		<div class="seg" role="group" aria-label="Port identity display">
+			<button type="button" class="seg-btn" data-class={ "{'is-on': !$" + sig + "}" } data-attr:aria-pressed={ "!$" + sig + " ? 'true' : 'false'" } data-on:click={ "$" + sig + " = false" }>ASCII</button>
+			<button type="button" class="seg-btn" data-class={ "{'is-on': $" + sig + "}" } data-attr:aria-pressed={ "$" + sig + " ? 'true' : 'false'" } data-on:click={ "$" + sig + " = true" }>hex</button>
+		</div>
+	</div>
+}
+
+// pinnedCard lists bound reservations with their live status.
+templ pinnedCard(v PinningView) {
+	<div class="card">
+		@PinnedHead(v.Pinned)
+		// The table (and its #pinned-body tbody) is ALWAYS rendered so the live SSE region
+		// has a stable morph target even when empty - an empty-state row lives inside the
+		// tbody (mirroring #leases-body). Rendering the empty state OUTSIDE the tbody made
+		// the first live push hit a missing #pinned-body and get dropped (only a full reload
+		// fixed it).
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr><th class="col-status">Status</th><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>Label</th><th>IP</th><th>MAC</th><th>Hostname</th><th class="col-actions" aria-label="Actions"></th></tr>
+				</thead>
+				@PinnedBody(v.Pinned, v.Page.CSRFToken)
+			</table>
+		</div>
+	</div>
+}
+
+// learnableCard lists Option-82 ports seen live but not yet pinned.
+templ learnableCard(v PinningView) {
+	<div class="card">
+		@LearnableHead(v.Learnable)
+		// Always render the table + #learnable-body tbody (empty-state row lives inside it)
+		// so a newly-learned Option-82 port morphs in live - see pinnedCard.
+		<div class="table-scroll">
+			<table>
+				<thead>
+					<tr><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>IP</th><th>MAC</th><th>Hostname</th><th>Last&nbsp;active</th><th class="col-actions" aria-label="Actions"></th></tr>
+				</thead>
+				@LearnableBody(v.Learnable, v.Page.CSRFToken)
+			</table>
+		</div>
+	</div>
+}
+
+// PinnedHead / LearnableHead are the card heads (title + live count badge + ASCII/hex
+// toggle). They are their OWN live region (#pinned-head / #learnable-head), pushed
+// alongside the bodies, so the count and the toggle reconcile when a port morphs in or out
+// - the body alone is a live region, so without this the head count froze until reload.
+templ PinnedHead(pinned []PortRow) {
+	<div id="pinned-head" class="pool-head">
+		<h3 class="no-margin">
+			@Icon("pin") Pinned Ports <span class="count-badge">{ itoa(len(pinned)) }</span>
+			<span class="info-tip" tabindex="0" role="note" aria-label="What pinned ports are">
+				@Icon("info")
+				<span class="info-tip-text">Switch ports bound to a fixed IP. The device on a pinned port always gets the same address - even if its MAC changes - because the reservation is keyed to the port (Option-82), not the device.</span>
+			</span>
+		</h3>
+		if len(pinned) > 0 {
+			@portDisplayToggle("portHexPinned")
+		}
+	</div>
+}
+
+templ LearnableHead(learnable []PortRow) {
+	<div id="learnable-head" class="pool-head">
+		<h3 class="no-margin">
+			@Icon("ethernet-port") Learnable Ports <span class="count-badge">{ itoa(len(learnable)) }</span>
+			<span class="info-tip" tabindex="0" role="note" aria-label="When ports appear here">
+				@Icon("info")
+				<span class="info-tip-text">Ports seen live but not yet pinned. A port shows up here once the switch/relay forwards a DHCP lease tagged with Option-82 (RFC&nbsp;3046) for it. Pin one to give the device on it a fixed IP.</span>
+			</span>
+		</h3>
+		if len(learnable) > 0 {
+			@portDisplayToggle("portHexLearnable")
+		}
+	</div>
+}
+
+// portStatus shows whether a pinned port currently has a live lease, and for an
+// offline port how long ago it was last active (with a stale hint when long gone).
+// portStatus is a flat, space-tight status-dot + short label (matching the
+// network-health dots), not a pill. The DOT colour carries the state - green =
+// online, muted = offline, amber = offline & stale (>2wk) - so the text only needs
+// the recency: "Online" when live, otherwise just the last-active age ("3h ago").
+// The full meaning is in the hover/aria title. One line (the cell is nowrap) so the
+// column stays as narrow as the longest age, leaving room for the MAC.
+templ portStatus(p PortRow) {
+	if portOnline(p) {
+		<span class="port-stat" title="Online" aria-label="Online"><span class="status-dot ok"></span>Online</span>
+	} else if p.LastSeenText != "" {
+		if p.Stale {
+			<span class="port-stat" title={ "Last active " + p.LastSeenText + " - the device may be gone" } aria-label={ "Offline, stale, last active " + p.LastSeenText }><span class="status-dot warn"></span>{ p.LastSeenText }</span>
+		} else {
+			<span class="port-stat" title={ "Last active " + p.LastSeenText } aria-label={ "Offline, last active " + p.LastSeenText }><span class="status-dot"></span>{ p.LastSeenText }</span>
+		}
+	} else {
+		<span class="port-stat" title="Offline" aria-label="Offline"><span class="status-dot"></span>Offline</span>
+	}
+}
+
+// portIDCell renders one Option-82 sub-option: the ASCII view and the hex view, one
+// shown at a time per the per-table toggle signal sig, each with the full value in a
+// title tooltip so a truncated (ellipsised) cell can still be read in full.
+templ portIDCell(sig, ascii, hexStr string) {
+	<td class="mono port-id">
+		<span data-show={ "!$" + sig } title={ ascii }>{ orDash(ascii) }</span>
+		<span data-show={ "$" + sig } title={ hexStr }>{ orDash(hexStr) }</span>
+	</td>
+}
+
+// labelForm autosaves the port label: on Enter (form submit) or on blur, setting the
+// CSRF token from the page <meta> at event time because the live SSE re-render carries
+// an empty token. A native submit still works without JS (the rendered token is valid
+// on first paint, before any morph).
+templ labelForm(p PortRow, csrf string) {
+	<form class="inline-form" method="post" action="/pinning/label" data-on:submit__prevent={ labelSaveOnSubmit() }>
+		<input type="hidden" name="csrf_token" value={ csrf }/>
+		<input type="hidden" name="port_identity" value={ p.PortIdentity }/>
+		<input class="form-control form-control-sm label-input" name="label" value={ p.Label } placeholder="Add label" data-on:blur={ labelSaveOnBlur() } aria-label={ "Label for " + p.PortIdentity }/>
+	</form>
+}
+
+// unpinForm is a native POST (not a Datastar @post): the native pin form works
+// reliably, so unpin mirrors it - full POST + server redirect back to /pinning,
+// which refreshes the list so a removed pin actually disappears.
+//
+// The live SSE ticker re-renders #pinned-body and broadcasts it with an EMPTY CSRF
+// (a broadcast can't carry a per-session token), which wipes the form's token. So
+// the token is set from the page <meta> in onsubmit - at submit time, immune to any
+// prior morph (data-init is unreliable: it may not re-run after a morph).
+templ unpinForm(p PortRow, csrf string) {
+	<form method="post" action="/pinning/unpin" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;return confirm('Unpin this port? The device will fall back to a dynamic address on its next request.')">
+		<input type="hidden" name="csrf_token" value={ csrf }/>
+		<input type="hidden" name="port_identity" value={ p.PortIdentity }/>
+		<input type="hidden" name="subnet_id" value={ itoa(p.SubnetID) }/>
+		<button class="btn btn-sm btn-danger" type="submit">@Icon("pin-off") Unpin</button>
+	</form>
+}
+
+// pinButton opens the confirm dialog prefilled from the row's data attributes.
+templ pinButton(p PortRow) {
+	<button
+		type="button"
+		class="btn btn-sm btn-primary"
+		data-port={ p.PortIdentity }
+		data-portlabel={ portLabel(p) }
+		data-ip={ p.IPAddress }
+		data-subnet={ itoa(p.SubnetID) }
+		data-hostname={ p.Hostname }
+		data-label={ p.Label }
+		data-mac={ p.HWAddress }
+		onclick="ggoPinPrep(this)"
+	>@Icon("pin") Pin</button>
+}
+
+// pinDialog is the single confirm dialog; ggoPinPrep fills it from the clicked row.
+templ pinDialog(csrf string) {
+	<dialog id="pin-dialog" aria-labelledby="pin-dialog-title">
+		<form method="post" action="/pinning/pin">
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="port_identity"/>
+			<input type="hidden" name="subnet_id"/>
+			<input type="hidden" name="hostname"/>
+			<input type="hidden" name="mac"/>
+			<div class="dialog-head" id="pin-dialog-title">Pin Port</div>
+			<div class="dialog-body">
+				<p>Reserve a fixed address for the device on this port. It will keep this IP even if its MAC changes.</p>
+				<dl class="kv">
+					<dt>Port</dt><dd class="mono" id="pin-dialog-port"></dd>
+				</dl>
+				<div class="form-group">
+					<label class="form-label" for="pin-dialog-ip">IP address</label>
+					<input class="form-control mono" id="pin-dialog-ip" name="ip" placeholder="10.0.0.50" required/>
+				</div>
+				<div class="form-group no-margin">
+					<label class="form-label" for="pin-dialog-label">Label <span class="help-inline">(optional)</span></label>
+					<input class="form-control" id="pin-dialog-label" name="label" placeholder="e.g. FOH rack, Stage L"/>
+				</div>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-primary">@Icon("pin") Pin Port</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ PinnedBody(pinned []PortRow, csrf string) {
+	<tbody id="pinned-body">
+		if len(pinned) == 0 {
+			<tr>
+				<td colspan="8">
+					<div class="empty">
+						@Icon("pin")
+						<div class="empty-title">No pinned ports yet</div>
+						<div>Pin a learnable port below to give the device on it a fixed address.</div>
+					</div>
+				</td>
+			</tr>
+		}
+		for _, p := range pinned {
+			<tr>
+				<td class="col-status">@portStatus(p)</td>
+				@portIDCell("portHexPinned", p.RemoteID, p.RemoteIDHex)
+				@portIDCell("portHexPinned", p.CircuitID, p.CircuitIDHex)
+				<td>@labelForm(p, csrf)</td>
+				<td class="mono">{ p.IPAddress }</td>
+				<td class="mono col-mac">{ orDash(p.HWAddress) }</td>
+				<td>{ orDash(p.Hostname) }</td>
+				<td class="col-actions">@unpinForm(p, csrf)</td>
+			</tr>
+		}
+	</tbody>
+}
+
+// LearnableBody has no Label column: a label is a property of a pin (you name a port
+// when you pin it, in the pin dialog), not of a transient just-seen port. It does
+// carry a "Last active" age: every learnable row is a currently-held lease (so an
+// online/offline badge would always read "online"), but the renewal age tells the
+// operator which ports are freshest vs. about to lapse.
+templ LearnableBody(learnable []PortRow, csrf string) {
+	<tbody id="learnable-body">
+		if len(learnable) == 0 {
+			<tr>
+				<td colspan="7">
+					<div class="empty">
+						@Icon("ethernet-port")
+						<div class="empty-title">No unpinned ports seen</div>
+						<div>Ports appear here once the DHCP relay forwards Option-82 (RFC&nbsp;3046) leases.<br>If you expect ports here, check that the switch is inserting Option-82 on the relay uplink.</div>
+					</div>
+				</td>
+			</tr>
+		}
+		for _, p := range learnable {
+			<tr>
+				@portIDCell("portHexLearnable", p.RemoteID, p.RemoteIDHex)
+				@portIDCell("portHexLearnable", p.CircuitID, p.CircuitIDHex)
+				<td class="mono">{ p.IPAddress }</td>
+				<td class="mono">{ orDash(p.HWAddress) }</td>
+				<td>{ orDash(p.Hostname) }</td>
+				<td>{ orDash(p.LastSeenText) }</td>
+				<td class="col-actions">@pinButton(p)</td>
+			</tr>
+		}
+	</tbody>
+}
+
+templ pinningScript() {
+	<script>
+		window.ggoPinPrep = function (btn) {
+			var d = document.getElementById("pin-dialog");
+			d.querySelector("[name=port_identity]").value = btn.dataset.port || "";
+			d.querySelector("[name=ip]").value = btn.dataset.ip || ""; // prefilled, editable
+			d.querySelector("[name=subnet_id]").value = btn.dataset.subnet || "";
+			d.querySelector("[name=hostname]").value = btn.dataset.hostname || "";
+			d.querySelector("[name=mac]").value = btn.dataset.mac || "";
+			// Carry any label typed inline on the row (pinned table) into the dialog;
+			// fall back to the saved label. Learnable rows have no inline label field.
+			var row = btn.closest("tr");
+			var typed = row ? row.querySelector("input[name=label]") : null;
+			d.querySelector("[name=label]").value = (typed && typed.value) ? typed.value : (btn.dataset.label || "");
+			document.getElementById("pin-dialog-port").textContent = btn.dataset.portlabel || btn.dataset.port || "";
+			d.showModal();
+		};
+	</script>
+}

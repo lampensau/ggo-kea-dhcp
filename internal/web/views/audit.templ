@@ -1,0 +1,22 @@
+package views
+
+// The audit-log table now lives on the Diagnostics page (views/diagnostics.templ);
+// this file keeps only the shared auditResult badge used there.
+
+// auditResult colours a result by outcome, not by whether it equals "SUCCESS":
+// a backend coming back up is logged as "OK" and must read green, a degraded
+// (MariaDB down) "WARNING" must read amber, and an informational "INFO" event (a PTP
+// grandmaster sighting, a pool rebalance) must read neutral/accent - not the red that
+// every non-SUCCESS/WARNING result used to get. Only genuine failures stay red.
+templ auditResult(result string) {
+	switch result {
+		case "SUCCESS", "OK":
+			<span class="badge badge-ok">{ auditResultLabel(result) }</span>
+		case "WARNING", "WARN":
+			<span class="badge badge-warn">{ auditResultLabel(result) }</span>
+		case "INFO":
+			<span class="badge badge-info">{ auditResultLabel(result) }</span>
+		default:
+			<span class="badge badge-err">{ auditResultLabel(result) }</span>
+	}
+}

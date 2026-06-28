@@ -1,0 +1,54 @@
+[Unit]
+Description=Green-GO Kea DHCP appliance control plane
+Documentation=https://github.com/lampensau/ggo-kea-dhcp
+# Wants (not just After) so starting/booting the control plane PULLS UP Kea and
+# MariaDB even if the package postinstall's in-transaction `systemctl enable --now`
+# was a no-op (deb-systemd-invoke can fail mid-apt). Without this, the app boots,
+# seizes eth0, but Kea never runs -> 8004 refused -> no DHCP -> box is unreachable.
+After=network-online.target mariadb.service isc-kea-dhcp4-server.service
+Wants=network-online.target mariadb.service isc-kea-dhcp4-server.service
+
+[Service]
+Type=simple
+User=ggo-kea-dhcp
+Group=ggo-kea-dhcp
+# GGO_MARIADB_DSN carries the kea_user DSN with the randomly generated password
+# (written by the package postinstall - never hardcoded). The app reads it from
+# the environment (NOT a --flag) so the password never appears on the process
+# cmdline (readable via `ps`/proc by any local user). Optional ('-'): without it
+# the app starts and degrades gracefully without the reservation database.
+EnvironmentFile=-/etc/ggo-kea-dhcp/mariadb.env
+# Bind loopback only - Caddy terminates TLS on the LAN and reverse-proxies here.
+# Production paths: state under /var/lib/ggo-kea-dhcp, Kea config in /etc/kea.
+# Lease lifetime is operator-controlled in Settings (persisted in the appliance DB);
+# the binary default (1800s) is the fallback, so no --lease-lifetime flag here.
+ExecStart=/usr/bin/ggo-kea-dhcp \
+  --bind 127.0.0.1:8080 \
+  --db /var/lib/ggo-kea-dhcp/appliance.db \
+  --kea-secret /etc/kea/gui-secret \
+  --kea-conf-dir /etc/kea \
+  --snapshot-dir /var/lib/ggo-kea-dhcp/snapshots \
+  --log-level info
+Restart=on-failure
+RestartSec=3
+# Create/own /var/lib/ggo-kea-dhcp automatically.
+StateDirectory=ggo-kea-dhcp
+
+# Grant exactly the capabilities the app itself needs: AF_PACKET raw sockets for the
+# passive network monitor (CAP_NET_RAW) and the onboarding DNS bind on :53
+# (CAP_NET_BIND_SERVICE). AmbientCapabilities re-applies on every start, so it
+# replaces the old per-deploy `setcap` (which was lost on each binary copy).
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+# The control plane reconfigures host networking through sudo (nmcli/nft/ip/hostapd/
+# systemctl) and validates Kea via `sudo kea-dhcp4 -t`. Privilege escalation must
+# therefore remain available - deliberately NO NoNewPrivileges, NO ProtectSystem and
+# NO RestrictSUIDSGID, any of which would block the sudo helpers this appliance is
+# built around.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ggo-kea-dhcp
+
+[Install]
+WantedBy=multi-user.target

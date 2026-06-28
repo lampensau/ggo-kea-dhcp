@@ -1,0 +1,72 @@
+# nfpm spec for the ggo-kea-dhcp Debian package. Build with:
+#   make pi            # produces ./ggo-kea-dhcp-arm64 (the build artifact, referenced below)
+#   nfpm package --packager deb --config packaging/nfpm.yaml --target dist/
+# The release CI substitutes the version (sed s/0.0.0/<tag>/), or set GGO_VERSION.
+name: ggo-kea-dhcp
+arch: arm64
+platform: linux
+version: ${GGO_VERSION}
+section: net
+priority: optional
+maintainer: Green-GO <noreply@greengo>
+description: |
+  Green-GO Kea DHCP appliance control plane.
+  Web UI and control plane for a Kea DHCP4 server on a Raspberry Pi, managing
+  (port-based) DHCP for Green-GO intercom and other systems.
+vendor: Green-GO
+homepage: https://github.com/lampensau/ggo-kea-dhcp
+license: MIT
+
+# Hard dependencies resolved by `apt install ./ggo-kea-dhcp_*.deb`. The Kea repo
+# (ISC kea-3-0) and the Caddy repo must already be configured - the install.sh
+# bootstrap does that before installing this package.
+depends:
+  - isc-kea-dhcp4-server
+  - isc-kea-admin
+  - isc-kea-hooks
+  - isc-kea-mysql
+  - mariadb-server
+  - caddy
+  - network-manager
+  - sudo
+  - hostapd        # wlan0 SoftAP for FACTORY/ONBOARDING captive portal
+  - iw             # wifi link queries used alongside hostapd
+  - wireless-tools # iwlist fallback for the WiFi-uplink SSID scan
+  - avahi-daemon   # publishes ggo-kea-dhcp.local (mDNS) - the by-name reconnect path
+  - libnss-mdns    # lets the box itself resolve *.local (edits nsswitch.conf on install)
+
+# We ship our own /etc/caddy/Caddyfile, a path the `caddy` package also owns. An
+# unversioned Replaces lets dpkg hand that single file over to us *without* removing
+# caddy (no Conflicts) - the appliance owns the reverse-proxy config, caddy stays
+# installed as a dependency. This is the supported way two co-installed packages
+# legitimately provide the same file.
+replaces:
+  - caddy
+
+contents:
+  - src: ./ggo-kea-dhcp-arm64
+    dst: /usr/bin/ggo-kea-dhcp
+    file_info:
+      mode: 0755
+  - src: ./packaging/systemd/ggo-kea-dhcp.service
+    dst: /lib/systemd/system/ggo-kea-dhcp.service
+  - src: ./packaging/caddy/Caddyfile
+    dst: /etc/caddy/Caddyfile
+    type: config|noreplace
+  - src: ./packaging/sudoers/ggo-kea-dhcp
+    dst: /etc/sudoers.d/ggo-kea-dhcp
+    file_info:
+      mode: 0440
+  - src: ./packaging/apt/ggo-kea-pin
+    dst: /etc/apt/preferences.d/ggo-kea
+    type: config|noreplace
+
+scripts:
+  postinstall: ./packaging/scripts/postinstall.sh
+  preremove: ./packaging/scripts/preremove.sh
+  postremove: ./packaging/scripts/postremove.sh
+
+deb:
+  # Keep the maintainer-script config files (Caddyfile, apt pin) on upgrade.
+  fields:
+    Bugs: https://github.com/lampensau/ggo-kea-dhcp/issues

@@ -1,0 +1,32 @@
+# Enforce LF line endings in the repository AND in every working tree, on every
+# platform (including the Windows dev workstation). This is required because
+# `templ generate` copies a .templ's bytes verbatim into the generated
+# *_templ.go script string literals: a CRLF .templ produces `\r\n` escapes in the
+# generated Go, so the same sources regenerate differently on Windows vs Linux and
+# dirty the tree on every `make build`. `eol=lf` makes the checkout LF regardless
+# of core.autocrlf, so generation is deterministic.
+
+# Default: detect text, normalize to LF in the index, check out LF.
+* text=auto eol=lf
+
+# Be explicit for the source/asset types that feed code generation or embedding.
+*.go    text eol=lf
+*.templ text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.sql   text eol=lf
+*.md    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+Makefile text eol=lf
+
+# Binary assets: never touched by EOL normalization.
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.db    binary
+*.so    binary

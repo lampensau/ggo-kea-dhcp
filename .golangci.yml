@@ -1,0 +1,59 @@
+version: "2"
+
+# Default set (errcheck govet ineffassign staticcheck unused) plus a few
+# bug-catchers aimed at this codebase's leak-prone paths. Deliberately lean -
+# style/complexity linters are left off on purpose.
+linters:
+  enable:
+    - bodyclose      # HTTP response bodies left unclosed (kea control client)
+    - sqlclosecheck  # sql.Rows/Stmt left unclosed (db, backup, reservations)
+    - errorlint      # correct error wrapping: %w, errors.As/Is
+
+  exclusions:
+    presets:
+      - std-error-handling   # ignore unchecked stdlib Close()/Rollback()/Print() on cleanup
+    rules:
+      - path: _test\.go      # tests may skip error checks / manage their own rows
+        linters:
+          - errcheck
+          - sqlclosecheck
+
+      # Intentional single-%w: these wrap the sentinel / primary error with %w (so
+      # errors.Is works) and add the secondary error as context via %v. Go permits
+      # only one %w per Errorf, so errorlint's "use %w" can't apply to both.
+      - path: (internal/db/sqlite\.go|internal/web/reconciler\.go)
+        linters:
+          - errorlint
+        text: non-wrapping format verb
+
+      # Required manual close, not a leak: SQLite is pinned to one connection, so a
+      # cursor MUST be Close()d before the next query on the same handle runs - a
+      # deferred close would hold it open across that query and deadlock on the
+      # busy timeout. backup.go (three sequential reads) and pools.go (read then
+      # loadScopeConfigs) both rely on this; sqlclosecheck's "use defer" is wrong.
+      - path: (internal/web/backup\.go|internal/web/pools\.go)
+        linters:
+          - sqlclosecheck
+
+      # netmon/fuzz_test.go asserts parseDHCPOptions is deterministic by comparing a
+      # call to itself; SA4000 flags the identical operands. The fuzz harness's real
+      # value is catching panics on crafted input, which this still does.
+      - path: internal/netmon/fuzz_test\.go
+        linters:
+          - staticcheck
+        text: SA4000
+
+  settings:
+    staticcheck:
+      # golangci's default disables ST1000/1003/1016/1020/1021/1022; overriding
+      # `checks` re-enables them, so they are re-listed. -ST1005 is ours: error
+      # strings here are deliberately capitalized, user-facing UI sentences.
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -ST1005

@@ -1,0 +1,90 @@
+package views
+
+// ScopeServices renders the per-scope "DHCP Options" panel (a collapsed-by-default
+// card): an explicit gateway/DNS override (decoupled from the WiFi uplink), a
+// lease-lifetime override, and a free-form extra-DHCP-options table (ntp-servers,
+// domain-name, ...). One component serves both the /pools editor and the setup wizard
+// (FieldPrefix switch). It has no Save of its own - the enclosing form's single button
+// persists it (the /pools pool-plan "Save changes", or the wizard's /setup/apply).
+// Option names are NOT validated here - kea -t is the gate - so any valid Kea option
+// works, and a row with an empty name OR value is dropped (the option is not set).
+templ ScopeServices(v ScopeServicesView) {
+	<details class="scope-services" id={ v.RegionID }>
+		<summary class="scope-services-summary">
+			@Icon("settings") DHCP Options
+			<span class="scope-services-chev">@Icon("chevron-down")</span>
+		</summary>
+		<div class="scope-services-body">
+			<div class="grid-3">
+				<div class="form-group">
+					<label class="form-label">Gateway (optional)</label>
+					<input class="form-control mono" type="text" name={ svcField(v, "gateway") } value={ v.Gateway } placeholder={ v.DerivedGateway }/>
+				</div>
+				<div class="form-group">
+					<label class="form-label">DNS servers (optional)</label>
+					<input class="form-control mono" type="text" name={ svcField(v, "dns") } value={ v.DNS } placeholder="comma-separated IPs"/>
+				</div>
+				<div class="form-group">
+					<label class="form-label">Lease override (seconds)</label>
+					<input class="form-control" type="number" name={ svcField(v, "lease") } value={ v.Lease } placeholder={ itoa(v.GlobalLease) } min="30" max="86400"/>
+				</div>
+			</div>
+			@optionEditor(v.FieldPrefix, optionRows(v))
+		</div>
+	</details>
+}
+
+// optionEditor renders the shared "Extra DHCP options" name/value table + an "Add
+// option" button. Used by the per-scope DHCP Options card (FieldPrefix
+// "scopes[__ID__]") and the global /settings card (empty prefix). Empty rows are
+// dropped on save; the trailing blank row + Add button grow the list client-side.
+templ optionEditor(fieldPrefix string, rows []ScopeOptionRow) {
+	<div class="dhcp-opts">
+		<label class="form-label">Extra DHCP options</label>
+		<div class="svc-opt-rows">
+			for _, row := range rows {
+				<div class="grid-2 svc-opt-row">
+					<input class="form-control mono" type="text" name={ optField(fieldPrefix, "opt_name") } value={ row.Name } list="ggo-dhcp-opt-names" placeholder="option name (e.g. ntp-servers)"/>
+					<input class="form-control mono" type="text" name={ optField(fieldPrefix, "opt_data") } value={ row.Data } placeholder="value"/>
+				</div>
+			}
+		</div>
+		<div class="btn-row svc-opt-add">
+			<button type="button" class="btn btn-sm btn-secondary" onclick="ggoAddDhcpOption(this)">@Icon("plus") Add option</button>
+		</div>
+	</div>
+}
+
+// dhcpOptionsScript wires the framework-free "Add option" button: it clones the last
+// extra-option row (cleared) so the operator can add as many options as needed. Empty
+// rows are dropped on save, so a spare blank row is harmless. Rendered once per page
+// alongside dhcpOptNames.
+templ dhcpOptionsScript() {
+	<script>
+		window.ggoAddDhcpOption = function (btn) {
+			var box = btn.closest(".dhcp-opts");
+			var rows = box && box.querySelector(".svc-opt-rows");
+			if (!rows || !rows.lastElementChild) return;
+			var clone = rows.lastElementChild.cloneNode(true);
+			clone.querySelectorAll("input").forEach(function (i) { i.value = ""; });
+			rows.appendChild(clone);
+		};
+	</script>
+}
+
+// dhcpOptNames is the shared <datalist> of common Kea option names, rendered ONCE
+// per page (not per scope, to avoid duplicate ids) and referenced by every Network
+// Services option-name input. It is a convenience hint only - any valid Kea option
+// name can be typed; kea -t validates on save.
+templ dhcpOptNames() {
+	<datalist id="ggo-dhcp-opt-names">
+		<option value="ntp-servers"></option>
+		<option value="domain-name"></option>
+		<option value="domain-search"></option>
+		<option value="interface-mtu"></option>
+		<option value="tftp-server-name"></option>
+		<option value="boot-file-name"></option>
+		<option value="time-servers"></option>
+		<option value="time-offset"></option>
+	</datalist>
+}

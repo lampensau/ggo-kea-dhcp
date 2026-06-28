@@ -1,0 +1,29 @@
+# Green-GO Kea DHCP - Caddy reverse proxy.
+#
+# The appliance is reached by IP on a LAN with no public DNS, so we use Caddy's
+# local internal CA (self-signed) rather than ACME. on-demand issuance means the
+# certificate follows whatever address the browser uses - which matters because a
+# profile apply re-IPs the box, so the management IP changes and must not be
+# hardcoded here. Import Caddy's root CA on client machines to silence the browser
+# warning (see SETUP_PI.md): /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+#
+# Caddy faces the LAN on :443/:80; the app listens only on 127.0.0.1:8080.
+#
+# on-demand TLS needs NO 'ask'/'permission' endpoint here: Caddy waives the
+# permission check when a site uses ONLY the internal (self-signed) issuer, which
+# is our case. (The old 'interval'/'burst' rate-limit options were removed in
+# Caddy 2.x - reintroducing them makes the config fail to load.)
+
+:443 {
+	tls internal {
+		on_demand
+	}
+	# reverse_proxy sets X-Forwarded-Proto=https automatically; the app trusts it
+	# only from this loopback peer (see internal/web/auth.go) to set Secure cookies.
+	reverse_proxy 127.0.0.1:8080
+}
+
+# Send plain HTTP to HTTPS so http://<ip>/ still reaches the dashboard.
+:80 {
+	redir https://{host}{uri} permanent
+}

@@ -1,0 +1,92 @@
+package views
+
+// Factory - modern admin bootstrap: a real "secure this appliance" moment with
+// in-field password reveal, a live strength meter, and a requirement checklist
+// that lights up as you type; the submit only enables once the password is long
+// enough and the confirmation matches. Datastar drives all of it client-side;
+// server-side validation still applies and surfaces as a toast.
+templ Factory(v FactoryView) {
+	@Base(v.Page) {
+		<div class="auth-card" data-signals="{showpw: false, pw: '', pw2: ''}">
+			<div class="auth-brand">
+				<span class="brand-mark">@Icon("shield")</span>
+				<h1>Secure This Appliance</h1>
+				<p>Create the administrator account to begin setup</p>
+			</div>
+			<div class="card">
+				<form method="post" action="/factory/setup" data-on:submit="@post('/factory/setup', {contentType: 'form'})">
+					<div class="form-group">
+						<label class="form-label" for="username">Username</label>
+						<input class="form-control" id="username" name="username" type="text" autocomplete="username" required autofocus/>
+					</div>
+					<div class="form-group">
+						<label class="form-label" for="password">Password</label>
+						<div class="pw-field">
+							<input class="form-control" id="password" name="password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="pw" autocomplete="new-password" required/>
+							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show password" title="Show password">
+								<span data-show="!$showpw">@Icon("eye")</span>
+								<span data-show="$showpw">@Icon("eye-off")</span>
+							</button>
+						</div>
+						<div class="pw-meter-row" data-show="$pw.length > 0">
+							<div class="pw-meter">
+								<div
+									class="pw-meter-fill"
+									data-style="{width: (window.ggoStrength($pw) * 25) + '%'}"
+									data-class="{'is-weak': window.ggoStrength($pw) <= 1, 'is-fair': window.ggoStrength($pw) === 2, 'is-good': window.ggoStrength($pw) >= 3}"
+								></div>
+							</div>
+							<span class="pw-strength-label" data-text="window.ggoStrengthLabel($pw)"></span>
+						</div>
+					</div>
+					<div class="form-group">
+						<label class="form-label" for="confirm_password">Confirm password</label>
+						<div class="pw-field">
+							<input class="form-control" id="confirm_password" name="confirm_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="pw2" autocomplete="new-password" required aria-describedby="req-match" data-attr:aria-invalid="$pw2 !== '' && $pw !== $pw2"/>
+						</div>
+					</div>
+					<ul class="req-list">
+						<li class="req" data-class="{met: $pw.length >= 12}">
+							<span data-show="$pw.length >= 12">@Icon("circle-check")</span>
+							<span data-show="$pw.length < 12">@Icon("circle")</span>
+							At least 12 characters
+						</li>
+						<li class="req" id="req-match" data-class="{met: $pw2 !== '' && $pw === $pw2}">
+							<span data-show="$pw2 !== '' && $pw === $pw2">@Icon("circle-check")</span>
+							<span data-show="!($pw2 !== '' && $pw === $pw2)">@Icon("circle")</span>
+							Passwords match
+						</li>
+					</ul>
+					<button class="btn btn-primary btn-block mt-4" type="submit" data-attr:disabled="!($pw.length >= 12 && $pw === $pw2)">Create Administrator</button>
+				</form>
+			</div>
+			<div class="card">
+				<h3>@Icon("upload") Recover From Backup</h3>
+				<p class="help">Already have an appliance backup? Restore it to recover your administrators, profiles, and reservations without onboarding again.</p>
+				<button type="button" class="btn btn-secondary" onclick="document.getElementById('factory-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
+			</div>
+		</div>
+		@RestoreDialog("factory-restore-dlg", "/factory/restore", v.Page.CSRFToken, true)
+		@pwStrengthScript()
+		@restoreScript()
+	}
+}
+
+// pwStrengthScript exposes the password-strength helpers Datastar expressions
+// call (0–4 score + label), framework-free.
+templ pwStrengthScript() {
+	<script>
+		window.ggoStrength = function (pw) {
+			if (!pw) return 0;
+			var s = 0;
+			if (pw.length >= 8) s++;
+			if (pw.length >= 12) s++;
+			if (/[0-9]/.test(pw) && /[a-zA-Z]/.test(pw)) s++;
+			if (/[^a-zA-Z0-9]/.test(pw)) s++;
+			return Math.min(s, 4);
+		};
+		window.ggoStrengthLabel = function (pw) {
+			return ['', 'Weak', 'Fair', 'Good', 'Strong'][window.ggoStrength(pw)];
+		};
+	</script>
+}

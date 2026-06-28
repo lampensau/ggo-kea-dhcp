@@ -1,0 +1,386 @@
+package views
+
+// PoolPlan is the Datastar-driven pool editor, shared by the wizard and /pools.
+// Each entry renders as hidden form fields (FieldPrefix[i][...]) plus its visible
+// count/name inputs; each control is a Datastar @post (ppOp) that hits EditAction,
+// which applies the op server-side and PatchElements-morphs this region (#RegionID).
+// Value inputs re-render via op=recompute. With EditAction == "" it renders inert
+// (the static-render preview / a read-only context).
+templ PoolPlan(v PoolPlanView) {
+	<div id={ v.RegionID } class="pool-plan" data-mode={ v.Mode }>
+		<button type="button" class="pp-recompute-trigger" style="display: none;" { ppOn(v, "click", "recompute", -1, "")... } aria-hidden="true"></button>
+		<div class="pool-plan-head">
+			<div class="pool-plan-headings">
+				<div class="pool-plan-title">
+					<h5 class="no-margin">{ planHeading(v) }</h5>
+					<span class="pool-plan-sub mono">{ v.Subnet }</span>
+				</div>
+				<p class="help pool-plan-help">
+					if v.Mode == "advanced" {
+						Exact sizes - no headroom is added. Reorder or edit a start address; overlaps repack automatically, and anything that can't fit is flagged.
+					} else {
+						Set each pool's size in addresses (its floor is the smallest allowed) - or pick a size preset to start. Elastic pools share whatever is left.
+					}
+				</p>
+			</div>
+			<div class="seg" role="group" aria-label="Sizing mode">
+				<button type="button" class={ "seg-btn", templ.KV("is-on", v.Mode != "advanced") } aria-pressed={ boolAttr(v.Mode != "advanced") } { ppOn(v, "click", "mode", -1, "simple")... }>Simple</button>
+				<button type="button" class={ "seg-btn", templ.KV("is-on", v.Mode == "advanced") } aria-pressed={ boolAttr(v.Mode == "advanced") } { ppOn(v, "click", "mode", -1, "advanced")... }>Advanced</button>
+			</div>
+		</div>
+		if v.SizePresets {
+			<div class="pp-sizes" role="radiogroup" aria-label="Size preset">
+				<span class="pp-sizes-label">Size</span>
+				// Small/Medium/Large are Green-GO device-count forecasts - meaningless for a
+				// dante/sacn/generic scope (one dynamic pool), so those presets show Flat +
+				// Custom only.
+				if v.Greengo {
+					@sizeTab(v, "small", "Small", "~25")
+					@sizeTab(v, "medium", "Medium", "~120")
+					@sizeTab(v, "large", "Large", "~300")
+				}
+				@sizeTab(v, "flat", "Flat", "1 pool")
+				@sizeTab(v, "custom", "Custom", "")
+			</div>
+		}
+		// The header sits in its own non-scrolling wrap and the rows in a scrolling
+		// body, so the scrollbar starts BELOW the header (not alongside it).
+		// scrollbar-gutter:stable on both keeps their columns aligned despite the
+		// body's scrollbar.
+		<div class={ "pp-grid", templ.KV("pp-grid-util", v.ShowUtil) } role="table" aria-label="Pool plan">
+			<div class="pp-head-wrap">
+				<div class="pp-row pp-header" role="row">
+					<span class="pp-reorder" role="columnheader"></span>
+					<span class="pp-name" role="columnheader">Pool</span>
+					<span class="pp-type" role="columnheader">Type</span>
+					<span class="pp-size" role="columnheader">Devices / size</span>
+					<span class="pp-range" role="columnheader">Range</span>
+					if v.ShowUtil {
+						<span class="pp-util" role="columnheader">Utilization</span>
+					}
+					<span class="pp-actions" role="columnheader"></span>
+				</div>
+			</div>
+			<div class="pp-body">
+				for i, p := range v.Rows {
+					if !p.Reserve || v.Mode == "advanced" {
+						@poolPlanRow(v, i, p)
+					} else {
+						// Reserve rows are hidden from the Simple table but their plan
+						// fields MUST still post, or parsePoolFields hits a gap at this
+						// index and the server reconstructs a truncated plan (every op
+						// then operates on the wrong/empty plan).
+						@poolHiddenRow(v, i, p)
+					}
+				}
+			</div>
+		</div>
+		<div class="pool-plan-foot">
+			<span class="help pp-stats">{ reserveSummary(v) } · { itoa(v.FreeIPs) } { pluralize(v.FreeIPs, "address", "addresses") } free</span>
+			<div class="btn-row">
+				if v.Mode == "advanced" {
+					<button type="button" class="btn btn-sm btn-secondary" { ppOn(v, "click", "autofill", -1, "")... }>@Icon("refresh-cw") Auto-Fill</button>
+				}
+				if v.Greengo && v.EditAction != "" {
+					@addPoolMenu(v)
+				} else {
+					<button type="button" class="btn btn-sm btn-secondary" { ppOn(v, "click", "add-pool", -1, "")... }>@Icon("plus") Add Pool</button>
+				}
+				if v.Mode == "advanced" {
+					<button type="button" class="btn btn-sm btn-secondary" { ppOn(v, "click", "add-reserve", -1, "")... }>@Icon("square-dashed") Add Reserve</button>
+				}
+				if v.SaveAction != "" {
+					// $busy is the Datastar fetch indicator (true while the @post is in flight).
+					// data-class toggles the .is-busy spinner (data-attr can't: a boolean signal
+					// doesn't serialize to the string "true"); disabled is a real boolean attr so
+					// data-attr handles it. Page-global signal: every scope's Save disables while
+					// one saves - fine, you don't edit mid-save.
+					<button type="button" class="btn btn-sm btn-primary" data-on:click={ "@post('" + v.SaveAction + "', {contentType:'form'})" } data-indicator:busy data-attr:disabled="$busy" data-class:is-busy="$busy">@Icon("check") Save Changes</button>
+				}
+			</div>
+		</div>
+		if v.Issue != "" {
+			<div class="alert alert-err pool-plan-issue" role="alert">@Icon("triangle-alert") <span>{ v.Issue }</span></div>
+		}
+	</div>
+}
+
+// sizeTab is one size preset (a single-select radio that re-seeds the plan).
+templ sizeTab(v PoolPlanView, size, label, sub string) {
+	<button type="button" class={ "pp-size-tab", templ.KV("is-active", v.ActiveSize == size || (size == "custom" && v.ActiveSize == "")) } role="radio" aria-checked={ boolAttr(v.ActiveSize == size) } { ppOn(v, "click", "size", -1, size)... }>
+		{ label }
+		if sub != "" {
+			<span>{ sub }</span>
+		}
+	</button>
+}
+
+templ poolPlanRow(v PoolPlanView, idx int, p PoolPlanRow) {
+	<div class={ "pp-row", templ.KV("pp-elastic", p.Elastic && !p.Reserve), templ.KV("pp-reserve", p.Reserve), templ.KV("pp-error", p.Err) } role="row" data-idx={ itoa(idx) }>
+		// Hidden fields carry the entry's non-input state so the server reconstructs
+		// the plan from the form on every op.
+		@poolHidden(v, idx, "kind", poolKindOf(p))
+		@poolHidden(v, idx, "class", p.Key)
+		@poolHidden(v, idx, "weight", itoa(p.Weight))
+		@poolHidden(v, idx, "icon", p.Icon)
+		@poolHidden(v, idx, "vendors", vendorsField(p))
+		// Both modes persist "explicit" sizing: the visible number is the pool's
+		// exact address size (Simple) or count/size + range (Advanced). "auto"
+		// sizing only survives in a freshly-seeded plan until the first edit.
+		@poolHidden(v, idx, "sizing", "explicit")
+		<span class="pp-reorder" role="cell">
+			<span class="pp-grip" draggable={ dragAttr(v) } aria-hidden="true" title="Drag to reorder">@Icon("grip-vertical")</span>
+			<span class="pp-move-col">
+				<button type="button" class="pp-move" data-dir="up" aria-label="Move up" { ppOn(v, "click", "move", idx, "up")... }>@Icon("chevron-up")</button>
+				<button type="button" class="pp-move" data-dir="down" aria-label="Move down" { ppOn(v, "click", "move", idx, "down")... }>@Icon("chevron-down")</button>
+			</span>
+		</span>
+		<span class="pp-name" role="cell">
+			<span class="pp-icon">
+				if p.Reserve {
+					@Icon("square-dashed")
+				} else if p.IconEditable && v.EditAction != "" {
+					@iconPicker(v, idx, p)
+				} else {
+					@DeviceIcon(p.Icon)
+				}
+			</span>
+			<span class="pp-name-text">
+				<input class="form-control form-control-sm pp-name-input" value={ p.Name } name={ ppField(v.FieldPrefix, idx, "name") } { ppOn(v, "change", "recompute", -1, "")... } aria-label="Pool name"/>
+				if p.Reserve {
+					<span class="pp-codes pp-anymatch">Reserved - not handed out by DHCP</span>
+				} else {
+					@poolClassifier(v, idx, p)
+				}
+			</span>
+		</span>
+		<span class="pp-type" role="cell">
+			if p.Reserve {
+				<span class="pp-reserved-tag">@Icon("square-dashed") Reserve</span>
+			} else {
+				<button type="button" class={ "pp-policy-toggle", templ.KV("is-elastic", p.Elastic) } aria-pressed={ boolAttr(p.Elastic) } { ppOn(v, "click", "toggle", idx, "")... } title="Switch between Fixed (a set size) and Elastic (grows to fill leftover space)">
+					if p.Elastic {
+						@Icon("move-horizontal") <span>Elastic</span>
+					} else {
+						@Icon("lock") <span>Fixed</span>
+					}
+				</button>
+			}
+		</span>
+		<span class="pp-size" role="cell">
+			if p.Elastic && !p.Reserve {
+				// Elastic rows show weight, not count, but carry count hidden so a
+				// Fixed->Elastic->Fixed toggle preserves the device count instead of
+				// resetting it to the floor. (weight is symmetrically hidden above.)
+				@poolHidden(v, idx, "count", itoa(p.Count))
+				<span class="pp-weight">
+					<button type="button" class="pp-step" aria-label="Less weight" { ppOn(v, "click", "weight", idx, "-1")... }>@Icon("minus")</button>
+					<span class="pp-weight-val mono" aria-label="Weight">×{ itoa(p.Weight) }</span>
+					<button type="button" class="pp-step" aria-label="More weight" { ppOn(v, "click", "weight", idx, "1")... }>@Icon("plus")</button>
+				</span>
+			} else {
+				<span class="pp-count">
+					// min is the pool's floor: the count spinner can't step below it, and
+					// a recompute clamps a typed-in value back up (count < floor -> floor).
+					// No "-> derived size" hint - the padded capacity is shown by the Range
+					// cell's IP count, not as a second number competing with the count.
+					<input class="form-control form-control-sm pp-count-input" type="number" min={ itoa(p.Floor) } value={ itoa(p.Count) } name={ ppField(v.FieldPrefix, idx, "count") } { ppOn(v, "change", "recompute", -1, "")... } aria-label="Device count"/>
+				</span>
+			}
+		</span>
+		<span class="pp-range" role="cell">
+			if !p.Elastic && v.Mode == "advanced" {
+				<div class="pp-host">
+					<span class="pp-prefix mono">{ p.Prefix }</span>
+					<input class={ "form-control form-control-sm mono pp-octet", templ.KV("pp-range-err", p.Err) } value={ p.Start } placeholder={ p.StartPlaceholder } name={ ppField(v.FieldPrefix, idx, "range_start") } { ppOn(v, "change", "set-range", idx, "")... } aria-label="Range start host part"/>
+					<span class="pp-dash">&ndash;</span>
+					<input class={ "form-control form-control-sm mono pp-octet", templ.KV("pp-range-err", p.Err) } value={ p.End } placeholder={ p.EndPlaceholder } name={ ppField(v.FieldPrefix, idx, "range_end") } { ppOn(v, "change", "set-range", idx, "")... } aria-label="Range end host part"/>
+				</div>
+				if p.Size > 0 {
+					<span class="pp-derived mono">{ itoa(p.Size) } IPs</span>
+				}
+			} else {
+				// Elastic, or Fixed/Reserve in Simple mode: read-only range + IP count.
+				// (Simple-mode Fixed floors the size to the class minimum, so the IP
+				// count can exceed the device count - surfacing it makes that legible.)
+				<span class="pp-range-elastic">
+					<span class="mono pp-range-text">{ p.Range }</span>
+					if !p.Reserve && p.Size > 0 {
+						<span class="pp-derived mono">{ itoa(p.Size) } IPs</span>
+					}
+				</span>
+				// Post only the EXPLICIT pin (empty for auto pools), never the computed
+				// display range - else it round-trips as a spurious pin and LayoutPools
+				// can't reflow when a pool is added/removed/reordered.
+				if !p.Elastic {
+					@poolHidden(v, idx, "range", p.RangePin)
+				}
+			}
+		</span>
+		if v.ShowUtil {
+			<span class="pp-util" role="cell">
+				if p.Reserve {
+					<span class="pp-util-na mono">—</span>
+				} else {
+					@poolPlanMeter(p)
+				}
+			</span>
+		}
+		<span class={ "pp-actions", templ.KV("pp-has-remove", !p.Locked) } role="cell">
+			<span class="pp-actions-reveal">
+				if !p.Locked {
+					<button type="button" class="pp-remove" aria-label="Remove" title="Remove" { ppOn(v, "click", "remove", idx, "")... }>@Icon("trash-2")</button>
+				}
+			</span>
+		</span>
+	</div>
+}
+
+// poolHiddenRow renders ONLY a row's hidden plan fields - used for a row whose
+// visible cells are suppressed (a Reserve row in Simple mode). Keeping the field
+// indices contiguous is what lets the server reconstruct the full plan from the
+// posted form on every op.
+templ poolHiddenRow(v PoolPlanView, idx int, p PoolPlanRow) {
+	@poolHidden(v, idx, "kind", poolKindOf(p))
+	@poolHidden(v, idx, "class", p.Key)
+	@poolHidden(v, idx, "name", p.Name)
+	@poolHidden(v, idx, "weight", itoa(p.Weight))
+	@poolHidden(v, idx, "count", itoa(p.Count))
+	@poolHidden(v, idx, "range", p.RangePin)
+	@poolHidden(v, idx, "icon", p.Icon)
+	@poolHidden(v, idx, "vendors", vendorsField(p))
+	@poolHidden(v, idx, "sizing", "explicit")
+}
+
+// poolHidden renders a hidden plan field (omitted when there is no FieldPrefix).
+templ poolHidden(v PoolPlanView, idx int, field, value string) {
+	if v.FieldPrefix != "" {
+		<input type="hidden" name={ ppField(v.FieldPrefix, idx, field) } value={ value }/>
+	}
+}
+
+// poolKindOf maps a row's flags to its persisted kind string.
+func poolKindOf(p PoolPlanRow) string {
+	if p.Reserve {
+		return PoolKindReserve
+	}
+	if p.Elastic {
+		return PoolKindElastic
+	}
+	return PoolKindFixed
+}
+
+templ poolPlanMeter(p PoolPlanRow) {
+	<span class="pp-meter-cell" title={ itoa(p.Used) + " / " + itoa(p.Capacity) + " in use" }>
+		<span class={ "meter", meterClass(p.Percent) } role="progressbar" aria-valuenow={ itoa(p.Percent) } aria-valuemin="0" aria-valuemax="100">
+			<span style={ "width:" + itoa(clampPct(p.Percent)) + "%" }></span>
+		</span>
+		<span class="mono pp-meter-pct">{ itoa(p.Percent) }%</span>
+	</span>
+}
+
+templ poolClassifier(v PoolPlanView, idx int, p PoolPlanRow) {
+	<span class="pp-classifier">
+		if p.Codes != "" {
+			// Built-in Green-GO device class - fixed routing, shown read-only.
+			<span class="pp-codes">{ p.Codes }</span>
+		} else if p.IconEditable && v.EditAction != "" {
+			// Custom / non-Green-GO pool: removable vendor chips + an Add-vendor picker.
+			for _, oui := range p.VendorList {
+				<span class="badge-class pp-vendor-chip mono">
+					{ oui }
+					<button type="button" class="pp-chip-x" aria-label={ "Remove " + oui } { ppOn(v, "click", "remove-vendor", idx, oui)... }>×</button>
+				</span>
+			}
+			@vendorPicker(v, idx)
+		} else if p.Vendor != "" {
+			<span class="badge-class pp-vendor">{ p.Vendor }</span>
+		} else {
+			<span class="pp-codes pp-anymatch">Any unmatched device</span>
+		}
+	</span>
+}
+
+// iconPicker lets a custom pool pick a device glyph. The summary shows the current
+// icon; the grid posts set-icon. No data-preserve-attr - one pick closes it (the
+// op-morph re-renders without the open attr), which is the right single-select feel.
+templ iconPicker(v PoolPlanView, idx int, p PoolPlanRow) {
+	<details class="pp-icon-picker">
+		<summary class="pp-icon-btn" title="Choose an icon" aria-label="Choose an icon">@DeviceIcon(p.Icon)</summary>
+		<div class="pp-icon-grid">
+			for _, ic := range deviceIcons() {
+				<button type="button" class={ "pp-icon-opt", templ.KV("is-sel", ic.Key == p.Icon) } title={ ic.Label } aria-label={ ic.Label } { ppOn(v, "click", "set-icon", idx, ic.Key)... }>@DeviceIcon(ic.Key)</button>
+			}
+		</div>
+	</details>
+}
+
+// vendorPicker is the Add-OUI popover: a custom 3-byte OUI field. The curated
+// vendor list was removed - in practice Green-GO and third-party gear use a wide,
+// unpredictable spread of NIC OUIs (Intel, Realtek, ...), so a fixed shortlist was
+// more misleading than helpful; the operator enters the exact OUI they observe.
+// data-preserve-attr="open" keeps it open across the op-morph.
+templ vendorPicker(v PoolPlanView, idx int) {
+	<details class="pp-vendor-picker" data-preserve-attr="open">
+		<summary class="pp-vendor-add">@Icon("plus") Add Vendor OUI</summary>
+		<div class="pp-vendor-menu" data-signals="{coui1: '', coui2: '', coui3: ''}">
+			<div class="pp-vendor-custom">
+				<input class="form-control form-control-sm mono pp-oui-octet" data-bind="coui1" maxlength="2" placeholder="00" oninput="if(this.value.length===2) this.closest('.pp-vendor-custom').querySelectorAll('.pp-oui-octet')[1].focus()" aria-label="OUI Byte 1" title="First byte"/>
+				<span class="pp-oui-dot">:</span>
+				<input class="form-control form-control-sm mono pp-oui-octet" data-bind="coui2" maxlength="2" placeholder="1d" oninput="if(this.value.length===2) this.closest('.pp-vendor-custom').querySelectorAll('.pp-oui-octet')[2].focus()" aria-label="OUI Byte 2" title="Second byte"/>
+				<span class="pp-oui-dot">:</span>
+				<input class="form-control form-control-sm mono pp-oui-octet" data-bind="coui3" maxlength="2" placeholder="c1" aria-label="OUI Byte 3" title="Third byte"/>
+				<button type="button" class="btn btn-sm btn-secondary" data-on:click={ ppCustomVendor(v, idx) }>Add</button>
+			</div>
+		</div>
+	</details>
+}
+
+// addPoolMenu is the greengo Add-pool dropdown: the known Green-GO device classes
+// first (each adds a class-routed, device-count-sized pool), then a divider, then a
+// "Generic Pool" that adds the same plain OUI-routed pool the non-greengo button
+// makes. A single button/menu so there is one Add-pool affordance, not two. The
+// region morph on each op closes the <details> (no data-preserve-attr), which is the
+// right single-pick feel. The shared base.templ toggle script flips it open-up when
+// it would clip at the editor foot.
+templ addPoolMenu(v PoolPlanView) {
+	<details class="pp-classadd-picker">
+		<summary class="btn btn-sm btn-secondary pp-classadd-summary">@Icon("plus") Add Pool</summary>
+		<div class="pp-classadd-menu">
+			// Generic Pool is always the first entry (whether the menu drops down or
+			// pops up) so the custom/OUI path is consistently in the same place.
+			<button type="button" class="pp-classadd-opt" { ppOn(v, "click", "add-pool", -1, "")... }>
+				<span class="pp-classadd-icon">@Icon("plus")</span>
+				<span class="pp-classadd-text">
+					<span class="pp-classadd-label">Generic Pool</span>
+					<span class="pp-classadd-codes">Custom Vendor OUI Routing</span>
+				</span>
+			</button>
+			<div class="pp-classadd-divider" role="separator"></div>
+			for _, c := range DeviceClassMenu() {
+				<button type="button" class="pp-classadd-opt" { ppOn(v, "click", "add-class", -1, c.Class)... }>
+					<span class="pp-classadd-icon">@DeviceIcon(c.Icon)</span>
+					<span class="pp-classadd-text">
+						<span class="pp-classadd-label">{ c.Label }</span>
+						<span class="pp-classadd-codes">{ c.Codes }</span>
+					</span>
+				</button>
+			}
+		</div>
+	</details>
+}
+
+// boolAttr renders a boolean as the string "true"/"false" for aria-pressed etc.
+func boolAttr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+// PoolKind constants live in models via PoolPlanEntry; mirror the string values.
+const (
+	PoolKindFixed   = "fixed"
+	PoolKindElastic = "elastic"
+	PoolKindReserve = "reserve"
+)

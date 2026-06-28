@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify tag matches version.go
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          CODE=$(sed -n 's/.*Number = "\(.*\)".*/\1/p' internal/version/version.go)
+          if [ "$VER" != "$CODE" ]; then
+            echo "Tag $GITHUB_REF_NAME (=$VER) does not match version.go Number ($CODE)"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install templ + nfpm
+        run: |
+          go install github.com/a-h/templ/cmd/templ@v0.3.1020
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Generate templ components
+        run: templ generate
+
+      - name: Cross-compile (Raspberry Pi arm64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -ldflags="-s -w" -o ggo-kea-dhcp-arm64 .
+
+      - name: Build .deb
+        run: |
+          VER="${GITHUB_REF_NAME#v}"            # strip the leading v for a valid Debian version
+          mkdir -p dist                         # nfpm --target dist/ errors "is a directory" if dist/ is absent
+          GGO_VERSION="$VER" nfpm package --packager deb --config packaging/nfpm.yaml --target dist/
+          # Stable asset name so install.sh can fetch .../releases/latest/download/ggo-kea-dhcp_arm64.deb
+          cp dist/ggo-kea-dhcp_*_arm64.deb dist/ggo-kea-dhcp_arm64.deb
+          ls -l dist/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/ggo-kea-dhcp_arm64.deb
+            ggo-kea-dhcp-arm64
+          generate_release_notes: true

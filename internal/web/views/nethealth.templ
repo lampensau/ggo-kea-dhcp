@@ -1,0 +1,151 @@
+package views
+
+// NetHealth is the passive network-monitoring card, rendered as a collapsed-by-
+// default <details> so the dashboard leads with the combined rollup and the
+// per-interface detail only unfolds on demand (operator request). The <details>
+// wrapper and <summary> are static first-paint structure and never a morph target,
+// so the open/closed state survives an SSE patch; only the inner live regions
+// #net-health-rollup (the combined-state pill) and #net-health (the body) morph.
+// Off the dashboard those ids are absent, so the patches are harmless no-ops.
+templ NetHealth(v NetHealthView) {
+	<details class="card collapse-card">
+		<summary class="collapse-head" aria-label="Toggle network health details">
+			<span class="collapse-title">
+				<span class="collapse-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+				<h3 class="no-margin">Network Health</h3>
+			</span>
+			@NetHealthRollup(v)
+		</summary>
+		@NetHealthBody(v)
+	</details>
+}
+
+// NetHealthRollup is the collapsed-header summary (live region #net-health-rollup):
+// one pill stating the worst combined state across every monitored interface, so
+// the operator reads overall health without expanding the card.
+templ NetHealthRollup(v NetHealthView) {
+	<span id="net-health-rollup" class="collapse-rollup" aria-live="polite">
+		<span class={ "status-pill", netOverallClass(v) } title={ netHealthRollupDetail(v) }>{ netOverallText(v) }</span>
+	</span>
+}
+
+// NetHealthBody is the expandable detail (live region #net-health): one block per
+// monitored interface with a status-dot per detector. The backend emits structured
+// signals (severity/kind/subject/text); this view maps severity → dot color and
+// kind → glyph - no presentation logic in the backend.
+templ NetHealthBody(v NetHealthView) {
+	<div id="net-health" class="collapse-body">
+		if len(v.Firmware) > 0 {
+			<div class="nh-firmware">
+				for _, fw := range v.Firmware {
+					@firmwareMismatchRow(fw)
+				}
+			</div>
+		}
+		if len(v.Interfaces) == 0 {
+			<div class="empty">
+				@Icon("activity")
+				<div class="empty-title">Monitoring idle</div>
+				<div>Passive monitoring runs once a profile is active.</div>
+			</div>
+		} else {
+			<div class="nh-body">
+				for _, ifc := range v.Interfaces {
+					@netHealthIface(ifc)
+				}
+			</div>
+		}
+	</div>
+}
+
+// netHealthIface renders one interface as a bordered sub-card (capped width, left
+// aligned - several wrap into a row rather than one card spanning the whole panel).
+// The header is a prominent bar (tinted, severity-accented left border, status dot
+// + bold interface name + link mode + plain colored state text - no pill/bubble);
+// the body has a row per detector. Virtual eth0.<vid> sub-interfaces carry
+// different scopes, so the per-interface grouping matters even on a single NIC.
+templ netHealthIface(ifc NetHealthIface) {
+	<div class={ "nh-subcard", netSubcardClass(ifc) }>
+		<div class="nh-sub-head">
+			<span class={ "status-dot", netRollupDot(ifc) } role="img" aria-label={ netRollupText(ifc) }></span>
+			if ifc.ScopeName != "" {
+				<span class="nh-sub-name">{ ifc.ScopeName }</span>
+				<span class="mono nh-sub-iface">{ ifc.Iface }</span>
+			} else {
+				<span class="mono nh-sub-name">{ ifc.Iface }</span>
+			}
+			if ifc.LinkMode != "" {
+				<span class="nh-sub-mode">{ ifc.LinkMode }</span>
+			}
+			if ifc.Available {
+				<span class={ "nh-sub-state", netRollupClass(ifc) }>{ netRollupText(ifc) }</span>
+			} else if ifc.Note != "" {
+				<span class="nh-sub-state is-warn">{ ifc.Note }</span>
+			}
+		</div>
+		if ifc.Available {
+			<div class="nh-sub-body">
+				<div class="nh-rows">
+					for _, r := range ifc.Rows {
+						@netHealthRow(r)
+					}
+				</div>
+			</div>
+		}
+	</div>
+}
+
+// netHealthRow is one detector signal on a single line: a severity dot, a kind
+// glyph, the human text, and - when the detector has machine specifics (server
+// MAC, switch port, querier address …) - a trailing "i" info icon that reveals
+// them in a hover/focus tooltip. The detail is no longer stacked on a second row
+// (the operator found that noisy); it is tucked behind the icon instead.
+templ netHealthRow(r NetHealthRow) {
+	<div class="nh-row">
+		<span class={ "status-dot", netHealthDot(r.Severity) }></span>
+		<span class="nh-row-icon">@Icon(netHealthIcon(r.Kind))</span>
+		<span class="nh-row-text">{ r.Title }</span>
+		// Show the info bubble when there is machine detail OR the title is long enough
+		// to truncate, so an ellipsized line is always recoverable on hover/focus.
+		if netRowShowTip(r) {
+			<span class="info-tip nh-row-info" tabindex="0" role="note" aria-label={ netRowTip(r) }>
+				@Icon("info")
+				if len(r.DetailRows) > 0 {
+					<span class="info-tip-text mono nh-roster">
+						for _, line := range r.DetailRows {
+							<span class="nh-roster-row">{ line }</span>
+						}
+					</span>
+				} else {
+					<span class="info-tip-text mono">{ netRowTip(r) }</span>
+				}
+			</span>
+		}
+	</div>
+}
+
+// firmwareMismatchRow renders one model family running mixed firmware: a single
+// non-wrapping summary line, with the per-device breakdown (name · IP · version)
+// tucked into a hover/focus info-tip so a large fleet never breaks the card layout.
+templ firmwareMismatchRow(r FirmwareModelRow) {
+	<div class="nh-row">
+		<span class="status-dot warn"></span>
+		<span class="nh-row-icon">@Icon("cpu")</span>
+		<span class="nh-row-text nh-fw-summary">{ r.Summary }</span>
+		<span class="info-tip nh-row-info" tabindex="0" role="note" aria-label="firmware versions by device">
+			@Icon("info")
+			<span class="info-tip-text fw-tip">
+				for _, d := range r.Devices {
+					<span class="fw-tip-row">
+						<span>{ d.Name }</span>
+						<span class="mono">{ d.IP }</span>
+						<span class="mono">{ d.Version }</span>
+					</span>
+				}
+				if r.More > 0 {
+					<span class="fw-tip-more">+{ itoa(r.More) } more</span>
+				}
+			</span>
+		</span>
+	</div>
+}

@@ -1,0 +1,266 @@
+package views
+
+// Dashboard is the at-a-glance appliance view: a compact summary, live stat
+// tiles, the address-pool table, and the network-health card. #dash-tiles and
+// #pool-table are stable live regions the SSE ticker re-merges; StatTiles /
+// PoolTable render both first paint and the live fragment so they can't drift.
+templ Dashboard(v DashboardView) {
+	@Base(v.Page) {
+		@dashHead(v)
+		<div class="dash">
+			@StatTiles(v)
+			// Order (operator request): stats, then the two compact "recent" lists
+			// (active leases + recent activity) side by side right below the tiles, then
+			// the collapsed-by-default summary cards - network health, address pools,
+			// port pinnings. Only the recent lists pair in .dash-grid; every card body
+			// is height-capped (CSS, scoped to .dash).
+			<div class="dash-grid">
+				@RecentLeases(v.RecentLeases, v.CanReserve)
+				@ActivityFeed(v.Activity)
+			</div>
+			@NetHealth(v.NetHealth)
+			@PoolTable(v)
+			@DashPinnings(v.Pinned)
+		</div>
+		if v.CanReserve {
+			@ReserveDialog(v.Page.CSRFToken, "/dashboard")
+			@ReserveScript()
+		}
+		@dashScript()
+		@sparkTooltip()
+	}
+}
+
+// dashScript defines the dashboard's framework-free click-to-sort for the
+// read-only Address-pools table. It cycles a `.sortable` header none → asc → desc
+// → none. It does NOT use a MutationObserver (that fought Datastar's morph on every
+// live patch and tripped its loop guard); instead, while sorted it freezes the live
+// pool table from morphing via Datastar's own data-ignore-morph (Datastar morphs by
+// id), and the third click clears the sort so live updates resume.
+templ dashScript() {
+	<script>
+		(function () {
+			// Sort state is keyed by table id and kept in this closure (NOT on the
+			// element) so it survives an SSE patch that re-renders the table.
+			var S = {};
+			function cellVal(row, col, type) {
+				var cell = row.children[col];
+				if (!cell) return "";
+				var v = (cell.textContent || "").trim();
+				if (type === "num") { var n = parseFloat(v.replace(/[^0-9.\-]/g, "")); return isNaN(n) ? -Infinity : n; }
+				if (type === "ip") { var m = v.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)/); return m ? ((+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4])) : -Infinity; }
+				return v.toLowerCase();
+			}
+			function sortRows(table, col, dir) {
+				if (!table.tHead || !table.tBodies[0]) return;
+				var ths = table.tHead.rows[0].cells;
+				if (dir) {
+					var type = ths[col] ? (ths[col].getAttribute("data-sort") || "text") : "text";
+					var tb = table.tBodies[0];
+					Array.prototype.slice.call(tb.rows).sort(function (a, b) {
+						var av = cellVal(a, col, type), bv = cellVal(b, col, type);
+						return av < bv ? -dir : av > bv ? dir : 0;
+					}).forEach(function (r) { tb.appendChild(r); });
+				}
+				for (var i = 0; i < ths.length; i++) ths[i].removeAttribute("aria-sort");
+				if (dir && ths[col]) ths[col].setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+			}
+			document.addEventListener("click", function (e) {
+				var th = e.target.closest("th[data-sort]");
+				if (!th) return;
+				var table = th.closest("table.sortable");
+				if (!table || !table.id) return;
+				var col = Array.prototype.indexOf.call(th.parentNode.children, th);
+				var cur = S[table.id];
+				// Cycle the same column none → asc → desc → none.
+				var dir = (cur && cur.col === col) ? (cur.dir === 1 ? -1 : cur.dir === -1 ? 0 : 1) : 1;
+				if (dir) S[table.id] = { col: col, dir: dir }; else delete S[table.id];
+				// While sorted, freeze the live pool table so the 4s morph can't
+				// reorder it back (Datastar honors data-ignore-morph); clearing the
+				// sort removes it so live updates resume.
+				var live = table.closest("#pool-table");
+				if (live) { if (dir) live.setAttribute("data-ignore-morph", ""); else live.removeAttribute("data-ignore-morph"); }
+				sortRows(table, col, dir);
+			});
+		})();
+	</script>
+}
+
+// dashHead is the dashboard's page header, a single row: the active profile name
+// as the h1 (status dot + name), then - past a thin divider - the muted meta inline
+// (preset, interface, scope count, LLDP chip), and the "Manage" menu pushed to the
+// far right. Everything is on one line and wraps gracefully on narrow viewports;
+// there is no stacked subtitle (the operator disliked the two-line treatment).
+templ dashHead(v DashboardView) {
+	<div class="dash-head">
+		<h1 class="dash-title">{ v.ProfileName }</h1>
+		<div class="dash-head-meta">
+			<span>{ v.Preset }</span>
+			// One scope: show the single interface (short, useful). Multi-scope/trunk:
+			// the preset + scope count already describe it, and the full eth0.<vid> list
+			// grows with every VLAN and threatens to wrap the header - so omit it.
+			if v.TotalScopes <= 1 {
+				<span class="mono">{ v.Interface }</span>
+			}
+			<span>{ itoa(v.TotalScopes) } { pluralize(v.TotalScopes, "scope", "scopes") }</span>
+			@DashLLDP(v.LLDP)
+		</div>
+		@configMenu(v.Profiles, v.Page.CSRFToken, true)
+	</div>
+}
+
+// DashLLDP is the "you are here" chip: the LLDP neighbor (upstream switch + port,
+// and the native VLAN when advertised) rendered as an info pill in the meta line,
+// so the operator sees where this appliance is wired without leaving the dashboard.
+// The #dash-lldp span is ALWAYS emitted (collapsed via .lldp-chip:empty when no
+// neighbor yet) so it is a stable live-morph target: LLDP is only observed ~30s
+// after boot/load, and the live ticker patches this region in when it arrives -
+// without it the chip would only appear on a manual refresh.
+templ DashLLDP(c LLDPChip) {
+	<span id="dash-lldp" class="lldp-chip mono" title="Upstream LLDP neighbor">
+		if c.Present {
+			@Icon("ethernet-port")
+			{ lldpChipText(c) }
+		}
+	</span>
+}
+
+// configMenu is a native <details> dropdown (same pattern as the account menu):
+// switch to another saved profile (when one exists), edit the config/pools, and
+// "New Configuration" (the setup wizard, reachable while ACTIVE - the path by which
+// a second profile comes to exist). Switching is a native POST that re-IPs the box
+// and returns the reconnect interstitial, confirm-gated because it drops the link.
+// Shared by the dashboard and /pools; showEditPools hides the "Edit pools" item on
+// the /pools page itself (you're already there).
+templ configMenu(profiles []ProfileOption, csrf string, showEditPools bool) {
+	<details class="config-menu">
+		<summary class="btn btn-secondary config-trigger">
+			@Icon("settings") Manage <span class="config-chevron">@Icon("chevron-down")</span>
+		</summary>
+		<div class="config-dropdown">
+			if hasOtherProfiles(profiles) {
+				<div class="config-dropdown-label">Switch configuration</div>
+				for _, p := range profiles {
+					if !p.Active {
+						<div class="config-row">
+							<form
+								method="post"
+								action="/profile/activate"
+								onsubmit="return confirm('Switch to this configuration? The appliance will re-IP and your connection will briefly drop while it reconnects.')"
+							>
+								<input type="hidden" name="csrf_token" value={ csrf }/>
+								<input type="hidden" name="profile_id" value={ itoa(p.ID) }/>
+								<button type="submit" class="config-item">
+									@Icon("refresh-cw")
+									<span class="config-item-name">{ p.Name }</span>
+									<span class="config-item-meta">{ itoa(p.ScopeCount) } { pluralize(p.ScopeCount, "scope", "scopes") }</span>
+								</button>
+							</form>
+							<form
+								method="post"
+								action="/profile/delete"
+								onsubmit="return confirm('Delete this saved configuration? This cannot be undone.')"
+							>
+								<input type="hidden" name="csrf_token" value={ csrf }/>
+								<input type="hidden" name="profile_id" value={ itoa(p.ID) }/>
+								<button type="submit" class="config-del" title="Delete configuration" aria-label={ "Delete " + p.Name }>@Icon("trash-2")</button>
+							</form>
+						</div>
+					}
+				}
+				<div class="config-divider"></div>
+			}
+			<a class="config-item" href="/setup?edit=1">
+				@Icon("layers") <span class="config-item-name">Edit configuration</span>
+			</a>
+			if showEditPools {
+				<a class="config-item" href="/pools">
+					@Icon("settings") <span class="config-item-name">Edit pools</span>
+				</a>
+			}
+			<a class="config-item" href="/setup">
+				@Icon("plus") <span class="config-item-name">New configuration</span>
+			</a>
+		</div>
+	</details>
+}
+
+// The dashboard stat strip is StatTiles (views/stattile.templ) - four live tiles
+// with inline-SVG sparklines, built by buildStatTiles. The old static three-tile
+// DashTiles/tile/uplinkTile were superseded by it.
+
+// PoolTable is the per-pool occupancy card, a collapsible <details> (collapsed by
+// default, matching the network-health and pinnings cards). The wrapper/summary are
+// static first-paint structure and never
+// morph targets, so the open/closed state survives an SSE patch; only the inner
+// live regions #pool-rollup (overall utilization) and #pool-table (the body)
+// morph. Rows are ordered by pressure so in-use pools sit on top; the empty ones
+// fall to the bottom of the same table - nothing is hidden, just deprioritized.
+templ PoolTable(v DashboardView) {
+	<details class="card collapse-card">
+		<summary class="collapse-head" aria-label="Toggle address pools details">
+			<span class="collapse-title">
+				<span class="collapse-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+				<h3 class="no-margin">Address Pools</h3>
+			</span>
+			@PoolTableRollup(v)
+		</summary>
+		@PoolTableBody(v)
+	</details>
+}
+
+// PoolTableRollup is the collapsed-header summary (live region #pool-rollup):
+// overall utilization across every DHCP pool, colored to match the meters.
+templ PoolTableRollup(v DashboardView) {
+	<span id="pool-rollup" class="collapse-rollup" aria-live="polite">
+		<span class={ "status-pill", poolsRollupClass(v.Pools) } title={ poolsRollupDetail(v.Pools) }>{ poolsRollupText(v.Pools) }</span>
+	</span>
+}
+
+// PoolTableBody is the expandable detail (live region #pool-table). The Class
+// column shows the operator label (the raw client-class is the cell's title).
+templ PoolTableBody(v DashboardView) {
+	<div id="pool-table" class="collapse-body">
+		if len(v.Pools) == 0 {
+			<div class="empty">
+				@Icon("layers")
+				<div class="empty-title">No address pools</div>
+				<div>Apply a profile to allocate DHCP pools.</div>
+			</div>
+		} else {
+			<div class="table-scroll">
+				<table id="pool-table-tbl" class="sortable">
+					<thead>
+						<tr>
+							<th data-sort="text">Class</th>
+							<th data-sort="ip">Range</th>
+							<th data-sort="num">Used</th>
+							<th data-sort="num">Capacity</th>
+							<th data-sort="num">Utilization</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, p := range v.Pools {
+							<tr>
+								<td title={ p.ClassName }>{ p.Label }</td>
+								<td class="mono">{ p.IPRange }</td>
+								<td class="mono">{ itoa(p.Allocated) }</td>
+								<td class="mono">{ itoa(p.Capacity) }</td>
+								<td>@poolMeter(p)</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}
+
+templ poolMeter(p PoolRow) {
+	<div class="meter-cell">
+		<div class={ "meter", meterClass(p.Percent) } role="progressbar" aria-valuenow={ itoa(p.Percent) } aria-valuemin="0" aria-valuemax="100">
+			<span style={ "width:" + itoa(clampPct(p.Percent)) + "%" }></span>
+		</div>
+		<span class="mono meter-pct">{ itoa(p.Percent) }%</span>
+	</div>
+}

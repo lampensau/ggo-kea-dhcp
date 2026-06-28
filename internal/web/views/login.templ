@@ -1,0 +1,66 @@
+package views
+
+// Login - modern minimal sign-in: centered composition, in-field password reveal
+// (eye toggle, no checkbox). Submit is a NATIVE form POST (not a Datastar @post fetch):
+// over a self-signed cert, Firefox honors a cert exception for top-level navigations but
+// not reliably for fetch/XHR, so a fetch-based login silently aborts after an IP change
+// while a native navigation works. The server handles the native POST (redirect on
+// success, re-render with the error otherwise); the spinner comes from the shared
+// data-busy submit handler (busySubmitScript).
+templ Login(v LoginView) {
+	@Base(v.Page) {
+		// retry holds the per-IP login-backoff seconds remaining; data-on-interval
+		// (every 1s, the v1 default) ticks it down to 0, at which point the submit
+		// button re-enables. It is set by a signal patch on a throttled attempt.
+		<div class="auth-card" data-signals="{showpw: false, retry: 0}" data-on-interval="$retry > 0 && ($retry = $retry - 1)">
+			<div class="auth-brand">
+				<span class="brand-mark">@Icon("kea")</span>
+				<h1>Green-GO Kea DHCP</h1>
+				<p>Sign in to manage the appliance</p>
+			</div>
+			<div class="card">
+				<form method="post" action="/login" data-busy>
+					<div class="form-group">
+						<label class="form-label" for="username">Username</label>
+						<input class="form-control" id="username" name="username" type="text" autocomplete="username" required autofocus/>
+					</div>
+					<div class="form-group">
+						<label class="form-label" for="password">Password</label>
+						@passwordInput("password", "password", "current-password")
+					</div>
+					// Backoff countdown - JS-only (hidden by default so a no-JS client
+					// never sees an empty "try again in s"); the live region ticks down.
+					<div class="alert alert-err" role="alert" style="display:none" data-show="$retry > 0">
+						@Icon("circle-alert") <span data-text="'Too many attempts. Try again in ' + $retry + 's'"></span>
+					</div>
+					// Static error (wrong password / no-JS backoff message), hidden while
+					// the live countdown is showing so the two never stack.
+					<div data-show="$retry <= 0">
+						@LoginErrorBox(v.Error)
+					</div>
+					<button class="btn btn-primary btn-block" type="submit">Sign In</button>
+				</form>
+			</div>
+		</div>
+	}
+}
+
+// passwordInput is a password field with an in-field show/hide eye toggle. It
+// reuses the page-level $showpw signal so all fields reveal together.
+templ passwordInput(id, name, autocomplete string) {
+	<div class="pw-field">
+		<input class="form-control" id={ id } name={ name } type="password" data-attr:type="$showpw ? 'text' : 'password'" autocomplete={ autocomplete } required/>
+		<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show password" title="Show password">
+			<span data-show="!$showpw">@Icon("eye")</span>
+			<span data-show="$showpw">@Icon("eye-off")</span>
+		</button>
+	</div>
+}
+
+templ LoginErrorBox(msg string) {
+	<div id="login-error">
+		if msg != "" {
+			<div class="alert alert-err" role="alert">@Icon("circle-alert") <span>{ msg }</span></div>
+		}
+	</div>
+}

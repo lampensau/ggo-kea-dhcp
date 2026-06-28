@@ -1,0 +1,185 @@
+package views
+
+// Leases is one unified table of DHCP leases AND client (MAC) reservations: each
+// device is a single row, tagged Reserved when its IP is fixed. Search is a
+// debounced Datastar @get that re-merges #leases-body; the live channel pushes the
+// same region as leases come and go. LeasesBody is the shared partial (first paint
+// + fragment). "Reserve a Client IP" opens the ReserveDialog for a manual entry.
+templ Leases(v LeasesView) {
+	@Base(v.Page) {
+		@PageHead("Leases", "Active DHCP leases and client reservations - search by IP, MAC, hostname, or class.") {
+			if v.CanReserve {
+				<button type="button" class="btn btn-secondary" onclick="ggoReserveOpen('','','')">@Icon("pin") Reserve a Client IP</button>
+			}
+		}
+		<div class="card">
+			if v.Error != "" {
+				<div class="alert alert-err" role="alert">@Icon("circle-alert") <span>{ v.Error }</span></div>
+			} else {
+				<div class="toolbar leases-toolbar">
+					<input
+						class="form-control"
+						type="search"
+						placeholder="Search IP, MAC, hostname, or class…"
+						aria-label="Search leases"
+						data-bind="search"
+						data-on:input__debounce.300ms="@get('/leases/search')"
+					/>
+					if v.CanReserve {
+						@ImportReservationsForm(v.Page.CSRFToken)
+					}
+				</div>
+				<div class="table-scroll">
+					<table>
+						<thead>
+							<tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Class</th><th>Expires in</th><th>Last seen</th><th aria-label="Actions"></th></tr>
+						</thead>
+						@LeasesBody(v.Leases, v.Page.CSRFToken, v.CanReserve)
+					</table>
+				</div>
+			}
+		</div>
+		if v.CanReserve {
+			@ReserveDialog(v.Page.CSRFToken, "/leases")
+			@ReserveScript()
+		}
+	}
+}
+
+// ImportReservationsForm is the "Import CSV" control on the Leases page: a styled
+// button that opens the file picker and auto-submits the upload (mac,ip,hostname) to
+// /reservations/import. Native multipart POST (not Datastar) - it returns a flash +
+// redirect like the single Reserve flow. Import is additive, so no confirm dialog.
+templ ImportReservationsForm(csrf string) {
+	<form method="post" action="/reservations/import" enctype="multipart/form-data" class="inline-form">
+		<input type="hidden" name="csrf_token" value={ csrf }/>
+		<input type="file" id="resv-import-file" name="file" accept=".csv,text/csv" hidden onchange="this.form.submit()"/>
+		<button type="button" class="btn btn-secondary" onclick="document.getElementById('resv-import-file').click()">@Icon("upload") Import CSV</button>
+	</form>
+}
+
+// LeasesBody is the live region (#leases-body), reused as the SSE/search fragment.
+// Every row shows its real remaining lease time (the device renews and keeps the same
+// fixed IP - the lease still counts down); only a row with NO active lease (an offline
+// reservation) shows a "—" expiry. A reserved row carries a filled-pin indicator next
+// to its IP and a Remove-reservation action; a dynamic row offers Reserve + Release. A
+// row behind a pinned switch port (PortPinned) shows the switch-port marker, offers no
+// Reserve and a disabled delete - its IP is governed by the port pin, managed on the
+// Port Pinning page, not here.
+templ LeasesBody(rows []LeaseRow, csrf string, canReserve bool) {
+	<tbody id="leases-body">
+		if len(rows) == 0 {
+			<tr>
+				<td colspan="7">
+					<div class="empty">
+						@Icon("network")
+						<div class="empty-title">No leases or reservations</div>
+						<div>Leased devices appear here as they request addresses; reserve a fixed IP with "Reserve a Client IP".</div>
+					</div>
+				</td>
+			</tr>
+		} else {
+			for _, l := range rows {
+				<tr>
+					<td class="mono">
+						if l.Presence != "" {
+							<span class={ "status-dot", "lease-dot", presenceDot(l.Presence) } title={ presenceTitle(l.Presence) } role="img" aria-label={ presenceTitle(l.Presence) }></span>
+						}
+						{ l.IPAddress }
+						if l.PortPinned {
+							<span class="lease-pinned" title="Pinned to a switch port - manage on Port Pinning" role="img" aria-label="Pinned by switch port">@Icon("ethernet-port")</span>
+						} else if l.Reserved {
+							<span class="lease-reserved" title="Reserved - fixed IP for this MAC" role="img" aria-label="Reserved">@Icon("pin")</span>
+						}
+					</td>
+					<td class="mono">{ l.HWAddress }</td>
+					<td>{ orDash(l.Hostname) }</td>
+					<td><span class="badge" title={ l.Class }>{ ClassDisplay(l.Class).Label }</span></td>
+					<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>
+						if l.ExpiresIn != "" {
+							{ l.ExpiresIn }
+						} else {
+							<span class="text-muted">—</span>
+						}
+					</td>
+					<td class="mono">
+						if l.LastSeenText != "" {
+							<span title={ "Last active " + l.LastSeenText }>{ l.LastSeenText }</span>
+							if l.Stale {
+								<span class="badge badge-stale" title="No activity for over two weeks">stale</span>
+							}
+						} else {
+							<span class="text-muted">—</span>
+						}
+					</td>
+					<td>
+						<div class="row-actions">
+							if l.PortPinned {
+								@portPinnedAction()
+							} else if l.Reserved {
+								if canReserve {
+									@removeReservationForm(l, csrf)
+								}
+							} else {
+								if canReserve {
+									<button
+										type="button"
+										class="btn btn-sm btn-secondary"
+										data-mac={ l.HWAddress }
+										data-ip={ l.IPAddress }
+										data-host={ l.Hostname }
+										onclick="ggoReserveOpen(this.dataset.mac, this.dataset.ip, this.dataset.host)"
+										title={ "Reserve " + l.IPAddress + " for this device" }
+										aria-label={ "Reserve " + l.IPAddress }
+									>@Icon("pin")</button>
+								}
+								@releaseButton(l.IPAddress)
+							}
+						</div>
+					</td>
+				</tr>
+			}
+		}
+	</tbody>
+}
+
+// removeReservationForm deletes a client reservation. The CSRF token is set from
+// the page <meta> in onsubmit (the live ticker re-broadcasts #leases-body with an
+// empty token, so the rendered field can't be relied on).
+templ removeReservationForm(l LeaseRow, csrf string) {
+	<form method="post" action="/reservations/delete" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;return confirm('Remove this reservation? The device will fall back to a dynamic address.')">
+		<input type="hidden" name="csrf_token" value={ csrf }/>
+		<input type="hidden" name="return" value="/leases"/>
+		<input type="hidden" name="mac" value={ l.HWAddress }/>
+		<input type="hidden" name="subnet_id" value={ itoa(l.SubnetID) }/>
+		<button type="submit" class="btn btn-sm btn-danger" title="Remove reservation" aria-label="Remove reservation">@Icon("pin-off")</button>
+	</form>
+}
+
+// portPinnedAction is the disabled remove control shown for a lease whose IP is fixed by
+// a switch-port pin (flex-id). The pin - not this lease - governs the IP, and Kea resolves
+// it before any hw-address reservation, so the row offers no Reserve and a disabled
+// Remove: deleting the lease would just re-DHCP to the same pinned IP, and the pin itself
+// is managed on the Port Pinning page. A leftover hw-address reservation for the same
+// device (if any) stays deletable on its own row (see unifiedLeaseRowsWithPins), never
+// from this pinned row. The ethernet-port marker next to the IP signals the pin.
+templ portPinnedAction() {
+	<button
+		type="button"
+		class="btn btn-sm btn-danger"
+		disabled
+		title="Pinned to a switch port - manage on Port Pinning"
+		aria-label="Pinned to a switch port - manage on Port Pinning"
+	>@Icon("pin-off")</button>
+}
+
+// releaseButton issues a confirmed Datastar @delete carrying the CSRF header.
+templ releaseButton(ip string) {
+	<button
+		type="button"
+		class="btn btn-sm btn-danger"
+		title={ "Release lease for " + ip }
+		aria-label={ "Release lease for " + ip }
+		data-on:click={ releaseExpr(ip) }
+	>@Icon("trash-2")</button>
+}

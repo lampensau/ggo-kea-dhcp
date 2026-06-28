@@ -1,0 +1,9 @@
+# Passwordless sudo for the ggo-kea-dhcp service user, scoped to exactly the privileged
+# tools the control plane shells out to (network reconfiguration + Kea config
+# validation). Installed to /etc/sudoers.d/ggo-kea-dhcp (mode 0440) by the ggo-kea-dhcp
+# package and validated with `visudo -c` in the postinstall script.
+#
+# The app invokes these by bare name (`sudo nmcli ...`); sudo resolves them via
+# secure_path to the absolute paths below. Paths are the Debian Trixie (arm64)
+# locations.
+ggo-kea-dhcp ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/sbin/nft, /usr/sbin/ip, /usr/sbin/hostapd, /usr/bin/pkill, /usr/bin/systemctl, /usr/sbin/sysctl, /usr/sbin/kea-dhcp4, /usr/sbin/iw, /usr/sbin/iwlist

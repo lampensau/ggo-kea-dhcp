@@ -1,0 +1,185 @@
+package views
+
+// ActivityFeed is the dashboard's recent-activity feed (#activity-feed): the
+// latest audit rows, dot-coded by result. A compact flight recorder; the full
+// trail is on Diagnostics.
+templ ActivityFeed(rows []AuditRow) {
+	<div id="activity-feed" class="card">
+		<div class="pool-head">
+			<h3 class="no-margin">Recent Activity</h3>
+			<a class="btn btn-sm btn-secondary" href="/diagnostics">@Icon("scroll-text") Audit Log</a>
+		</div>
+		if len(rows) == 0 {
+			<div class="empty">
+				@Icon("scroll-text")
+				<div class="empty-title">No activity yet</div>
+			</div>
+		} else {
+			<div class="act-list">
+				for _, a := range rows {
+					<div class="act-row">
+						<span class={ "status-dot", auditDot(a.Result) } role="img" aria-label={ a.Result }></span>
+						<span class="act-action" title={ auditActionLabel(a.Action) }>{ auditActionLabel(a.Action) }</span>
+						<span class="act-target mono" title={ a.Target }>{ a.Target }</span>
+						<span class="act-time mono">{ a.Timestamp }</span>
+					</div>
+				}
+			</div>
+		}
+	</div>
+}
+
+// RecentLeases is a compact active-leases summary (#recent-leases): top N by IP.
+// The full searchable table with release actions lives on /leases.
+templ RecentLeases(rows []LeaseRow, canReserve bool) {
+	<div id="recent-leases" class="card">
+		<div class="pool-head">
+			<h3 class="no-margin">Active Leases</h3>
+			<div class="pool-head-actions">
+				if canReserve {
+					<button type="button" class="btn btn-sm btn-secondary" onclick="ggoReserveOpen('','','')">@Icon("pin") Reserve</button>
+				}
+				<a class="btn btn-sm btn-secondary" href="/leases">@Icon("list-tree") All Leases</a>
+			</div>
+		</div>
+		if len(rows) == 0 {
+			<div class="empty">
+				@Icon("network")
+				<div class="empty-title">No active leases</div>
+			</div>
+		} else {
+			<div class="table-scroll">
+				<table>
+					<thead><tr><th>IP</th><th>MAC</th><th>Class</th><th>Expires</th></tr></thead>
+					<tbody>
+						for _, l := range rows {
+							<tr>
+								<td class="mono">
+									if l.Presence != "" {
+										<span class={ "status-dot", "lease-dot", presenceDot(l.Presence) } title={ presenceTitle(l.Presence) } role="img" aria-label={ presenceTitle(l.Presence) }></span>
+									}
+									{ l.IPAddress }
+								</td>
+								<td class="mono">{ l.HWAddress }</td>
+								<td><span class="badge" title={ l.Class }>{ ClassDisplay(l.Class).Label }</span></td>
+								<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>{ l.ExpiresIn }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}
+
+// ReserveDialog is the native <dialog> for creating a client (MAC) reservation - a
+// fixed IP for a specific device. It is rendered once per page (outside any live
+// morph target) and opened via showModal() from the Reserve button. returnTo is the
+// page to redirect back to after saving. The custom IP field is the whole point:
+// you choose the address, not whatever the device happened to get.
+templ ReserveDialog(csrf, returnTo string) {
+	<dialog id="reserve-dialog" aria-labelledby="reserve-dialog-title">
+		<form method="post" action="/reservations/add" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="return" value={ returnTo }/>
+			<div class="dialog-head" id="reserve-dialog-title">Reserve a Client IP</div>
+			<div class="dialog-body">
+				<p>Fix an IP for a specific device by its MAC address. The device receives this address on its next DHCP request.</p>
+				<div class="form-group">
+					<label class="form-label" for="reserve-mac">MAC address</label>
+					<input class="form-control mono" id="reserve-mac" name="mac" placeholder="00:1f:80:12:34:56" required/>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="reserve-ip">IP address</label>
+					<input class="form-control mono" id="reserve-ip" name="ip" placeholder="10.0.0.50" required/>
+				</div>
+				<div class="form-group no-margin">
+					<label class="form-label" for="reserve-host">Hostname <span class="help-inline">(optional)</span></label>
+					<input class="form-control" id="reserve-host" name="hostname" placeholder="e.g. foh-console"/>
+				</div>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-primary">@Icon("pin") Create Reservation</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+// ReserveScript defines ggoReserveOpen, which prefills + opens the ReserveDialog.
+// Called blank from a "Reserve" button, or with mac/ip/host to seed it from a lease
+// row (the per-row reserve action). Shared by the dashboard and the /leases page.
+templ ReserveScript() {
+	<script>
+		window.ggoReserveOpen = function (mac, ip, host) {
+			var d = document.getElementById("reserve-dialog");
+			if (!d) return;
+			d.querySelector("[name=mac]").value = mac || "";
+			d.querySelector("[name=ip]").value = ip || "";
+			d.querySelector("[name=hostname]").value = host || "";
+			d.showModal();
+		};
+	</script>
+}
+
+// DashPinnings is the dashboard's configured-port-pinnings card, a collapsed-by-
+// default <details> (operator request). The wrapper/summary are static first-paint
+// structure; only the inner live regions #pinnings-rollup (the count pill) and
+// #pinnings (the body) morph, so the open/closed state survives an SSE patch. The
+// Manage link lives in the body, not the summary, because an <a> inside <summary>
+// would toggle the panel as well as navigate.
+templ DashPinnings(rows []PortRow) {
+	<details class="card collapse-card">
+		<summary class="collapse-head" aria-label="Toggle port pinnings details">
+			<span class="collapse-title">
+				<span class="collapse-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+				<h3 class="no-margin">Port Pinnings</h3>
+			</span>
+			@DashPinningsRollup(rows)
+		</summary>
+		@DashPinningsBody(rows)
+	</details>
+}
+
+// DashPinningsRollup is the collapsed-header count (live region #pinnings-rollup).
+templ DashPinningsRollup(rows []PortRow) {
+	<span id="pinnings-rollup" class="collapse-rollup" aria-live="polite">
+		if len(rows) == 0 {
+			<span class="status-pill" title={ pinningsRollupDetail(rows) }>None</span>
+		} else {
+			<span class="status-pill is-info" title={ pinningsRollupDetail(rows) }>{ itoa(len(rows)) } pinned</span>
+		}
+	</span>
+}
+
+// DashPinningsBody is the expandable detail (live region #pinnings): port ->
+// reserved IP -> label, with the Manage link to /pinning.
+templ DashPinningsBody(rows []PortRow) {
+	<div id="pinnings" class="collapse-body">
+		<div class="pool-head pool-head-sub">
+			<a class="btn btn-sm btn-secondary" href="/pinning">@Icon("pin") Manage</a>
+		</div>
+		if len(rows) == 0 {
+			<div class="empty">
+				@Icon("pin")
+				<div class="empty-title">No pinned ports</div>
+				<div>Pin a switch port to reserve its IP.</div>
+			</div>
+		} else {
+			<div class="table-scroll">
+				<table>
+					<thead><tr><th>Port</th><th>IP</th><th>Label</th></tr></thead>
+					<tbody>
+						for _, p := range rows {
+							<tr>
+								<td class="mono port-id" title={ portLabel(p) }>{ portLabel(p) }</td>
+								<td class="mono">{ p.IPAddress }</td>
+								<td>{ orDash(p.Label) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}

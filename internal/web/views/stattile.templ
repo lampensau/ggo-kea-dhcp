@@ -1,0 +1,125 @@
+package views
+
+// StatTiles is the dashboard's live stat strip (live region #dash-tiles): one
+// tile per metric, each a value plus an inline-SVG sparkline of its recent trend.
+// The same partial renders first paint and the SSE fragment, so they can't drift.
+// The inline --tiles custom property pins the column count to the number of tiles
+// so the strip stays one row even when the optional PTP tile makes five (the grid
+// rule reads var(--tiles); narrow viewports fall back to fewer columns via media
+// queries that override grid-template-columns directly). See .tile-grid CSS.
+templ StatTiles(v DashboardView) {
+	<div id="dash-tiles" class="tile-grid" style={ "--tiles:" + itoa(len(v.Stats)) }>
+		for _, t := range v.Stats {
+			@StatTile(t)
+		}
+	</div>
+}
+
+// StatTile is one stat tile: a leading severity dot + glyph + label, the big
+// value (optional unit and churn delta), then the sparkline. Meaning comes from
+// the dot, never color alone (DESIGN §3/§10).
+templ StatTile(t StatTileView) {
+	<div class="stat-tile">
+		<div class="tile-label">
+			<span class={ "status-dot", t.Dot }></span>
+			@Icon(t.Icon)
+			<span>{ t.Label }</span>
+			if t.EditHref != "" {
+				<a class="tile-edit" href={ templ.SafeURL(t.EditHref) } aria-label={ t.EditLabel } title={ t.EditLabel }>@Icon("pencil")</a>
+			}
+		</div>
+		<div class="stat-tile-main">
+			<span class="tile-value">{ t.Value }</span>
+			if t.Unit != "" {
+				<span class="stat-tile-unit">{ t.Unit }</span>
+			}
+			if t.Delta != "" {
+				<span class={ "stat-tile-delta", t.DeltaDir }>{ t.Delta }</span>
+			}
+		</div>
+		@Sparkline(t)
+		if t.Points != "" {
+			<span class="sr-only">{ sparkSummary(t) }</span>
+		}
+	</div>
+}
+
+// Sparkline renders a precomputed filled-area trend as an inline SVG: a
+// translucent <polygon> area under a <polyline> line. Both colors come from the
+// severity class (var(--ok/--warn/--err)), so they auto-theme light/dark with no
+// JS - no charting library, no canvas, no gradient. Empty line -> no svg.
+//
+// data-tips carries the per-sample human labels (oldest->newest, pipe-joined) and
+// data-label the metric name; the framework-free sparkTooltip handler reads them
+// on hover to show the exact value at the cursor (Grafana-style crosshair).
+templ Sparkline(t StatTileView) {
+	if t.Points != "" {
+		<svg class="sparkline" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true" data-tips={ t.Tips } data-label={ t.Label }>
+			<polygon points={ t.Area } class={ "sparkline-area", t.Dot }></polygon>
+			<polyline points={ t.Points } class={ "sparkline-line", t.Dot } fill="none" vector-effect="non-scaling-stroke"></polyline>
+		</svg>
+	}
+}
+
+// sparkTooltip is the framework-free hover crosshair for the stat-tile sparklines.
+// A single delegated mousemove listener on document (so it survives SSE morphs that
+// replace the tiles) finds the hovered .sparkline, maps the cursor x to the nearest
+// sample, and shows a fixed-position tooltip + guide line + dot reading the exact
+// value from data-tips. Singletons are appended to <body> once; nothing observes
+// the DOM, so it never fights Datastar's morph (see datastar-v1-syntax-gotchas).
+templ sparkTooltip() {
+	<script>
+		(function () {
+			var tip, dot, guide;
+			function ensure() {
+				if (tip) return;
+				guide = document.createElement("div"); guide.className = "spark-cursor-line";
+				dot = document.createElement("div"); dot.className = "spark-cursor-dot";
+				tip = document.createElement("div"); tip.className = "spark-tip"; tip.setAttribute("role", "tooltip");
+				[guide, dot, tip].forEach(function (el) { el.style.display = "none"; document.body.appendChild(el); });
+			}
+			function hide() { if (tip) { tip.style.display = dot.style.display = guide.style.display = "none"; } }
+			document.addEventListener("mousemove", function (e) {
+				var svg = e.target && e.target.closest ? e.target.closest(".sparkline[data-tips]") : null;
+				if (!svg) { hide(); return; }
+				var tips = (svg.getAttribute("data-tips") || "").split("|");
+				var n = tips.length;
+				if (!n || (n === 1 && tips[0] === "")) { hide(); return; }
+				var rect = svg.getBoundingClientRect();
+				if (rect.width <= 0) { hide(); return; }
+				ensure();
+				var rel = (e.clientX - rect.left) / rect.width;
+				if (rel < 0) rel = 0; else if (rel > 1) rel = 1;
+				var idx = n === 1 ? 0 : Math.round(rel * (n - 1));
+				// x at the sample; y from the matching polyline point when available.
+				var px = rect.left + (n === 1 ? 0.5 : idx / (n - 1)) * rect.width;
+				var py = rect.top + rect.height / 2;
+				var poly = svg.querySelector(".sparkline-line");
+				if (poly) {
+					var pts = (poly.getAttribute("points") || "").trim().split(/\s+/);
+					var pair = pts.length === n ? pts[idx] : pts[Math.min(idx, pts.length - 1)];
+					if (pair) {
+						var xy = pair.split(",");
+						if (xy.length === 2) {
+							px = rect.left + (parseFloat(xy[0]) / 100) * rect.width;
+							py = rect.top + (parseFloat(xy[1]) / 32) * rect.height;
+						}
+					}
+				}
+				var label = svg.getAttribute("data-label") || "";
+				tip.textContent = label ? label + ": " + tips[idx] : tips[idx];
+				guide.style.display = "block"; guide.style.left = px + "px"; guide.style.top = rect.top + "px"; guide.style.height = rect.height + "px";
+				dot.style.display = "block"; dot.style.left = px + "px"; dot.style.top = py + "px";
+				tip.style.display = "block";
+				var tw = tip.offsetWidth, th = tip.offsetHeight;
+				var tl = px - tw / 2;
+				if (tl < 4) tl = 4; else if (tl + tw > window.innerWidth - 4) tl = window.innerWidth - 4 - tw;
+				var tt = py - th - 10;
+				if (tt < 4) tt = py + 16;
+				tip.style.left = tl + "px"; tip.style.top = tt + "px";
+			}, true);
+			document.addEventListener("mouseleave", hide, true);
+			window.addEventListener("scroll", hide, true);
+		})();
+	</script>
+}

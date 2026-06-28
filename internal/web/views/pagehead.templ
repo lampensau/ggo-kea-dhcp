@@ -1,0 +1,22 @@
+package views
+
+// PageHead is the standard header for authenticated content pages: an <h1> title
+// outside any card, an optional muted description line, and an optional actions
+// slot (passed as children). The title and the actions share the top row (actions
+// hug the right edge, in line with the title); the description spans the full width
+// underneath - so a long description never pushes the actions onto their own line.
+// It mirrors the dashboard's .dash-head so every page leads with the same title
+// treatment. The dashboard keeps its own dashHead (status dot + live meta line);
+// this is the plain-title variant the rest of the app shares. Auth pages
+// (login/factory) deliberately do NOT use it.
+templ PageHead(title, desc string) {
+	<div class="page-head">
+		<div class="page-head-bar">
+			<h1 class="page-title">{ title }</h1>
+			{ children... }
+		</div>
+		if desc != "" {
+			<p class="page-desc">{ desc }</p>
+		}
+	</div>
+}

@@ -1,0 +1,439 @@
+package views
+
+// Base is the Console document shell. Authenticated pages get the two-tier app
+// header (brand + live status pill + theme on top, nav bar below); auth pages
+// (login/factory) render no app chrome - just a centered composition with a
+// floating theme toggle - per the modern minimal direction.
+templ Base(d PageData) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="csrf-token" content={ d.CSRFToken }/>
+			<title>{ pageTitle(d.Title) }</title>
+			<link rel="icon" href="/static/favicon.svg"/>
+			@noFoucThemeScript()
+			<link rel="stylesheet" href={ "/static/style.css?v=" + d.AssetVer }/>
+			<script type="module" src={ "/static/datastar.js?v=" + d.AssetVer }></script>
+		</head>
+		<body>
+			<a href="#content" class="skip-link">Skip to content</a>
+			if d.Authenticated {
+				@header(d)
+				<main id="content" class="container">
+					@BackendAlert(d.BackendAlerts)
+					{ children... }
+				</main>
+				@appFooter(d)
+			} else {
+				<div class="auth-topbar">@themeToggle()</div>
+				<main id="content" class="container auth-wrap">
+					{ children... }
+				</main>
+			}
+			<div id="toast-container" aria-live="polite" aria-atomic="true">
+				if d.Flash != nil {
+					@Toast(d.Flash.Message, d.Flash.Type)
+				}
+				// Stable, always-present morph target the live hub patches a one-shot
+				// toast into on the Kea down-edge (the persistent state lives in the
+				// #backend-alert strip; this is just the "it just broke" nudge).
+				@KeaToastSlot(false)
+			</div>
+			if d.Authenticated {
+				<div id="live" hidden aria-hidden="true" data-init="@get('/sse/live?page=' + encodeURIComponent(location.pathname), {openWhenHidden: true})"></div>
+				@poolDragScript()
+				@expiryTickScript()
+				if d.State == "CONFIGURING" {
+					@configuringReloadScript()
+				}
+			}
+			@themeToggleScript()
+			@busySubmitScript()
+		</body>
+	</html>
+}
+
+// BackendAlert is the always-on backend-health strip rendered at the top of the
+// content column, above each page's h1 (live region #backend-alert). It warns that
+// a runtime backend is offline: Kea (error - DHCP stops), MariaDB (warning -
+// reservations/pinning unavailable, dynamic leases keep serving), or the Wi-Fi
+// uplink (warning). The wrapper is always present as an empty morph target and
+// renders rows only when something is wrong, so a healthy box shows nothing
+// (#backend-alert:empty{display:none}). Netmon signals go to the header pill, not here.
+templ BackendAlert(rows []AlertRow) {
+	<div id="backend-alert">
+		for _, a := range rows {
+			<div class={ "alert", alertClass(a.Severity) } role="alert">
+				@Icon("triangle-alert")
+				<div class="alert-body">
+					<strong>{ a.Title }</strong>
+					if a.Detail != "" {
+						<span class="alert-detail">{ a.Detail }</span>
+					}
+				</div>
+			</div>
+		}
+	</div>
+}
+
+// KeaToastSlot is the morph target (#kea-toast-slot) the live hub patches on a Kea
+// up/down transition. show=true renders a self-dismissing error toast ("DHCP just
+// went offline"); show=false leaves the slot empty. Edge-driven only (never in the
+// connect snapshot), so a client joining mid-outage sees only the persistent strip.
+templ KeaToastSlot(show bool) {
+	<div id="kea-toast-slot">
+		if show {
+			<div class="toast toast-error" role="alert" data-init__delay.8s="el.remove()">
+				@toastIcon("error")
+				<div class="toast-content">DHCP server just went offline - new leases are not being served.</div>
+				<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
+			</div>
+		}
+	</div>
+}
+
+// configuringReloadScript is emitted only while the appliance is CONFIGURING (an apply
+// in flight). It polls the public /api/state probe and reloads the page the moment the
+// box leaves CONFIGURING (ACTIVE on success, ONBOARDING on a failed apply), so the
+// header pill and the whole page resync without depending on the live SSE surviving the
+// eth0 bounce the apply performs. Self-healing: a frozen/stale SSE can't strand the page.
+templ configuringReloadScript() {
+	<script>
+		(function () {
+			function poll() {
+				fetch('/api/state', { cache: 'no-store' })
+					.then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+					.then(function (s) {
+						if (s.trim() !== 'CONFIGURING') { location.reload(); }
+						else { setTimeout(poll, 1500); }
+					})
+					.catch(function () { setTimeout(poll, 2000); });
+			}
+			setTimeout(poll, 1500);
+		})();
+	</script>
+}
+
+// expiryTickScript counts down every lease-table EXPIRES cell once a second from its
+// absolute epoch (data-expires), so the value is always live - independent of the SSE
+// tick or a cached/rebroadcast fragment (the epoch is absolute, never stale). 0 = "—"
+// (unknown timing), -1 = "never" (infinite lease).
+templ expiryTickScript() {
+	<script>
+		(function () {
+			function fmt(epoch) {
+				if (epoch < 0) return "never";
+				if (epoch === 0) return "—";
+				var rem = epoch - Math.floor(Date.now() / 1000);
+				if (rem <= 0) return "expired";
+				if (rem < 60) return rem + "s";
+				if (rem < 3600) return Math.floor(rem / 60) + "m";
+				var h = Math.floor(rem / 3600), m = Math.floor((rem % 3600) / 60);
+				return m === 0 ? h + "h" : h + "h " + m + "m";
+			}
+			function tick() {
+				document.querySelectorAll("[data-expires]").forEach(function (el) {
+					var v = parseInt(el.getAttribute("data-expires"), 10);
+					if (!isNaN(v)) el.textContent = fmt(v);
+				});
+			}
+			tick();
+			setInterval(tick, 1000);
+		})();
+	</script>
+}
+
+templ noFoucThemeScript() {
+	<script>
+		(function () {
+			try {
+				var t = localStorage.getItem('ggo-theme');
+				if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+			} catch (e) {}
+		})();
+	</script>
+}
+
+// poolDragScript is the framework-free drag-reorder for the pool editor. Dragging
+// a row's grip reorders the rows in the DOM (one-shot, NO MutationObserver - that
+// fights Datastar's morph), renumbers the scopes[s][pool][i] field indices to the
+// new order, then fires a `change` so the existing Datastar recompute handler
+// re-posts the form and the server re-renders authoritatively in the new order.
+templ poolDragScript() {
+	<script>
+		(function () {
+			var dragging = null;
+			function rowsBody(el) { return el.closest(".pp-body") || el.closest(".pp-grid"); }
+			document.addEventListener("dragstart", function (e) {
+				var grip = e.target.closest(".pp-grip"); if (!grip) return;
+				dragging = grip.closest(".pp-row"); if (!dragging) return;
+				e.dataTransfer.effectAllowed = "move";
+				try { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.setDragImage(dragging, 10, 10); } catch (_) {}
+				dragging.classList.add("pp-dragging");
+			});
+			document.addEventListener("dragend", function (e) {
+				if (!dragging) return;
+				var row = dragging; dragging = null; row.classList.remove("pp-dragging");
+				var region = row.closest("[id^=poolplan-]"); if (!region) return;
+				var s = region.id.replace("poolplan-", "");
+				ggoRenumberPool(region, s);
+				// Re-post via the hidden recompute trigger button so Datastar re-posts
+				// the form and the server re-renders authoritatively in the new order.
+				var trigger = region.querySelector(".pp-recompute-trigger");
+				if (trigger) {
+					trigger.click();
+				} else {
+					// Fallback to legacy dispatch if button is not present
+					var legacy = region.querySelector(".pp-count-input, .pp-name-input, .pp-range-input, .pp-octet");
+					if (legacy) {
+						legacy.dispatchEvent(new Event("input", { bubbles: true }));
+						legacy.dispatchEvent(new Event("change", { bubbles: true }));
+					}
+				}
+			});
+			document.addEventListener("dragover", function (e) {
+				if (!dragging) return;
+				var over = e.target.closest(".pp-row");
+				if (!over || over === dragging || over.classList.contains("pp-header")) return;
+				if (rowsBody(over) !== rowsBody(dragging)) return; // same scope only
+				e.preventDefault();
+				var r = over.getBoundingClientRect();
+				over.parentNode.insertBefore(dragging, (e.clientY - r.top) < r.height / 2 ? over : over.nextSibling);
+			});
+			document.addEventListener("drop", function (e) {
+				e.preventDefault();
+			});
+			// ggoRenumberPool rewrites every scopes[s][pool][N][...] field index to its
+			// new document order, so the server parses the rows in the dragged order.
+			function ggoRenumberPool(scope, s) {
+				var prefix = "scopes[" + s + "][pool]";
+				var esc = prefix.replace(/[\[\]]/g, "\\$&");
+				var re = new RegExp("^" + esc + "\\[(\\d+)\\]");
+				var order = [], map = {};
+				scope.querySelectorAll("[name^='" + prefix + "']").forEach(function (el) {
+					var m = el.name.match(re); if (!m) return;
+					if (!(m[1] in map)) { map[m[1]] = order.length; order.push(m[1]); }
+				});
+				scope.querySelectorAll("[name^='" + prefix + "']").forEach(function (el) {
+					el.name = el.name.replace(re, function (_, n) { return prefix + "[" + map[n] + "]"; });
+				});
+			}
+			document.addEventListener("click", function (e) {
+				document.querySelectorAll("details[open]").forEach(function (el) {
+					if (!el.contains(e.target)) {
+						el.removeAttribute("open");
+					}
+				});
+			});
+			document.addEventListener("toggle", function (e) {
+				var details = e.target;
+				if (!details.classList.contains("pp-icon-picker") && !details.classList.contains("pp-vendor-picker") && !details.classList.contains("pp-classadd-picker")) return;
+				var menu = details.querySelector(".pp-icon-grid, .pp-vendor-menu, .pp-classadd-menu");
+				if (!menu) return;
+				if (details.open) {
+					// Position the menu in a FIXED layer anchored to the summary, so the pool
+					// list's own overflow (.pp-body / .pp-grid clip their scroll area) can't
+					// cut it off - a short list otherwise chops the icon/vendor menu. Fixed
+					// is viewport-relative, so it escapes those overflow ancestors entirely.
+					var sum = details.querySelector("summary") || details;
+					var r = sum.getBoundingClientRect();
+					var isVendor = details.classList.contains("pp-vendor-picker");
+					var minW = isVendor ? 220 : (details.classList.contains("pp-classadd-picker") ? 240 : 160);
+					var spaceBelow = window.innerHeight - r.bottom;
+					var spaceAbove = r.top;
+					var menuHeight = menu.scrollHeight || (isVendor ? 240 : 200);
+
+					menu.style.position = "fixed";
+					menu.style.zIndex = "60";
+					menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - minW - 8)) + "px";
+					menu.style.right = "auto";
+					if (spaceBelow < menuHeight && spaceAbove > spaceBelow) {
+						details.classList.add("pp-open-up");
+						menu.style.top = "auto";
+						menu.style.bottom = (window.innerHeight - r.top + 4) + "px";
+						menu.style.maxHeight = Math.max(120, spaceAbove - 16) + "px";
+					} else {
+						details.classList.remove("pp-open-up");
+						menu.style.bottom = "auto";
+						menu.style.top = (r.bottom + 4) + "px";
+						menu.style.maxHeight = Math.max(120, spaceBelow - 16) + "px";
+					}
+				} else {
+					details.classList.remove("pp-open-up");
+					menu.style.position = menu.style.zIndex = menu.style.top = menu.style.bottom = menu.style.left = menu.style.right = menu.style.maxHeight = "";
+				}
+			}, true);
+		})();
+	</script>
+}
+
+// appFooter is the global fixed footer on every authenticated page: the product version
+// (left), pinned to the viewport bottom so it never moves. Pages with a page-level commit
+// action fill the right side - currently Settings, whose Save submits #settings-form via
+// the form= attribute. The spacer reserves the footer's height so content scrolls clear.
+templ appFooter(d PageData) {
+	<div class="save-bar-spacer" aria-hidden="true"></div>
+	<footer class="app-footer">
+		<div class="app-footer-inner">
+			<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
+			<div class="btn-row">
+				if d.CurrentPath == "/settings" {
+					<button class="btn btn-primary" type="submit" form="settings-form">@Icon("check") Save Settings</button>
+				}
+				if d.CurrentPath == "/setup" {
+					// Wizard controls live in the sticky footer so Apply/Cancel/Add stay
+					// reachable without scrolling the long form. The submit button is outside
+					// #setup-form but drives it via form=. Cancel only when there's a running
+					// config to return to (Edit/New from ACTIVE); first-run onboarding has no
+					// dashboard yet.
+					<button type="button" class="btn btn-secondary" onclick="ggoAddScope()">@Icon("plus") Add VLAN Scope</button>
+					if d.State == "ACTIVE" {
+						<a class="btn btn-secondary" href="/dashboard">Cancel</a>
+					}
+					<button class="btn btn-primary" type="submit" form="setup-form">@Icon("check") Apply Profile &amp; Activate DHCP</button>
+				}
+			</div>
+		</div>
+	</footer>
+}
+
+templ themeToggleScript() {
+	<script>
+		(function () {
+			var KEY = 'ggo-theme';
+			function current() { try { return localStorage.getItem(KEY) || 'os'; } catch (e) { return 'os'; } }
+			function apply(mode) {
+				var el = document.documentElement;
+				if (mode === 'light' || mode === 'dark') el.setAttribute('data-theme', mode);
+				else el.removeAttribute('data-theme');
+				document.querySelectorAll('[data-theme-icon]').forEach(function (i) { i.hidden = i.getAttribute('data-theme-icon') !== mode; });
+			}
+			window.__ggoCycleTheme = function () {
+				var next = { os: 'light', light: 'dark', dark: 'os' }[current()] || 'light';
+				try { next === 'os' ? localStorage.removeItem(KEY) : localStorage.setItem(KEY, next); } catch (e) {}
+				apply(next);
+			};
+			document.addEventListener('DOMContentLoaded', function () { apply(current()); });
+		})();
+	</script>
+}
+
+// busySubmitScript gives the native navigate-away forms (setup apply / settings save /
+// reset confirm) the same busy treatment the Datastar pools Save has: on submit, disable
+// the clicked button and set aria-busy (CSS spins it). Uses e.submitter so it works even
+// when the button sits outside its <form> (settings save uses form=). Skipped when a
+// prior onsubmit handler (e.g. setup validation) already canceled the submit.
+templ busySubmitScript() {
+	<script>
+		document.addEventListener('submit', function (e) {
+			if (e.defaultPrevented) return;
+			var f = e.target;
+			if (!f || !f.matches || !f.hasAttribute('data-busy')) return;
+			var btn = e.submitter;
+			if (btn) {
+				btn.classList.add('is-busy');
+				btn.setAttribute('aria-busy', 'true');
+				// Defer disabling so the in-flight native submit still carries the button.
+				setTimeout(function () { btn.disabled = true; }, 0);
+			}
+		}, false);
+	</script>
+}
+
+// header is the two-tier app header. The status pill (#state-badge) is the live
+// region the SSE hub re-merges on lifecycle change.
+templ header(d PageData) {
+	<header class="app-header">
+		<div class="app-header-top">
+			<div class="brand"><span class="brand-mark">@Icon("kea")</span>Green-GO Kea DHCP</div>
+			<div class="app-header-actions">
+				if d.State != "" {
+					@StatusPill(pageHealthPill(d))
+				}
+				@SysHealthIndicator(d.SysHealth)
+				@themeToggle()
+				@accountMenu(d)
+			</div>
+		</div>
+		if hasNav(d) {
+			<nav class="app-nav" aria-label="Primary">
+				for _, l := range navLinksFor(d.State) {
+					@navLink(l, d.CurrentPath)
+				}
+			</nav>
+		}
+	</header>
+}
+
+// StatusPill is the header pill (live region #state-badge). It shows the lifecycle
+// state, recolors to the worst live-alert severity (err > warn > state), appends a
+// "· N warnings/errors" counter, lists the alert titles in its tooltip, and always
+// links to Diagnostics (where the same events are recorded with history).
+templ StatusPill(v StatusPillView) {
+	<a id="state-badge" href={ templ.SafeURL(pillHref(v)) } class={ "status-pill", pillHealthClass(v) } title={ pillTitle(v) } aria-live="polite" aria-atomic="true">
+		<span class="dot" aria-hidden="true"></span>{ pillLabel(v) }
+	</a>
+}
+
+templ navLink(l link, currentPath string) {
+	if l.Path == currentPath {
+		<a class="nav-link" href={ templ.SafeURL(l.Path) } aria-current="page">@Icon(l.Icon) <span>{ l.Label }</span></a>
+	} else {
+		<a class="nav-link" href={ templ.SafeURL(l.Path) }>@Icon(l.Icon) <span>{ l.Label }</span></a>
+	}
+}
+
+// accountMenu is a native-<details> dropdown (framework-free, like the theme
+// toggle): an account icon opens a small menu showing who's signed in and a
+// clear "Sign Out" action - instead of an ambiguous bare icon in the header.
+templ accountMenu(d PageData) {
+	<details class="account-menu">
+		<summary class="icon-btn" aria-label="Account menu" title="Account">@Icon("circle-user")</summary>
+		<div class="account-dropdown">
+			if d.Username != "" {
+				<div class="account-who">Signed in as <strong>{ d.Username }</strong></div>
+			}
+			<form method="post" action="/logout">
+				<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
+				<button type="submit" class="account-item">@Icon("log-out") Sign Out</button>
+			</form>
+		</div>
+	</details>
+}
+
+templ themeToggle() {
+	<button type="button" class="theme-toggle" onclick="__ggoCycleTheme()" aria-label="Toggle color theme" title="Switch color theme (system, light, or dark)">
+		<span class="ic" data-theme-icon="os">@Icon("monitor")</span>
+		<span class="ic" data-theme-icon="light" hidden>@Icon("sun")</span>
+		<span class="ic" data-theme-icon="dark" hidden>@Icon("moon")</span>
+	</button>
+}
+
+templ Toast(msg, typ string) {
+	<div
+		class={ "toast", "toast-" + typ }
+		role="status"
+		if typ != "error" {
+			data-init__delay.5s="el.remove()"
+		}
+	>
+		@toastIcon(typ)
+		<div class="toast-content">{ msg }</div>
+		<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
+	</div>
+}
+
+templ toastIcon(typ string) {
+	<span class="toast-icon">
+		switch typ {
+			case "success":
+				@Icon("circle-check")
+			case "error":
+				@Icon("circle-alert")
+			default:
+				@Icon("info")
+		}
+	</span>
+}

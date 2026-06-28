@@ -1,0 +1,7 @@
+# Clamp Kea to the 3.0.x series. The ISC `kea-3-0` Cloudsmith channel already
+# tracks 3.0.x, but this makes the constraint explicit and blocks an accidental
+# `apt upgrade` onto a different major/minor (2.x or 3.2+) whose config and
+# flex-id behaviour this appliance is not compatible with.
+Package: isc-kea-*
+Pin: version 3.0.*
+Pin-Priority: 1001

@@ -1,0 +1,195 @@
+package views
+
+// Settings is a native POST form (it may re-IP the appliance, returning the
+// reconnect interstitial, so it navigates rather than streaming SSE). Datastar
+// signals drive in-form reactivity only (DNS toggle, password-match), never the
+// system. Export is a plain download link.
+templ Settings(v SettingsView) {
+	@Base(v.Page) {
+		@PageHead("Settings", "Network, DHCP defaults, and administrator credentials.")
+		@dhcpOptNames()
+		@dhcpOptionsScript()
+		<form id="settings-form" method="post" action="/settings/save" data-busy data-signals={ settingsSignals(v) }>
+			<input type="hidden" name="csrf_token" value={ v.Page.CSRFToken }/>
+			<h3 class="section-heading">Network</h3>
+			if v.ShowUplink {
+				<div class="card" id="wifi-uplink">
+					<h3>@Icon("globe") WiFi Uplink</h3>
+					<p class="help">Upstream WiFi for internet access (NAT on <span class="mono">wlan0</span>). Pick which scopes route through it on the DHCP Pools page.</p>
+					<div class="switch-field boxed">
+						<span>Enable WiFi Uplink</span>
+						<label class="switch">
+							<input type="checkbox" name="uplink_enabled" value="on" data-bind="uplink"/>
+							<span class="track"></span>
+							<span class="thumb"></span>
+						</label>
+					</div>
+					// Fields stay rendered and just disable when the uplink is off (no
+					// data-show, so toggling doesn't reflow the card).
+					<div class="uplink-cfg" data-class:is-disabled="!$uplink">
+						<div class="grid-2">
+							<div class="form-group no-margin">
+								<label class="form-label" for="uplink_ssid">Network (SSID)</label>
+								<div class="wifi-ssid-row">
+									<select class="form-control" id="uplink_ssid" name="uplink_ssid" data-attr:disabled="!$uplink">
+										if v.UplinkSSID != "" {
+											<option value={ v.UplinkSSID } selected>{ v.UplinkSSID }</option>
+										} else {
+											<option value="">Scan to find networks</option>
+										}
+									</select>
+									<button type="button" class="btn btn-secondary wifi-scan-btn" onclick="ggoSettingsScanWifi()" data-attr:disabled="!$uplink">@Icon("search") Scan</button>
+								</div>
+							</div>
+							<div class="form-group no-margin">
+								<label class="form-label" for="uplink_pass">Password</label>
+								<input class="form-control" type="password" id="uplink_pass" name="uplink_pass" value={ v.UplinkPassword } placeholder="WiFi password (blank for open)" data-attr:disabled="!$uplink"/>
+							</div>
+						</div>
+					</div>
+				</div>
+			}
+			<div class="card">
+				<h3>@Icon("network") Onboarding Network</h3>
+				<p class="help">Used only while onboarding (after a factory reset). Set here so the next onboarding comes up the way you want.</p>
+				<div class="grid-3">
+					<div class="form-group no-margin">
+						<label class="form-label" for="onboarding_ip">Management IP / CIDR</label>
+						<input class="form-control mono" id="onboarding_ip" name="onboarding_ip" value={ v.OnboardingIP } placeholder="10.0.0.1/24"/>
+					</div>
+					<div class="form-group no-margin">
+						<label class="form-label" for="softap_ssid">SoftAP SSID</label>
+						<input class="form-control" id="softap_ssid" name="softap_ssid" value={ v.SoftAPSSID }/>
+					</div>
+					<div class="form-group no-margin">
+						<label class="form-label" for="softap_pass">SoftAP passphrase</label>
+						<input class="form-control" id="softap_pass" name="softap_pass" type="password" value={ v.SoftAPPass } placeholder="8+ chars, or blank = open"/>
+					</div>
+				</div>
+			</div>
+			<h3 class="section-heading">DHCP Defaults</h3>
+			<div class="card">
+				<h3>@Icon("clock") DHCP Defaults</h3>
+				<p class="help">Defaults handed to every scope. A scope can override any of these on the DHCP Pools page.</p>
+				<div class="grid-2">
+					<div class="form-group no-margin">
+						<label class="form-label" for="lease_lifetime">Lease lifetime (seconds)</label>
+						<input class="form-control mono" id="lease_lifetime" name="lease_lifetime" type="number" min="30" max="86400" value={ itoa(v.LeaseLifetime) }/>
+						<p class="help">How long a device keeps its address before renewing (30-86400). Lower means reservations and pool changes take effect sooner.</p>
+					</div>
+					<div class="form-group no-margin">
+						<label class="form-label" for="global_dns">Default DNS servers</label>
+						<input class="form-control mono" id="global_dns" name="global_dns" value={ v.GlobalDNS } placeholder="comma-separated IPs (blank = none)"/>
+						<p class="help">Handed to every scope unless it sets its own. Leave blank to give devices no resolver.</p>
+					</div>
+				</div>
+				@optionEditor("", withBlankRow(v.GlobalOptions))
+			</div>
+			<h3 class="section-heading">Administration</h3>
+			<div class="card">
+				<h3>@Icon("key") Administrator Account</h3>
+				<p class="help">Enter the current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p>
+				<div class="grid-2">
+					<div class="form-group no-margin">
+						<label class="form-label" for="admin_username">Username</label>
+						<input class="form-control" id="admin_username" name="username" type="text" value={ v.Username } autocomplete="username"/>
+					</div>
+					<div class="form-group no-margin">
+						<label class="form-label" for="current_password">Current password</label>
+						<div class="pw-field">
+							<input class="form-control" id="current_password" name="current_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" autocomplete="current-password"/>
+							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
+								<span data-show="!$showpw">@Icon("eye")</span>
+								<span data-show="$showpw">@Icon("eye-off")</span>
+							</button>
+						</div>
+					</div>
+				</div>
+				<div class="grid-2">
+					<div class="form-group no-margin">
+						<label class="form-label" for="new_password">New password <span class="help-inline">(min 12 characters)</span></label>
+						<div class="pw-field">
+							<input class="form-control" id="new_password" name="new_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="np" autocomplete="new-password"/>
+							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
+								<span data-show="!$showpw">@Icon("eye")</span>
+								<span data-show="$showpw">@Icon("eye-off")</span>
+							</button>
+						</div>
+					</div>
+					<div class="form-group no-margin">
+						<label class="form-label" for="confirm_password">Confirm new password</label>
+						<div class="pw-field">
+							<input class="form-control" id="confirm_password" name="confirm_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="np2" autocomplete="new-password" aria-describedby="np-mismatch" data-attr:aria-invalid="$np2 !== '' && $np !== $np2"/>
+							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
+								<span data-show="!$showpw">@Icon("eye")</span>
+								<span data-show="$showpw">@Icon("eye-off")</span>
+							</button>
+						</div>
+						<div id="np-mismatch" class="help help-err" role="alert" data-show="$np2 !== '' && $np !== $np2">Passwords do not match.</div>
+					</div>
+				</div>
+			</div>
+		</form>
+		@settingsBackupCard(v)
+		// Reset is only meaningful once a profile is applied (it was an ACTIVE-only nav
+		// tab before being folded in here); the reset POST routes aren't whitelisted in
+		// ONBOARDING anyway. Destructive, so it sits last - just above the save bar.
+		if v.Page.State == "ACTIVE" {
+			@ResetDangerZone(v.Page.CSRFToken)
+		}
+		// Save Settings + version live in the global fixed footer (appFooter, base.templ),
+		// which renders the Save button when on /settings and submits #settings-form via
+		// the form= attribute.
+		if v.ShowUplink {
+			@settingsWifiScript()
+		}
+		@restoreScript()
+	}
+}
+
+// settingsBackupCard is the full-appliance backup/restore section. It mirrors the Danger
+// zone's heading + two-card layout (Backup | Restore), each with a short explanation. It
+// sits OUTSIDE the settings-save form (a multipart restore upload cannot nest in another
+// form); restore runs through the shared @RestoreDialog.
+templ settingsBackupCard(v SettingsView) {
+	<h2 class="section-title">@Icon("save") Backup &amp; Restore</h2>
+	<div class="split-grid">
+		<div class="card">
+			<h3>@Icon("download") Backup</h3>
+			<p class="help">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so keep the file somewhere safe.</p>
+			<a class="btn btn-secondary" href="/settings/backup">@Icon("download") Download Backup</a>
+		</div>
+		<div class="card">
+			<h3>@Icon("upload") Restore</h3>
+			<p class="help">Load a backup file to bring saved configuration back. You choose which sections to restore - admins, profiles and scopes, port labels, reservations - and the selected ones are overwritten as the appliance re-applies them.</p>
+			<button type="button" class="btn btn-secondary" onclick="document.getElementById('settings-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
+		</div>
+	</div>
+	@RestoreDialog("settings-restore-dlg", "/settings/restore", v.Page.CSRFToken, true)
+}
+
+// settingsWifiScript scans for WiFi networks (GET /wifi/scan) into the uplink SSID
+// select, framework-free. It preserves the currently-saved SSID as a "(current)"
+// option so leaving the field untouched keeps the existing network selected.
+templ settingsWifiScript() {
+	<script>
+		window.ggoSettingsScanWifi = function () {
+			var sel = document.getElementById("uplink_ssid"); if (!sel) return;
+			var cur = sel.value;
+			sel.innerHTML = "<option value=''>Scanning…</option>";
+			fetch("/wifi/scan").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {
+				sel.innerHTML = "";
+				if (cur) { var c = document.createElement("option"); c.value = cur; c.textContent = cur + " (current)"; c.selected = true; sel.appendChild(c); }
+				(aps || []).forEach(function (ap) {
+					if (ap.ssid === cur) return;
+					var o = document.createElement("option"); o.value = ap.ssid; o.textContent = ap.ssid + " (" + ap.signal + "%, " + ap.security + ")"; sel.appendChild(o);
+				});
+				if (!sel.options.length) { sel.innerHTML = "<option value=''>No networks found</option>"; }
+			}).catch(function () {
+				sel.innerHTML = "";
+				if (cur) { var c = document.createElement("option"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }
+				var e = document.createElement("option"); e.value = ""; e.textContent = "Scan failed, click Scan to retry"; sel.appendChild(e);
+			});
+		};
+	</script>
+}

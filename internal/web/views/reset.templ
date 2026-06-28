@@ -1,0 +1,77 @@
+package views
+
+// ResetDangerZone is the two reset paths, rendered as a trailing "danger zone" section
+// on the Settings page (the retired /reset page redirects here). Both are destructive and
+// trigger a network re-IP, so each is a native POST form (no Datastar) gated behind a
+// confirm <dialog>; the browser navigates to the reconnect interstitial the server
+// returns. Dialog open/close is framework-free (plain onclick), like the theme toggle,
+// so it works regardless of Datastar.
+templ ResetDangerZone(csrf string) {
+	<h2 class="danger-title">@Icon("triangle-alert") Danger zone</h2>
+	<div class="split-grid">
+		<div class="card">
+			<h3>Reboot Appliance</h3>
+			<p class="help">Restarts the box. DHCP is unavailable for about a minute; this page reconnects on its own once it is back. No configuration is changed.</p>
+			<button type="button" class="btn btn-secondary" onclick="document.getElementById('dlg-reboot').showModal()">@Icon("refresh-cw") Reboot</button>
+		</div>
+		<div class="card">
+			<h3>Shut Down Appliance</h3>
+			<p class="help">Powers the box off. It stays offline - and DHCP stops - until you physically power-cycle the device.</p>
+			<button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-poweroff').showModal()">@Icon("power") Shut Down</button>
+		</div>
+		<div class="card">
+			<h3>Routine End-of-Job Reset</h3>
+			<p class="help">Tears down the active profile, leases, and scopes; returns to <strong>ONBOARDING</strong>. Keeps the admin account, saved profiles, and switch-port labels.</p>
+			<button type="button" class="btn btn-secondary" onclick="document.getElementById('dlg-routine').showModal()">@Icon("rotate-ccw") Reset to Onboarding</button>
+		</div>
+		<div class="card">
+			<h3>Hard Factory Reset</h3>
+			<p class="help">Wipes everything back to <strong>FACTORY</strong>: configs, the admin account, saved profiles, and port labels. Databases are recreated on boot.</p>
+			<button type="button" class="btn btn-danger" onclick="document.getElementById('dlg-factory').showModal()">@Icon("power") Factory Reset</button>
+		</div>
+	</div>
+	@confirmDialog(confirmDialogOpts{
+		ID: "dlg-reboot", Title: "Reboot this appliance?", Action: "/system/reboot", CSRF: csrf,
+		Body: "DHCP is unavailable while the box restarts (about a minute). This page reconnects automatically once it is back. No configuration is changed.",
+		Confirm: "Reboot", Danger: false,
+	})
+	@confirmDialog(confirmDialogOpts{
+		ID: "dlg-poweroff", Title: "Shut down this appliance?", Action: "/system/poweroff", CSRF: csrf,
+		Body: "The box powers off and DHCP stops until you physically power-cycle the device. There is no remote way to turn it back on.",
+		Confirm: "Shut Down", Danger: true,
+	})
+	@confirmDialog(confirmDialogOpts{
+		ID: "dlg-routine", Title: "Reset to Onboarding?", Action: "/reset/routine", CSRF: csrf,
+		Body: "This deactivates the active profile and returns the appliance to onboarding. Your session reconnects automatically on the onboarding IP.",
+		Confirm: "Reset to Onboarding", Danger: false,
+	})
+	@confirmDialog(confirmDialogOpts{
+		ID: "dlg-factory", Title: "Factory Reset this appliance?", Action: "/reset/factory", CSRF: csrf,
+		Body: "This permanently wipes all profiles, the admin account, saved profiles, and port labels, returning the box to factory state. This cannot be undone.",
+		Confirm: "Factory Reset", Danger: true,
+	})
+}
+
+type confirmDialogOpts struct {
+	ID, Title, Action, CSRF, Body, Confirm string
+	Danger                                 bool
+}
+
+// confirmDialog is a reusable native-<dialog> confirmation wrapping a POST form.
+templ confirmDialog(o confirmDialogOpts) {
+	<dialog id={ o.ID } aria-labelledby={ o.ID + "-title" }>
+		<form method="post" action={ templ.SafeURL(o.Action) } data-busy>
+			<input type="hidden" name="csrf_token" value={ o.CSRF }/>
+			<div class="dialog-head" id={ o.ID + "-title" }>{ o.Title }</div>
+			<div class="dialog-body"><p>{ o.Body }</p></div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				if o.Danger {
+					<button type="submit" class="btn btn-danger-solid">{ o.Confirm }</button>
+				} else {
+					<button type="submit" class="btn btn-primary">{ o.Confirm }</button>
+				}
+			</div>
+		</form>
+	</dialog>
+}

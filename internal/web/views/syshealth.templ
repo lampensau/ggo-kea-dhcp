@@ -1,0 +1,22 @@
+package views
+
+// SysHealthIndicator is the header CPU/memory/storage chip (live region
+// #sys-health). The outer span is always present as a stable morph target; its
+// content renders only when v.Show, so off-ACTIVE / pre-sample it is empty and
+// #sys-health:empty{display:none} hides it (mirrors #alert-strip). The CPU glyph
+// is tinted by the worst-of-three severity; the figures sit in a hover/focus
+// tooltip that opens BELOW the icon (the header is at the top of the viewport).
+templ SysHealthIndicator(v SysHealthView) {
+	<span id="sys-health">
+		if v.Show {
+			<span class={ "info-tip", "sys-health", "sys-" + v.Severity } tabindex="0" role="status" aria-label={ sysHealthAria(v) }>
+				@Icon("cpu")
+				<span class="info-tip-text sys-health-tip" aria-hidden="true">
+					<span class="sys-health-row"><span>CPU</span><span class="mono">{ itoa(v.CPU) }%</span></span>
+					<span class="sys-health-row"><span>Memory</span><span class="mono">{ itoa(v.Mem) }%</span></span>
+					<span class="sys-health-row"><span>Storage</span><span class="mono">{ itoa(v.Disk) }%</span></span>
+				</span>
+			</span>
+		}
+	</span>
+}

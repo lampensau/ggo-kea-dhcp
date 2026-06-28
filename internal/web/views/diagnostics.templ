@@ -1,0 +1,137 @@
+package views
+
+// Diagnostics surfaces the prerequisite probes (the same checks --check runs), any
+// database-recovery notice, and the recent system/audit events (folded in from the
+// retired Audit Log page). Only the checks card is a collapse-card <details>: it
+// auto-opens when any probe is WARN/FAIL and stays collapsed when healthy (reading
+// "all good" from its rollup pill). The audit log is always a full, plain card.
+templ Diagnostics(v DiagnosticsView) {
+	@Base(v.Page) {
+		@PageHead("Diagnostics", "Prerequisite checks and recent system events. Re-probed each time this page loads.")
+		if v.Recovery != nil {
+			<div class="alert alert-warn" role="alert">
+				@Icon("triangle-alert")
+				<div class="alert-body">
+					<strong>Configuration database was reset</strong>
+					<span class="alert-detail">The control-plane database was found corrupt at { v.Recovery.When } and recreated. The previous copy is at <span class="mono">{ v.Recovery.From }</span>. Restore a backup from Settings to recover users, profiles, and reservations.</span>
+				</div>
+			</div>
+		}
+		<details class="card collapse-card" open?={ v.Degraded }>
+			<summary class="collapse-head" aria-label="Toggle prerequisite checks">
+				<span class="collapse-title">
+					<span class="collapse-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+					<h3 class="no-margin">Prerequisite checks</h3>
+				</span>
+				@diagChecksRollup(v.Checks)
+			</summary>
+			<div class="collapse-body">
+				<div class="table-scroll">
+					<table>
+						<thead>
+							<tr><th>Status</th><th>Check</th><th>Detail</th></tr>
+						</thead>
+						<tbody>
+							for _, c := range v.Checks {
+								<tr>
+									<td>
+										<span class="diag-status">
+											<span class={ "status-dot", diagDot(c.Status) } aria-hidden="true"></span>
+											<span class={ "badge", diagBadgeClass(c.Status) }>{ c.Status }</span>
+										</span>
+									</td>
+									<td>{ c.Name }</td>
+									<td class="mono">{ c.Detail }</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</details>
+		<div class="card">
+			<div class="pool-head">
+				<h3 class="no-margin">System &amp; audit events</h3>
+			</div>
+			if len(v.Logs) == 0 {
+				<div class="empty">
+					@Icon("scroll-text")
+					<div class="empty-title">No audit entries yet</div>
+					<div>Administrative activity will be recorded here.</div>
+				</div>
+			} else {
+				// Rows are native <details>: the summary is a CSS-grid "table row" (fixed
+				// columns, no wrapping - detail truncates), expanding to a prose explanation.
+				// Each row has a stable anchor (id="audit-<id>") so the header pill can deep
+				// link to the latest alert (see auditJumpScript). The list scrolls inside a
+				// capped height instead of growing the page.
+				<div class="audit-list">
+					<div class="audit-head">
+						<span>Time</span><span>Actor</span><span>Action</span><span>Detail</span><span>Result</span><span aria-hidden="true"></span>
+					</div>
+					<div class="audit-scroll">
+						for _, l := range v.Logs {
+							<details class="audit-row" id={ "audit-" + itoa(l.ID) } data-result={ l.Result }>
+								<summary class="audit-summary">
+									<span class="mono audit-time">{ l.Timestamp }</span>
+									<span class="audit-actor">{ l.Actor }</span>
+									<span><span class="badge badge-class">{ auditActionLabel(l.Action) }</span></span>
+									<span class="audit-detail">{ auditSummary(l) }</span>
+									@auditResult(l.Result)
+									<span class="audit-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+								</summary>
+								<div class="audit-body">{ auditExplain(l) }</div>
+							</details>
+						}
+					</div>
+				</div>
+			}
+		</div>
+		@auditJumpScript()
+	}
+}
+
+// auditJumpScript opens + scrolls to a deep-linked audit row. With #latest-alert (the
+// header pill's link when a warning/error is live) it finds the newest non-OK row; with
+// #audit-<id> it targets that exact row. The row's <details> is opened, scrolled into the
+// capped-height list, and briefly highlighted. Framework-free; runs on load + hashchange.
+templ auditJumpScript() {
+	<script>
+		(function () {
+			function jump() {
+				var h = location.hash;
+				if (!h) return;
+				var el = null;
+				if (h === '#latest-alert') {
+					var rows = document.querySelectorAll('.audit-row');
+					for (var i = 0; i < rows.length; i++) { // newest first
+						var r = (rows[i].getAttribute('data-result') || '').toUpperCase();
+						if (r === 'WARNING' || r === 'WARN' || r === 'ERROR' || r === 'FAIL' || r === 'FAILED') { el = rows[i]; break; }
+					}
+				} else if (h.indexOf('#audit-') === 0) {
+					el = document.getElementById(h.slice(1));
+				}
+				if (!el) return;
+				el.open = true;
+				el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+				el.classList.remove('audit-flash'); void el.offsetWidth; el.classList.add('audit-flash');
+			}
+			window.addEventListener('hashchange', jump);
+			if (document.readyState !== 'loading') jump(); else document.addEventListener('DOMContentLoaded', jump);
+		})();
+	</script>
+}
+
+// diagChecksRollup is the collapsed checks-card pill: green when all pass, amber/red
+// with a count when something is degraded.
+templ diagChecksRollup(checks []DiagRow) {
+	<span class="collapse-rollup">
+		if warn, fail := diagIssues(checks); fail > 0 {
+			<span class="status-pill is-err">{ itoa(fail) } { pluralize(fail, "issue", "issues") }</span>
+		} else if warn > 0 {
+			<span class="status-pill is-warn">{ itoa(warn) } { pluralize(warn, "warning", "warnings") }</span>
+		} else {
+			<span class="status-pill is-ok">All passed</span>
+		}
+	</span>
+}

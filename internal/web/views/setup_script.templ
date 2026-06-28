@@ -1,0 +1,236 @@
+package views
+
+// setupScript is the wizard's client scaffold - framework-free vanilla JS for the
+// things Datastar doesn't own: cloning/removing scope cards, the WiFi-uplink
+// toggle + scan, the untagged-scope guard, and the Edit Configuration prefill. The pool
+// plan itself is fully Datastar: each scope's #poolplan-<id> seeds via data-init
+// (which fires when the cloned node is added to the DOM - data-on:load would NOT,
+// it only runs on Datastar's initial page scan) and every control @posts
+// /setup/pools/edit (see pool_plan_edit.go), which morphs the region. Cloning sets a
+// scope's fields synchronously before Datastar processes the new node, so the seed
+// runs with the right preset/CIDR.
+templ setupScript() {
+	<script>
+		(function () {
+			var scopeCount = 0;
+			function card(id) { return document.getElementById("scope-card-" + id); }
+			function tpl(id) { return document.getElementById("ggo-scope-tpl").innerHTML.split("__ID__").join(id).split("__N__").join(id + 1); }
+
+			window.ggoAddScope = function () {
+				var id = scopeCount;
+				document.getElementById("scopes-container").insertAdjacentHTML("beforeend", tpl(id));
+				scopeCount++;
+				return id; // #poolplan-<id> seeds itself via data-init on add-to-DOM
+			};
+			window.ggoRemoveScope = function (id) { var el = card(id); if (el) el.remove(); };
+
+			// ggoBumpCidr increments the third octet so a duplicated scope lands on the
+			// next /24-ish subnet instead of colliding with its source.
+			function ggoBumpCidr(cidr) {
+				var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)(\/\d+)?$/.exec((cidr || "").trim());
+				if (!m) return cidr || "10.0.0.0/24";
+				var o3 = (parseInt(m[3], 10) + 1) & 255;
+				return m[1] + "." + m[2] + "." + o3 + "." + m[4] + (m[5] || "");
+			}
+			// ggoCopyPlan clones the source scope's pool-plan form fields (the authoritative
+			// serialized plan, scopes[src][pool][...]) into the new scope's #poolplan host,
+			// renamed to the new id, as hidden inputs. Written synchronously before Datastar
+			// fires the new node's data-init seed, which (op=seed) prefers posted fields - so
+			// the duplicate reconstructs the EXACT plan rather than a default re-seed.
+			function ggoCopyPlan(srcId, newId) {
+				var src = card(srcId), host = document.getElementById("poolplan-" + newId);
+				if (!src || !host) return;
+				var pre = "scopes[" + srcId + "][pool]", newPre = "scopes[" + newId + "][pool]";
+				var esc = function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;"); };
+				var html = "";
+				src.querySelectorAll("[name^='" + pre + "']").forEach(function (el) {
+					html += '<input type="hidden" name="' + el.getAttribute("name").replace(pre, newPre) + '" value="' + esc(el.value) + '">';
+				});
+				if (html) host.innerHTML = html;
+			}
+			// ggoDuplicateScope clones a scope card into a new one: name (+ " copy"), preset,
+			// services, toggles, and the exact pool plan are copied; the VLAN and subnet are
+			// bumped so the duplicate doesn't collide. The fast way to populate a show.
+			window.ggoDuplicateScope = function (srcId) {
+				var src = card(srcId); if (!src) return;
+				var get = function (n) { var el = src.querySelector("[name='scopes[" + srcId + "][" + n + "]']"); return el ? el.value : ""; };
+				var newId = ggoAddScope();
+				var dst = card(newId);
+				var set = function (n, v) { var el = dst.querySelector("[name='scopes[" + newId + "][" + n + "]']"); if (el && v != null) el.value = v; };
+				var nm = get("name"); set("name", nm ? nm + " copy" : "");
+				set("preset", get("preset") || "greengo");
+				var vlan = parseInt(get("vlan"), 10);
+				set("vlan", isNaN(vlan) ? "" : String(vlan + 1));
+				set("cidr", ggoBumpCidr(get("cidr")));
+				set("gateway", get("gateway")); set("dns", get("dns")); set("lease", get("lease"));
+				var su = src.querySelector("#uplink-" + srcId); if (su && su.checked) ggoSetUplink(newId, true);
+				var sm = src.querySelector("[name='scopes[" + srcId + "][multicast_sniff]']");
+				var dm = dst.querySelector("[name='scopes[" + newId + "][multicast_sniff]']");
+				if (sm && dm) dm.checked = sm.checked;
+				var oNames = src.querySelectorAll("[name='scopes[" + srcId + "][opt_name][]']");
+				var oDatas = src.querySelectorAll("[name='scopes[" + srcId + "][opt_data][]']");
+				var opts = [];
+				oNames.forEach(function (el, i) { if (el.value) opts.push({ name: el.value, data: oDatas[i] ? oDatas[i].value : "" }); });
+				ggoWriteOptions(newId, opts);
+				ggoCopyPlan(srcId, newId);
+			};
+
+			// Per-scope uplink toggle (route THIS scope through the box-level wlan0). The
+			// SSID/password are box-level now (the Profile card), so this only flips the
+			// hidden checkbox + the button's pressed state.
+			window.ggoSetUplink = function (id, on) {
+				var cb = document.getElementById("uplink-" + id); if (cb) cb.checked = on;
+				var btn = document.getElementById("uplink-btn-" + id); if (btn) { btn.classList.toggle("is-on", on); btn.setAttribute("aria-pressed", on ? "true" : "false"); }
+			};
+			window.ggoToggleUplink = function (id) { var cb = document.getElementById("uplink-" + id); ggoSetUplink(id, cb ? !cb.checked : true); };
+
+			// When the box-level WiFi uplink is switched OFF, clear every per-scope "Route
+			// via Uplink" toggle - a scope can't route through an uplink that isn't enabled
+			// (the per-scope buttons also disable via data-attr:disabled="!$up").
+			window.ggoBoxUplinkChanged = function (cb) {
+				if (cb.checked) return;
+				document.querySelectorAll("[id^='uplink-btn-']").forEach(function (btn) {
+					ggoSetUplink(btn.id.replace("uplink-btn-", ""), false);
+				});
+			};
+
+			// ggoSetupScanWifi scans into the box-level uplink SSID select (the Profile card).
+			window.ggoSetupScanWifi = function () {
+				var sel = document.getElementById("setup-uplink-ssid"); if (!sel) return;
+				var cur = sel.value;
+				sel.innerHTML = "<option value=''>Scanning…</option>";
+				fetch("/wifi/scan").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {
+					sel.innerHTML = "";
+					if (cur) { var c = document.createElement("option"); c.value = cur; c.textContent = cur + " (current)"; c.selected = true; sel.appendChild(c); }
+					(aps || []).forEach(function (ap) { if (ap.ssid === cur) return; var o = document.createElement("option"); o.value = ap.ssid; o.textContent = ap.ssid + " (" + ap.signal + "%, " + ap.security + ")"; sel.appendChild(o); });
+					if (!sel.options.length) { sel.innerHTML = "<option value=''>No networks found</option>"; }
+				}).catch(function () { sel.innerHTML = "<option value=''>Scan failed, click to retry</option>"; });
+			};
+
+			// ggoValidateSetup blocks apply when more than one scope is left untagged
+			// (eth0 carries exactly one untagged scope; the rest need a VLAN ID). Rather
+			// than a page-bottom banner, it flags the offending VLAN fields INLINE - the
+			// same aria-invalid + help-err pattern the password fields use - then scrolls
+			// the first offender into view and focuses it, so the message sits where the
+			// fix is made.
+			window.ggoValidateSetup = function () {
+				ggoClearVlanErrors();
+				var untagged = [];
+				document.querySelectorAll("[id^='scope-card-']").forEach(function (c) {
+					var v = c.querySelector("[name$='[vlan]']");
+					if (v && !v.value.trim()) untagged.push(v);
+				});
+				if (untagged.length <= 1) return true;
+				// The first untagged scope is the one allowed on eth0; flag the rest.
+				untagged.slice(1).forEach(function (v) {
+					v.setAttribute("aria-invalid", "true");
+					var m = document.createElement("div");
+					m.className = "help help-err vlan-error-msg";
+					m.setAttribute("role", "alert");
+					m.textContent = "Set a VLAN ID - only one scope can be untagged on eth0.";
+					v.insertAdjacentElement("afterend", m);
+				});
+				var first = untagged[1];
+				first.scrollIntoView({ behavior: "smooth", block: "center" });
+				first.focus({ preventScroll: true });
+				return false;
+			};
+
+			// ggoClearVlanErrors removes any inline VLAN validation marks.
+			function ggoClearVlanErrors() {
+				document.querySelectorAll(".vlan-error-msg").forEach(function (el) { el.remove(); });
+				document.querySelectorAll("[name$='[vlan]'][aria-invalid='true']").forEach(function (el) { el.removeAttribute("aria-invalid"); });
+			}
+
+			// Clear a VLAN field's invalid mark the moment the operator starts fixing it.
+			document.addEventListener("input", function (e) {
+				if (e.target && e.target.matches && e.target.matches("[name$='[vlan]'][aria-invalid='true']")) {
+					e.target.removeAttribute("aria-invalid");
+					var next = e.target.nextElementSibling;
+					if (next && next.classList.contains("vlan-error-msg")) next.remove();
+				}
+			});
+
+			// ggoApplyImported rebuilds the wizard's scope cards from a ProfileExport-
+			// shaped object. The user-facing Import/Export buttons were removed (the full
+			// appliance Backup supersedes the profile-only export); this remains the
+			// engine behind the Edit Configuration prefill (#ggo-prefill below).
+			function ggoApplyImported(profile) {
+				if (!profile || !Array.isArray(profile.scopes)) { alert("This file does not look like a Green-GO profile export."); return; }
+				var name = document.getElementById("profile-name"); if (name && profile.name) name.value = profile.name;
+				document.getElementById("scopes-container").innerHTML = ""; scopeCount = 0;
+				profile.scopes.forEach(function (sc) {
+					var id = scopeCount;
+					document.getElementById("scopes-container").insertAdjacentHTML("beforeend", tpl(id));
+					scopeCount++;
+					// Set fields synchronously - before Datastar processes the node and
+					// fires #poolplan-<id>'s data-init seed.
+					var c = card(id), set = function (n, v) { var el = c.querySelector("[name='scopes[" + id + "][" + n + "]']"); if (el && v != null) el.value = v; };
+					set("name", sc.name || ""); set("preset", sc.preset || "greengo"); set("vlan", sc.vlan_id ? sc.vlan_id : "");
+					var cidrEl = c.querySelector("[name='scopes[" + id + "][cidr]']"); if (cidrEl && sc.cidr) cidrEl.value = sc.cidr;
+					var uplink = sc.uplink || {};
+					if (uplink.enabled) ggoSetUplink(id, true); // box-level SSID/password live in the Profile card
+					// Restore per-scope DHCP network services (gateway/DNS/lease override +
+					// extra options). The two static option rows in the template are filled
+					// first, then any extras are appended so a >2-option scope round-trips.
+					var svc = sc.services || {};
+					set("gateway", svc.gateway); set("dns", svc.dns);
+					set("lease", svc.lease_lifetime ? svc.lease_lifetime : "");
+					ggoWriteOptions(id, svc.options);
+					// Restore the EXACT saved pool plan: write it as hidden fields the
+					// data-init seed will post (op=seed prefers posted fields over a
+					// re-derive). The seed's PatchElements morph then replaces these with
+					// the rendered editor. Without this, edit/import would reset the plan.
+					ggoWritePlan(id, sc.pool_plan);
+				});
+			}
+			// ggoWritePlan injects a scope's saved plan as hidden inputs into its
+			// #poolplan-<id> host, named scopes[<id>][pool][<i>][<field>] so the seed
+			// post reconstructs the exact plan. Synchronous, so the fields exist before
+			// Datastar fires data-init on the cloned node.
+			function ggoWritePlan(id, plan) {
+				if (!Array.isArray(plan) || !plan.length) return;
+				var host = document.getElementById("poolplan-" + id); if (!host) return;
+				var esc = function (s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;"); };
+				var html = "";
+				plan.forEach(function (e, i) {
+					var base = "scopes[" + id + "][pool][" + i + "]";
+					var f = function (n, v) { html += '<input type="hidden" name="' + base + "[" + n + ']" value="' + esc(v) + '">'; };
+					f("kind", e.kind); f("class", e.class); f("name", e.name); f("sizing", e.sizing);
+					f("icon", e.icon); f("count", e.count || 0); f("weight", e.weight || 0); f("range", e.range);
+					f("vendors", (e.vendors || []).join(" "));
+				});
+				host.innerHTML = html;
+			}
+			// ggoWriteOptions restores a scope's saved extra DHCP options into the two
+			// static Network Services option rows, appending extra row pairs when the
+			// scope has more than two. Names match scopes[<id>][opt_name][]/[opt_data][].
+			function ggoWriteOptions(id, options) {
+				if (!Array.isArray(options) || !options.length) return;
+				var c = card(id); if (!c) return;
+				var names = c.querySelectorAll("[name='scopes[" + id + "][opt_name][]']");
+				var datas = c.querySelectorAll("[name='scopes[" + id + "][opt_data][]']");
+				if (!names.length || !datas.length) return;
+				var lastRow = names[names.length - 1].closest(".svc-opt-row");
+				options.forEach(function (o, i) {
+					var nameEl = names[i], dataEl = datas[i];
+					if (!nameEl && lastRow) {
+						var clone = lastRow.cloneNode(true);
+						lastRow.parentNode.insertBefore(clone, lastRow.nextSibling);
+						lastRow = clone;
+						nameEl = clone.querySelector("[name='scopes[" + id + "][opt_name][]']");
+						dataEl = clone.querySelector("[name='scopes[" + id + "][opt_data][]']");
+					}
+					if (nameEl) nameEl.value = o.name || "";
+					if (dataEl) dataEl.value = o.data || "";
+				});
+			}
+
+			document.addEventListener("DOMContentLoaded", function () {
+				var pre = document.getElementById("ggo-prefill");
+				if (pre && pre.dataset.prefill) { try { ggoApplyImported(JSON.parse(pre.dataset.prefill)); return; } catch (e) { /* fall through */ } }
+				ggoAddScope();
+			});
+		})();
+	</script>
+}

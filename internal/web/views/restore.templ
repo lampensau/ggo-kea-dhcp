@@ -1,0 +1,68 @@
+package views
+
+// Restore is a dialog-based flow: a "Restore from Backup" button opens a native
+// <dialog> holding the file picker, the per-section checkboxes, and the confirm/cancel
+// actions. The dialog keeps the Backup card uncluttered, and - because a <dialog> owns
+// its own <form> in the top layer - it sidesteps the form-nesting problem the setup
+// wizard otherwise hits (no form= plumbing needed). A page renders at most one restore
+// dialog, so the fixed control ids are safe. Pages MUST also render @restoreScript once.
+
+// RestoreDialog is the restore <dialog>: a real multipart form posting to action, with
+// the styled file picker, the optional per-section checkboxes (Admins / Profiles & scopes
+// / Port labels / Host reservations - gated by sections), and Cancel / Restore actions.
+// On the factory picker the handler force-enables Admins regardless of the checkbox, so a
+// recovery can never leave the box admin-less. Restore stays disabled until a file is
+// chosen and confirms on submit (it overwrites the selected sections).
+templ RestoreDialog(id, action, csrf string, sections bool) {
+	<dialog id={ id } class="restore-dialog" aria-labelledby={ id + "-title" }>
+		<form method="post" action={ templ.SafeURL(action) } enctype="multipart/form-data" onsubmit="return ggoConfirmRestore()">
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<div class="dialog-head" id={ id + "-title" }>Restore from Backup</div>
+			<div class="dialog-body">
+				<p class="help">Restore overwrites the selected sections with the contents of a backup file. This cannot be undone.</p>
+				<input type="file" id="restore_file" name="backup" accept="application/json,.json" hidden onchange="ggoRestorePick(this)"/>
+				<div class="restore-pick">
+					<button type="button" class="btn btn-secondary" onclick="document.getElementById('restore_file').click()">@Icon("box") Choose Backup File…</button>
+					<span id="restore_file_name" class="file-name" aria-live="polite">No file selected</span>
+				</div>
+				if sections {
+					<fieldset class="restore-sections">
+						<legend class="form-label">Restore which sections</legend>
+						@restoreSection("users", "Admins")
+						@restoreSection("profiles", "Profiles & scopes")
+						@restoreSection("port_labels", "Port labels")
+						@restoreSection("reservations", "Host reservations")
+					</fieldset>
+				}
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" id="restore_submit" class="btn btn-danger-solid" disabled>@Icon("upload") Restore Backup</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+// restoreSection is one section checkbox, checked by default (the common case is a full
+// restore). Lives inside the dialog's form, so no form= plumbing.
+templ restoreSection(value, label string) {
+	<label class="restore-section">
+		<input type="checkbox" name="sections" value={ value } checked/>
+		<span>{ label }</span>
+	</label>
+}
+
+// restoreScript wires the styled file picker (filename readout + enable Restore once a
+// file is chosen) and the destructive-action confirm, framework-free.
+templ restoreScript() {
+	<script>
+		window.ggoRestorePick = function (input) {
+			var name = (input.files && input.files.length) ? input.files[0].name : "";
+			document.getElementById("restore_file_name").textContent = name || "No file selected";
+			document.getElementById("restore_submit").disabled = !name;
+		};
+		window.ggoConfirmRestore = function () {
+			return confirm("Restore will OVERWRITE the selected sections with the backup. Continue?");
+		};
+	</script>
+}

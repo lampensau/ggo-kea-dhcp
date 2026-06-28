@@ -1,0 +1,31 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+
+# Databases
+gui/app/database.db
+
+# Virtual environments
+venv/
+.venv/
+gui/venv/
+/home/timo/.local/share/venvs/
+
+# Environment files
+.env
+.env.local
+.envrc
+
+.playwright-mcp/
+
+# Go build artifacts (produced by `go build` / `make pi`)
+/ggo-kea-dhcp
+/ggo-kea-dhcp-arm64
+
+# Packaging output (produced by nfpm in the release workflow)
+/dist/
+*.deb
