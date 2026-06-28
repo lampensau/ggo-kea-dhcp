@@ -5,8 +5,9 @@
 # compiles the already-generated *_templ.go. Always go through these targets
 # (or run `templ generate` yourself before building).
 
-TEMPL ?= $(shell go env GOPATH)/bin/templ
-NFPM  ?= $(shell go env GOPATH)/bin/nfpm
+TEMPL    ?= $(shell go env GOPATH)/bin/templ
+NFPM     ?= $(shell go env GOPATH)/bin/nfpm
+GOLANGCI ?= $(shell go env GOPATH)/bin/golangci-lint
 GOFLAGS_VENDOR := -mod=vendor
 
 # Version stamped into the .deb. Defaults to the single source of truth in
@@ -19,7 +20,7 @@ GGO_VERSION ?= $(shell sed -n 's/.*Number = "\(.*\)".*/\1/p' internal/version/ve
 DEPLOY_HOST ?= 10.0.0.1
 DEPLOY_USER ?= timo
 
-.PHONY: generate build vet test all pi deb deploy release
+.PHONY: generate build vet test all check pi deb deploy release
 
 generate:
 	$(TEMPL) generate
@@ -34,6 +35,24 @@ test: generate
 	go test $(GOFLAGS_VENDOR) ./...
 
 all: generate build vet test
+
+# Mirror every CI gate locally so `make release` (and you) can confirm the tree
+# is clean and green before tagging: templ output committed, gofmt, vendor in
+# sync, vet, test, native + arm64 build, golangci-lint, shellcheck.
+check: generate
+	@git diff --quiet -- '*_templ.go' || { echo "stale templ output - run 'templ generate' and commit *_templ.go"; git diff --stat -- '*_templ.go'; exit 1; }
+	@files=$$(git ls-files '*.go' | grep -vE '^vendor/|_templ\.go$$'); \
+		unformatted=$$(gofmt -l $$files); \
+		[ -z "$$unformatted" ] || { echo "gofmt needed:"; echo "$$unformatted"; exit 1; }
+	go mod verify
+	go mod vendor
+	@git diff --quiet -- vendor go.mod go.sum || { echo "vendor out of sync - run 'go mod vendor' and commit vendor/ go.mod go.sum"; git diff --stat -- vendor go.mod go.sum; exit 1; }
+	go vet $(GOFLAGS_VENDOR) ./...
+	go test $(GOFLAGS_VENDOR) ./...
+	go build $(GOFLAGS_VENDOR) .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS_VENDOR) -o ggo-kea-dhcp-arm64 .
+	$(GOLANGCI) run
+	@command -v shellcheck >/dev/null && shellcheck -S error install.sh packaging/scripts/*.sh || echo "shellcheck not installed - skipping (CI still runs it)"
 
 # Cross-compile for the Raspberry Pi (ARM64). Adjust GOARCH=arm + GOARM=7 for 32-bit.
 pi: generate
@@ -72,6 +91,7 @@ release:
 	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "VERSION must be X.Y.Z (got '$(VERSION)')"; exit 1; }
 	@test "$$(git rev-parse --abbrev-ref HEAD)" = "main" || { echo "release from main, not $$(git rev-parse --abbrev-ref HEAD)"; exit 1; }
 	@git diff --quiet && git diff --cached --quiet || { echo "working tree dirty - commit or stash first"; exit 1; }
+	$(MAKE) check
 	sed -i 's/Number = ".*"/Number = "$(VERSION)"/' internal/version/version.go
 	git add internal/version/version.go
 	git commit -m "release: v$(VERSION)"
