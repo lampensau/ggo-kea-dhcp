@@ -277,12 +277,18 @@ input[type="checkbox"], input[type="radio"] { accent-color:var(--accent); width:
 .btn:active { transform:translateY(.5px); }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
 /* Busy/loading button: .is-busy hides the label and spins. Toggled by the pools Save
-   (Datastar data-class:is-busy="$busy") and by the native navigate-away forms (the
-   busySubmitScript adds the class on submit). Every busy button here is primary/danger
-   (colored bg, light text), so the spinner is accent-on. */
+   (Datastar data-class:is-busy="$busy"), the native navigate-away forms (the
+   busySubmitScript adds the class on submit), and the WiFi Scan buttons (ggoScanBusy).
+   The spinner must follow the BUTTON's own foreground, not the accent's - the base
+   uses --text (default/secondary buttons; theme-aware, so it reads on light AND dark
+   surfaces), with per-variant overrides for the colored buttons. (Previously it was
+   hardcoded to --accent-on, which is the green button's text - near-black in dark mode,
+   so it vanished on the dark secondary Scan button.) */
 .btn.is-busy { position:relative; color:transparent; cursor:wait; }
 .btn.is-busy .lucide { visibility:hidden; }
-.btn.is-busy::after { content:""; position:absolute; top:50%; left:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border:2px solid var(--accent-on); border-top-color:transparent; border-radius:50%; animation:btn-spin .6s linear infinite; }
+.btn.is-busy::after { content:""; position:absolute; top:50%; left:50%; width:14px; height:14px; margin:-7px 0 0 -7px; border:2px solid var(--text); border-top-color:transparent; border-radius:50%; animation:btn-spin .6s linear infinite; }
+.btn-primary.is-busy::after { border-color:var(--accent-on); border-top-color:transparent; }
+.btn-danger-solid.is-busy::after { border-color:#fff; border-top-color:transparent; }
 @keyframes btn-spin { to { transform:rotate(360deg); } }
 .btn-primary { background:var(--accent); border-color:var(--accent); color:var(--accent-on); box-shadow:var(--shadow-sm); }
 .btn-primary:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
