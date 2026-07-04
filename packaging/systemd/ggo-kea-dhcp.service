@@ -42,9 +42,19 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 # The control plane reconfigures host networking through sudo (nmcli/nft/ip/hostapd/
 # systemctl) and validates Kea via `sudo kea-dhcp4 -t`. Privilege escalation must
-# therefore remain available - deliberately NO NoNewPrivileges, NO ProtectSystem and
-# NO RestrictSUIDSGID, any of which would block the sudo helpers this appliance is
-# built around.
+# therefore remain available - deliberately NO NoNewPrivileges, NO ProtectSystem, NO
+# RestrictSUIDSGID (all three block sudo), NO ProtectKernelTunables (blocks the
+# `sudo sysctl net.ipv4.ip_forward` NAT toggle - the sandbox covers the whole unit,
+# sudo children included) and NO PrivateTmp (hostapd reads /tmp/hostapd.conf).
+#
+# The directives below ARE safe alongside sudo: none of the escalated helpers touch
+# /home, kmsg, the system clock, realtime scheduling or personality(2), so each
+# narrows what a compromised control plane could reach without breaking any helper.
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictRealtime=true
+LockPersonality=true
 
 StandardOutput=journal
 StandardError=journal
