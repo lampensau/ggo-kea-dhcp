@@ -63,15 +63,21 @@ func (r Result) Worst() Status {
 	return worst
 }
 
-// Run executes every probe and returns the results in a stable order.
+// Run executes every probe and returns the results grouped by subsystem, in a
+// stable order: the Kea DHCP engine first (its binary, hooks, writable config, then
+// live control socket), then the privileged tools, the reservation database, the
+// Linux capabilities, and finally the host clock. Grouping keeps related checks
+// adjacent (the config-dir check belongs with the other Kea checks, not stranded
+// after the database).
 func Run(cfg *config.Config) Result {
 	r := Result{
 		checkKeaBinary(),
 		checkHooks(),
+		checkKeaConfDir(cfg),
 		checkKeaSocket(cfg),
 	}
 	r = append(r, checkTools()...)
-	r = append(r, checkMariaDB(cfg), checkKeaConfDir(cfg))
+	r = append(r, checkMariaDB(cfg))
 	r = append(r, checkCaps()...)
 	r = append(r, checkClock())
 	return r
@@ -91,7 +97,7 @@ func checkKeaBinary() Check {
 	if !strings.HasPrefix(v, "3.0.") {
 		return Check{name, Fail, fmt.Sprintf("found Kea %s but this appliance requires the 3.0.x series", v)}
 	}
-	return Check{name, OK, "Kea " + v}
+	return Check{name, OK, "version " + v}
 }
 
 // checkHooks verifies the required hook libraries exist in the detected hooks dir.
@@ -104,6 +110,7 @@ func checkHooks() Check {
 			missing = append(missing, lib)
 		}
 	}
+	dir = strings.TrimRight(dir, "/")
 	if len(missing) > 0 {
 		return Check{name, Fail, fmt.Sprintf("missing in %s: %s", dir, strings.Join(missing, ", "))}
 	}
@@ -173,14 +180,14 @@ func checkKeaConfDir(cfg *config.Config) Check {
 			return Check{name, Fail, fmt.Sprintf("%s not writable: %v", conf, err)}
 		}
 		_ = f.Close()
-		return Check{name, OK, conf + " is writable"}
+		return Check{name, OK, conf + " writable"}
 	}
 	probe := filepath.Join(dir, ".ggo-write-test")
 	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
 		return Check{name, Fail, fmt.Sprintf("%s not writable: %v", dir, err)}
 	}
 	_ = os.Remove(probe)
-	return Check{name, OK, dir + " is writable"}
+	return Check{name, OK, dir + " writable"}
 }
 
 // Linux capability bit numbers (see capabilities(7)).
@@ -232,11 +239,11 @@ func clockStatus(rtc, synced bool) Check {
 	const name = "System clock / RTC"
 	switch {
 	case rtc:
-		return Check{name, OK, "hardware RTC present - the clock survives a reboot without NTP, so lease expiry stays correct"}
+		return Check{name, OK, "hardware RTC present - survives reboot without NTP"}
 	case synced:
-		return Check{name, OK, "no hardware RTC; the clock is time-synced and fake-hwclock persists it across reboots"}
+		return Check{name, OK, "time-synced, fake-hwclock persists it (no RTC)"}
 	default:
-		return Check{name, Warn, "no hardware RTC and the clock is not time-synced yet - lease expiry runs on the last-known (fake-hwclock) time; check the date shown on this page before trusting leases"}
+		return Check{name, Warn, "no RTC and not time-synced - leases run on last-known time"}
 	}
 }
 
