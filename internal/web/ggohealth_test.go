@@ -46,7 +46,7 @@ func TestFirmwareFindings(t *testing.T) {
 	}
 	found := firmwareFindings(devices, scopes)
 	if len(found) != 1 {
-		t.Fatalf("findings = %d, want 1 (only MCXi diverges)", len(found))
+		t.Fatalf("findings = %d, want exactly 1 (the single fleet-wide release check)", len(found))
 	}
 	f := found[0]
 	// Attributed to the scope holding the devices' addresses; rendered as a plain
@@ -57,30 +57,30 @@ func TestFirmwareFindings(t *testing.T) {
 	if f.row.Kind != "firmware" || f.row.Severity != "warn" {
 		t.Errorf("row kind/severity = %q/%q", f.row.Kind, f.row.Severity)
 	}
-	if f.row.Title != "Mixed firmware: MCXi - 2 on 5.0.7.9165, 1 on 5.0.4.5846" {
+	if f.row.Title != "Mixed firmware: 3 on 5.0.7, 1 on 5.0.4" {
 		t.Errorf("title = %q", f.row.Title)
 	}
-	if len(f.row.DetailRows) != 3 {
-		t.Errorf("detail rows = %d, want 3", len(f.row.DetailRows))
+	if len(f.row.DetailRows) != 4 {
+		t.Errorf("detail rows = %d, want 4", len(f.row.DetailRows))
 	}
 	roster := strings.Join(f.row.DetailRows, "\n")
 	if !strings.Contains(roster, "bp-c · 10.0.0.13 · 5.0.4.5846") {
 		t.Errorf("roster missing the diverging device: %q", roster)
 	}
 
-	// A group spanning two scopes is attributed to both sub-cards.
+	// A fleet spanning two scopes is attributed to both sub-cards.
 	spanDevs := []ggoscan.Device{
-		{MAC: "00:1f:80:22:00:06", Name: "foh-a", IP: "10.0.0.30", Model: "BPX", Version: "5.1"},
-		{MAC: "00:1f:80:22:00:07", Name: "stage-a", IP: "10.20.0.30", Model: "BPX", Version: "5.0"},
+		{MAC: "00:1f:80:22:00:06", Name: "foh-a", IP: "10.0.0.30", Model: "BPX", Version: "5.1.0.1"},
+		{MAC: "00:1f:80:22:00:07", Name: "stage-a", IP: "10.20.0.30", Model: "MCXi", Version: "5.0.0.2"},
 	}
 	if got := firmwareFindings(spanDevs, scopes); len(got) != 1 || len(got[0].ifaces) != 2 {
 		t.Errorf("cross-scope attribution = %+v, want one finding on both scopes", got)
 	}
 
-	// A device outside every scanned scope attributes to the first scope (fallback).
+	// Devices outside every scanned scope attribute to the first scope (fallback).
 	vlanDevs := []ggoscan.Device{
-		{MAC: "00:1f:80:22:00:04", Name: "x-a", IP: "169.254.9.9", Model: "BPX", Version: "5.1"},
-		{MAC: "00:1f:80:22:00:05", Name: "x-b", IP: "169.254.9.10", Model: "BPX", Version: "5.0"},
+		{MAC: "00:1f:80:22:00:04", Name: "x-a", IP: "169.254.9.9", Model: "BPX", Version: "5.1.0.1"},
+		{MAC: "00:1f:80:22:00:05", Name: "x-b", IP: "169.254.9.10", Model: "BPX", Version: "5.0.0.2"},
 	}
 	if got := firmwareFindings(vlanDevs, scopes); len(got) != 1 || len(got[0].ifaces) != 1 || got[0].ifaces[0] != "eth0" {
 		t.Errorf("fallback attribution = %+v, want one finding on eth0", got)

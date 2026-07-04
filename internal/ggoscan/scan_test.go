@@ -43,32 +43,29 @@ func TestParseScanReply(t *testing.T) {
 	}
 }
 
-func TestFirmwareMismatches(t *testing.T) {
+func TestReleaseMismatchWithinFamily(t *testing.T) {
 	mac := func(n byte) [6]byte { return [6]byte{0, 0x1f, 0x80, 0x22, 0, n} }
 	devs := []Device{
 		{MAC: macStr(mac(1)), Name: "bp-a", Model: "MCXi", Version: "5.0.7.9165"},
 		{MAC: macStr(mac(2)), Name: "bp-b", Model: "MCXi", Version: "5.0.7.9165"},
 		{MAC: macStr(mac(3)), Name: "bp-c", Model: "MCXi", Version: "5.0.4.5846"},
-		{MAC: macStr(mac(4)), Name: "wp-a", Model: "WPXi", Version: "5.0.7.9165"}, // uniform family
+		{MAC: macStr(mac(4)), Name: "wp-a", Model: "WPXi", Version: "5.0.7.9165"},
 	}
-	groups := FirmwareMismatches(devs)
-	if len(groups) != 1 {
-		t.Fatalf("groups = %d, want 1 (only MCXi diverges)", len(groups))
+	// Within-family release skew is caught by the same fleet-wide check.
+	sp := ReleaseMismatch(devs)
+	if sp == nil {
+		t.Fatal("diverging fleet yielded no finding")
 	}
-	g := groups[0]
-	if g.Model != "MCXi" {
-		t.Fatalf("model = %q, want MCXi", g.Model)
+	if len(sp.Releases) != 2 || sp.Releases[0].Release != "5.0.7" || sp.Releases[0].N != 3 {
+		t.Errorf("releases = %+v, want majority 5.0.7 x3 first", sp.Releases)
 	}
-	if len(g.Counts) != 2 || g.Counts[0].Version != "5.0.7.9165" || g.Counts[0].N != 2 {
-		t.Errorf("counts = %+v, want majority 5.0.7.9165 x2 first", g.Counts)
-	}
-	if len(g.Devices) != 3 {
-		t.Errorf("devices = %d, want 3", len(g.Devices))
+	if len(sp.Devices) != 4 {
+		t.Errorf("devices = %d, want 4", len(sp.Devices))
 	}
 
 	// A fully uniform fleet produces no mismatch.
-	if got := FirmwareMismatches(devs[:2]); len(got) != 0 {
-		t.Errorf("uniform fleet returned %d groups, want 0", len(got))
+	if got := ReleaseMismatch(devs[:2]); got != nil {
+		t.Errorf("uniform fleet returned %+v, want nil", got)
 	}
 }
 

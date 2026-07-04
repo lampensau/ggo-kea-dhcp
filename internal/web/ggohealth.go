@@ -166,51 +166,46 @@ func (s *Server) defaultHostnameFor(mac string) string {
 }
 
 // fwFinding is one firmware-mismatch detector row plus the interfaces whose
-// Network Health sub-cards it belongs to (a model family can span scopes).
+// Network Health sub-cards it belongs to (the fleet can span scopes).
 type fwFinding struct {
 	ifaces []string
 	row    views.NetHealthRow
 }
 
-// firmwareFindings turns the scan inventory into per-interface Network Health
-// detector rows (kind "firmware", severity warn): one per model family running
-// mixed firmware, with a capped per-device roster for the info-tip. Mismatch
-// groups are fleet-wide (that is what catches two scopes running mutually
-// different but internally uniform versions), so a group is attributed to every
-// greengo scope holding one of its devices; a group whose devices match no scope
-// (link-local squatters) falls back to the first scanned scope, so a finding is
-// never silently dropped.
+// firmwareFindings turns the scan inventory into at most ONE Network Health
+// detector row (kind "firmware", severity warn): the fleet-wide release check
+// (ggoscan.ReleaseMismatch - one release across all device types, legacy
+// exemption included), with a capped per-device roster for the info-tip. The
+// finding is attributed to every greengo scope holding one of the divergent
+// devices; when none matches a scope (link-local squatters) it falls back to
+// the first scanned scope, so it is never silently dropped.
 func firmwareFindings(devices []ggoscan.Device, scopes []fwScope) []fwFinding {
-	groups := ggoscan.FirmwareMismatches(devices)
-	if len(groups) == 0 || len(scopes) == 0 {
+	sp := ggoscan.ReleaseMismatch(devices)
+	if sp == nil || len(scopes) == 0 {
 		return nil
 	}
-	findings := make([]fwFinding, 0, len(groups))
-	for _, g := range groups {
-		parts := make([]string, 0, len(g.Counts))
-		for _, c := range g.Counts {
-			parts = append(parts, strconv.Itoa(c.N)+" on "+c.Version)
-		}
-		row := views.NetHealthRow{
-			Kind:     "firmware",
-			Severity: "warn",
-			Title:    "Mixed firmware: " + g.Model + " - " + strings.Join(parts, ", "),
-		}
-		for i, d := range g.Devices {
-			if i >= firmwareTipCap {
-				row.DetailRows = append(row.DetailRows, "+"+strconv.Itoa(len(g.Devices)-firmwareTipCap)+" more")
-				break
-			}
-			name := d.Name
-			if name == "" {
-				name = d.MAC
-			}
-			row.DetailRows = append(row.DetailRows, name+" · "+d.IP+" · "+d.Version)
-		}
-		row.Detail = strings.Join(row.DetailRows, " · ")
-		findings = append(findings, fwFinding{ifaces: fwIfacesFor(g.Devices, scopes), row: row})
+	parts := make([]string, 0, len(sp.Releases))
+	for _, r := range sp.Releases {
+		parts = append(parts, strconv.Itoa(r.N)+" on "+r.Release)
 	}
-	return findings
+	row := views.NetHealthRow{
+		Kind:     "firmware",
+		Severity: "warn",
+		Title:    "Mixed firmware: " + strings.Join(parts, ", "),
+	}
+	for i, d := range sp.Devices {
+		if i >= firmwareTipCap {
+			row.DetailRows = append(row.DetailRows, "+"+strconv.Itoa(len(sp.Devices)-firmwareTipCap)+" more")
+			break
+		}
+		name := d.Name
+		if name == "" {
+			name = d.MAC
+		}
+		row.DetailRows = append(row.DetailRows, name+" · "+d.IP+" · "+d.Version)
+	}
+	row.Detail = strings.Join(row.DetailRows, " · ")
+	return []fwFinding{{ifaces: fwIfacesFor(sp.Devices, scopes), row: row}}
 }
 
 // fwIfacesFor attributes a mismatch group to every scanned scope holding one of
