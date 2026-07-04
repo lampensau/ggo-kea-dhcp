@@ -130,7 +130,12 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, plan *
 		}
 		plan.stashProfileID = stashID
 	}
-	_, _ = tx.Exec("UPDATE profiles SET active = 0")
+	// Deactivate is load-bearing: a silent failure here would leave the prior profile
+	// active alongside the new one (two active rows). Check it like the INSERT below.
+	if _, err := tx.Exec("UPDATE profiles SET active = 0"); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("Failed to deactivate current profile: %w", err)
+	}
 	res, err := tx.Exec("INSERT INTO profiles (name, active) VALUES (?, 1)", profileName)
 	if err != nil {
 		_ = tx.Rollback()

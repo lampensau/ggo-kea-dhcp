@@ -231,7 +231,11 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// suspected-compromise device), keeping only the current one. Keyed on the
 		// still-current username, before any rename below.
 		if c, err := r.Cookie(sessionCookieName); err == nil {
-			_, _ = s.sqlite.Exec("DELETE FROM sessions WHERE username = ? AND session_id != ?", actor, c.Value)
+			// Security-relevant: if this fails silently a suspected-compromise session
+			// survives the password change. Surface it rather than swallow.
+			if _, err := s.sqlite.Exec("DELETE FROM sessions WHERE username = ? AND session_id != ?", actor, c.Value); err != nil {
+				log.Printf("[settings] password changed but failed to revoke other sessions for %q: %v", actor, err)
+			}
 		}
 		_ = s.sqlite.LogAudit(actor, "CHANGE_PASSWORD", actor, "", "", "SUCCESS")
 	}

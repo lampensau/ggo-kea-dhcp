@@ -145,7 +145,9 @@ func (s *Server) resumeInterruptedApply(profileID int) error {
 	}
 	if err != nil {
 		log.Printf("[reconcile] could not complete interrupted apply after %d attempts (%v) - reverting to ONBOARDING", resumeApplyAttempts, err)
-		_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding)
+		if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); e != nil {
+			log.Printf("[reconcile] failed to persist ONBOARDING on revert: %v", e)
+		}
 		return s.reconcileOnboarding(ModeConverge)
 	}
 	if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
@@ -502,7 +504,11 @@ func (s *Server) snapshotKeaConf(reason string) (string, error) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return "", fmt.Errorf("write snapshot: %w", err)
 	}
-	_, _ = s.sqlite.Exec("INSERT INTO config_snapshots (reason, path) VALUES (?, ?)", reason, path)
+	// The snapshot file is on disk; a failed index insert only hides it from the
+	// rollback/listing UI. Log so it is not a silent gap.
+	if _, err := s.sqlite.Exec("INSERT INTO config_snapshots (reason, path) VALUES (?, ?)", reason, path); err != nil {
+		log.Printf("[snapshot] wrote %s but failed to index it: %v", path, err)
+	}
 	return path, nil
 }
 

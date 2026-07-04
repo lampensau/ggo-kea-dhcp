@@ -198,13 +198,21 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		s.endReconcile()
 		return switchPlan{}, fmt.Errorf("Database error: %w", err)
 	}
-	_, _ = tx.Exec("UPDATE profiles SET active = 0")
-	_, _ = tx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", targetID)
-	_, _ = tx.Exec(`
+	// Every statement is load-bearing: a silently-failed active-flag toggle would
+	// commit a tree with no (or two) active profiles. SQLite does not fail Commit for
+	// a prior statement error, so each is checked and rolls the whole switch back.
+	_, e1 := tx.Exec("UPDATE profiles SET active = 0")
+	_, e2 := tx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", targetID)
+	_, e3 := tx.Exec(`
 		INSERT INTO app_state (key, value)
 		VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		db.LifecycleStateKey, db.StateConfiguring)
+	if err := errors.Join(e1, e2, e3); err != nil {
+		_ = tx.Rollback()
+		s.endReconcile()
+		return switchPlan{}, fmt.Errorf("Failed to switch active profile: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		s.endReconcile()
 		return switchPlan{}, fmt.Errorf("Failed to switch active profile: %w", err)

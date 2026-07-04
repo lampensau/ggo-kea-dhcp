@@ -38,23 +38,41 @@ func (s *Server) startClockWatch() {
 		t := time.NewTicker(clockWatchInterval)
 		defer t.Stop()
 		for range t.C {
-			now := time.Now()
-			// Round(0) strips the monotonic reading, forcing wall-clock arithmetic;
-			// the plain Sub uses the monotonic reading. Their difference is the
-			// discontinuous step (signed: positive = clock jumped forward).
-			step := now.Round(0).Sub(last.Round(0)) - now.Sub(last)
-			if step > clockStepThreshold || step < -clockStepThreshold {
-				s.auditClockStep(step)
-			}
-			last = now
-
-			// First NTP sync: the stamp file's absent -> present transition.
-			if !synced && clockDisciplined() {
-				synced = true
-				_ = s.sqlite.LogAudit("SYSTEM", "TIME_SYNCED", "system clock", "", "NTP synchronized - the clock is now disciplined", "INFO")
-			}
+			// Recover per tick so a transient panic degrades one reading instead of
+			// crashing the whole process (an unrecovered goroutine panic is fatal),
+			// matching the metrics sampler's sampleOnceSafe.
+			last, synced = s.clockWatchTick(last, synced)
 		}
 	}()
+}
+
+// clockWatchTick runs one poll: records a discontinuous step and the first NTP
+// sync. Returns the updated (last, synced) state. Wrapped in a recover so a panic
+// in one tick cannot take down the goroutine. The named returns are seeded to the
+// inputs so a recovered panic carries the prior state forward unchanged - NOT the
+// zero time, which would fabricate a huge step on the next tick.
+func (s *Server) clockWatchTick(last time.Time, synced bool) (outLast time.Time, outSynced bool) {
+	outLast, outSynced = last, synced
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[clock] watch tick recovered from panic: %v", r)
+		}
+	}()
+	now := time.Now()
+	// Round(0) strips the monotonic reading, forcing wall-clock arithmetic; the
+	// plain Sub uses the monotonic reading. Their difference is the discontinuous
+	// step (signed: positive = clock jumped forward).
+	step := now.Round(0).Sub(last.Round(0)) - now.Sub(last)
+	if step > clockStepThreshold || step < -clockStepThreshold {
+		s.auditClockStep(step)
+	}
+	outLast = now
+	// First NTP sync: the stamp file's absent -> present transition.
+	if !synced && clockDisciplined() {
+		outSynced = true
+		_ = s.sqlite.LogAudit("SYSTEM", "TIME_SYNCED", "system clock", "", "NTP synchronized - the clock is now disciplined", "INFO")
+	}
+	return outLast, outSynced
 }
 
 // clockDisciplined reports whether systemd-timesyncd has synchronized the clock.
