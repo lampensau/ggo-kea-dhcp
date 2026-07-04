@@ -24,6 +24,14 @@ func (s *Server) startGgoScan(scopes []ScopeConfig) {
 	s.ggoscan.Start(s.buildGgoSpecs(scopes))
 }
 
+// fwScope is one greengo-preset scope the scanner targets: the interface whose
+// Network Health sub-card owns any firmware findings, and the subnet used to
+// attribute a mismatched device to it.
+type fwScope struct {
+	iface string
+	net   *net.IPNet
+}
+
 // buildGgoSpecs derives one scan spec per Green-GO-preset scope: the scope's
 // subnet-directed broadcast (for the periodic sweep) and a shared lease-IP closure
 // (for the unicast-on-new-lease path). Non-Green-GO scopes are skipped, so a
@@ -32,6 +40,7 @@ func (s *Server) buildGgoSpecs(scopes []ScopeConfig) []ggoscan.Spec {
 	leaseIPs := s.leaseIPs // shared with the ARP prober - one GetLeases per cycle
 	seen := map[string]bool{}
 	var specs []ggoscan.Spec
+	var fw []fwScope
 	for _, sc := range scopes {
 		if sc.Preset != "greengo" {
 			continue
@@ -53,7 +62,11 @@ func (s *Server) buildGgoSpecs(scopes []ScopeConfig) []ggoscan.Spec {
 		}
 		seen[iface] = true
 		specs = append(specs, ggoscan.Spec{Broadcast: bcast, LeaseIPs: leaseIPs})
+		fw = append(fw, fwScope{iface: iface, net: ipnet})
 	}
+	s.ggoFwMu.Lock()
+	s.ggoFwScopes = fw
+	s.ggoFwMu.Unlock()
 	return specs
 }
 
@@ -152,33 +165,114 @@ func (s *Server) defaultHostnameFor(mac string) string {
 	return ""
 }
 
-// buildFirmwareRows turns the scan inventory into the Network Health card's
-// firmware-mismatch rows: one per model family running mixed firmware, with a
-// one-line summary and a capped per-device list for the tooltip.
-func buildFirmwareRows(snap ggoscan.Snapshot) []views.FirmwareModelRow {
-	groups := ggoscan.FirmwareMismatches(snap.Devices)
-	if len(groups) == 0 {
+// fwFinding is one firmware-mismatch detector row plus the interfaces whose
+// Network Health sub-cards it belongs to (the fleet can span scopes).
+type fwFinding struct {
+	ifaces []string
+	row    views.NetHealthRow
+}
+
+// firmwareFindings turns the scan inventory into at most ONE Network Health
+// detector row (kind "firmware", severity warn): the fleet-wide release check
+// (ggoscan.ReleaseMismatch - one release across all device types, legacy
+// exemption included), with a capped per-device roster for the info-tip. The
+// finding is attributed to every greengo scope holding one of the divergent
+// devices; when none matches a scope (link-local squatters) it falls back to
+// the first scanned scope, so it is never silently dropped.
+func firmwareFindings(devices []ggoscan.Device, scopes []fwScope) []fwFinding {
+	sp := ggoscan.ReleaseMismatch(devices)
+	if sp == nil || len(scopes) == 0 {
 		return nil
 	}
-	rows := make([]views.FirmwareModelRow, 0, len(groups))
-	for _, g := range groups {
-		parts := make([]string, 0, len(g.Counts))
-		for _, c := range g.Counts {
-			parts = append(parts, strconv.Itoa(c.N)+" on "+c.Version)
+	parts := make([]string, 0, len(sp.Releases))
+	for _, r := range sp.Releases {
+		parts = append(parts, strconv.Itoa(r.N)+" on "+r.Release)
+	}
+	row := views.NetHealthRow{
+		Kind:     "firmware",
+		Severity: "warn",
+		Title:    "Mixed firmware: " + strings.Join(parts, ", "),
+	}
+	for i, d := range sp.Devices {
+		if i >= firmwareTipCap {
+			row.DetailRows = append(row.DetailRows, "+"+strconv.Itoa(len(sp.Devices)-firmwareTipCap)+" more")
+			break
 		}
-		row := views.FirmwareModelRow{Summary: g.Model + " - " + strings.Join(parts, ", ")}
-		for i, d := range g.Devices {
-			if i >= firmwareTipCap {
-				row.More = len(g.Devices) - firmwareTipCap
+		name := d.Name
+		if name == "" {
+			name = d.MAC
+		}
+		row.DetailRows = append(row.DetailRows, name+" · "+d.IP+" · "+d.Version)
+	}
+	row.Detail = strings.Join(row.DetailRows, " · ")
+	return []fwFinding{{ifaces: fwIfacesFor(sp.Devices, scopes), row: row}}
+}
+
+// fwIfacesFor attributes a mismatch group to every scanned scope holding one of
+// its devices' addresses, in scope order; the first scope is the fallback when
+// none matches.
+func fwIfacesFor(devices []ggoscan.Device, scopes []fwScope) []string {
+	var ifaces []string
+	for _, sc := range scopes {
+		for _, d := range devices {
+			if ip := net.ParseIP(d.IP); ip != nil && sc.net.Contains(ip) {
+				ifaces = append(ifaces, sc.iface)
 				break
 			}
-			name := d.Name
-			if name == "" {
-				name = d.MAC
-			}
-			row.Devices = append(row.Devices, views.FirmwareDeviceRow{Name: name, IP: d.IP, Version: d.Version})
 		}
-		rows = append(rows, row)
 	}
-	return rows
+	if len(ifaces) == 0 {
+		return []string{scopes[0].iface}
+	}
+	return ifaces
+}
+
+// attachFirmware folds the scan's firmware-mismatch findings into the owning
+// interface's Network Health sub-card: appended to its rows, counted in its
+// warning rollup, and re-sorted with the other detectors. Only available cards
+// render their rows, so a finding whose card is unavailable falls back to the
+// first available card - counting a warning on a card that can't show the row
+// would leave the rollup claiming more warnings than are visible. With no
+// available card at all the finding is dropped (dev mode / capture-less box).
+func (s *Server) attachFirmware(h *views.NetHealthView, snap ggoscan.Snapshot) {
+	if len(h.Interfaces) == 0 {
+		return // nothing to attach to (non-ACTIVE / netmon down) - skip the grouping work
+	}
+	s.ggoFwMu.Lock()
+	scopes := s.ggoFwScopes
+	s.ggoFwMu.Unlock()
+	for _, f := range firmwareFindings(snap.Devices, scopes) {
+		attached := map[*views.NetHealthIface]bool{} // two unavailable ifaces share one fallback card - attach once
+		for _, iface := range f.ifaces {
+			ifc := availableIface(h, iface)
+			if ifc == nil {
+				return
+			}
+			if attached[ifc] {
+				continue
+			}
+			attached[ifc] = true
+			ifc.Rows = append(ifc.Rows, f.row)
+			ifc.WarnCount++
+			sortNetHealthRows(ifc.Rows)
+		}
+	}
+}
+
+// availableIface returns the available interface card named iface, else the
+// first available card, else nil.
+func availableIface(h *views.NetHealthView, iface string) *views.NetHealthIface {
+	var first *views.NetHealthIface
+	for i := range h.Interfaces {
+		if !h.Interfaces[i].Available {
+			continue
+		}
+		if h.Interfaces[i].Iface == iface {
+			return &h.Interfaces[i]
+		}
+		if first == nil {
+			first = &h.Interfaces[i]
+		}
+	}
+	return first
 }

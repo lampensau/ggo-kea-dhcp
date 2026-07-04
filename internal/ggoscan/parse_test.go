@@ -1,9 +1,41 @@
 package ggoscan
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 )
+
+// TestParseScanReplyLiveBPX parses a real BPX reply captured on the wire
+// (broadcast scan, firmware 5.1.0.14479). It pins the 0x55aa marker handling:
+// the firmware string sits at body offset 0x30 behind the marker, and reading
+// it at 0x2e would yield the mangled model "U\xaaBPX".
+func TestParseScanReplyLiveBPX(t *testing.T) {
+	body, err := hex.DecodeString(
+		"425058203139363636000000000000000000001f80204e524cd2000000000000" +
+			"00000000ffffff00200f0000000055aa42505820352e312e302e313434373900" +
+			"000000000000000000c60000200f0003cdc00802000008020100ffffffffffff" +
+			"ffffffffffffffffffffffffffff000000000000000000000000000000000000" +
+			"0000000000000000000000000000000000000000000000000000000000000000" +
+			"00000000000000000000000000000000000000000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := append([]byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x11, 0x00, 0x00}, body...)
+	dev, ok := parseScanReply(frame, "10.0.0.20")
+	if !ok {
+		t.Fatal("live BPX reply did not parse")
+	}
+	if dev.Name != "BPX 19666" {
+		t.Errorf("name = %q, want BPX 19666", dev.Name)
+	}
+	if dev.MAC != "00:1f:80:20:4e:52" {
+		t.Errorf("mac = %q", dev.MAC)
+	}
+	if dev.Model != "BPX" || dev.Version != "5.1.0.14479" {
+		t.Errorf("model/version = %q/%q, want BPX/5.1.0.14479", dev.Model, dev.Version)
+	}
+}
 
 // TestParseScanReplyFirmwareMissing covers the boundary where the body is just
 // long enough for name+MAC (through 0x18) but carries no firmware field: fw, model
@@ -70,57 +102,68 @@ func TestParseScanReplyRejects(t *testing.T) {
 	}
 }
 
-// TestFirmwareMismatchesSkipsIncomplete confirms devices with an empty Model or
-// Version are excluded entirely (they cannot be classified).
-func TestFirmwareMismatchesSkipsIncomplete(t *testing.T) {
-	devs := []Device{
-		{MAC: "00:1f:80:00:00:01", Name: "a", Model: "MCXi", Version: "1.0"},
-		{MAC: "00:1f:80:00:00:02", Name: "b", Model: "MCXi", Version: "2.0"},
-		{MAC: "00:1f:80:00:00:03", Name: "noversion", Model: "MCXi", Version: ""}, // skipped
-		{MAC: "00:1f:80:00:00:04", Name: "nomodel", Model: "", Version: "9.9"},    // skipped
+// TestReleaseMismatch covers THE firmware check: devices are compared on their
+// release (major.minor.patch) across all families, builds are ignored, and
+// incomplete devices are skipped.
+func TestReleaseMismatch(t *testing.T) {
+	// Same release, different per-model builds: uniform, no finding.
+	uniform := []Device{
+		{MAC: "1", Name: "bp-a", Model: "BPX", Version: "5.2.2.25270"},
+		{MAC: "2", Name: "mc-a", Model: "MCXi", Version: "5.2.2.25269"},
+		{MAC: "3", Name: "noversion", Model: "BPX", Version: ""}, // skipped
+		{MAC: "4", Name: "nomodel", Model: "", Version: "9.9"},   // skipped
 	}
-	groups := FirmwareMismatches(devs)
-	if len(groups) != 1 || groups[0].Model != "MCXi" {
-		t.Fatalf("groups = %+v, want one MCXi group", groups)
+	if sp := ReleaseMismatch(uniform); sp != nil {
+		t.Errorf("uniform releases = %+v, want nil", sp)
 	}
-	// Only the two complete devices are in the family.
-	if len(groups[0].Devices) != 2 {
-		t.Errorf("devices in MCXi = %d, want 2 (incomplete ones excluded)", len(groups[0].Devices))
+
+	// Releases diverge across families: one finding with both releases counted,
+	// most common first, and the device roster version-sorted.
+	mixed := []Device{
+		{MAC: "1", Name: "bp-a", Model: "BPX", Version: "5.2.2.25270"},
+		{MAC: "2", Name: "bp-b", Model: "BPX", Version: "5.2.2.25270"},
+		{MAC: "3", Name: "mc-a", Model: "MCXi", Version: "5.1.0.14479"},
+	}
+	sp := ReleaseMismatch(mixed)
+	if sp == nil {
+		t.Fatal("mixed releases yielded no finding")
+	}
+	if len(sp.Releases) != 2 || sp.Releases[0].Release != "5.2.2" || sp.Releases[0].N != 2 || sp.Releases[1].Release != "5.1.0" {
+		t.Errorf("releases = %+v, want 5.2.2 x2 then 5.1.0 x1", sp.Releases)
+	}
+	if len(sp.Devices) != 3 || sp.Devices[0].Name != "mc-a" {
+		t.Errorf("roster = %+v, want version-sorted with mc-a first", sp.Devices)
 	}
 }
 
-// TestFirmwareMismatchesCountTieBreak verifies the version-count ordering tie-break
-// (equal counts ordered by version ascending).
-func TestFirmwareMismatchesCountTieBreak(t *testing.T) {
-	devs := []Device{
-		{MAC: "00:1f:80:00:00:01", Name: "a", Model: "WPXi", Version: "2.0.0"},
-		{MAC: "00:1f:80:00:00:02", Name: "b", Model: "WPXi", Version: "1.0.0"},
+// TestReleaseMismatchLegacyExemption pins the legacy carve-out: a legacy family
+// on its final release never counts against a newer fleet, but a legacy device
+// BELOW the final release still does.
+func TestReleaseMismatchLegacyExemption(t *testing.T) {
+	// Legacy on the sanctioned final release beside a newer fleet: no finding.
+	sanctioned := []Device{
+		{MAC: "1", Name: "bp2-a", Model: "BP2", Version: legacyFinalRelease + ".24127"},
+		{MAC: "2", Name: "wp-a", Model: "WP", Version: legacyFinalRelease + ".24127"},
+		{MAC: "3", Name: "bp-a", Model: "BPX", Version: "5.3.0.30001"},
+		{MAC: "4", Name: "bp-b", Model: "BPX", Version: "5.3.0.30001"},
 	}
-	groups := FirmwareMismatches(devs)
-	if len(groups) != 1 {
-		t.Fatalf("groups = %d, want 1", len(groups))
+	if sp := ReleaseMismatch(sanctioned); sp != nil {
+		t.Errorf("legacy on final release = %+v, want nil", sp)
 	}
-	c := groups[0].Counts
-	if len(c) != 2 || c[0].Version != "1.0.0" || c[1].Version != "2.0.0" {
-		t.Errorf("tie-break order = %+v, want 1.0.0 before 2.0.0", c)
-	}
-}
 
-// TestFirmwareMismatchesDeterministicModelOrder confirms multiple diverging model
-// families come back sorted by model name.
-func TestFirmwareMismatchesDeterministicModelOrder(t *testing.T) {
-	devs := []Device{
-		{MAC: "1", Name: "z1", Model: "ZPXi", Version: "1"},
-		{MAC: "2", Name: "z2", Model: "ZPXi", Version: "2"},
-		{MAC: "3", Name: "a1", Model: "APXi", Version: "1"},
-		{MAC: "4", Name: "a2", Model: "APXi", Version: "2"},
+	// Legacy BELOW the final release: it participates and warns.
+	outdated := []Device{
+		{MAC: "1", Name: "bp2-a", Model: "BP2", Version: "5.2.0.20001"},
+		{MAC: "2", Name: "bp-a", Model: "BPX", Version: "5.3.0.30001"},
 	}
-	groups := FirmwareMismatches(devs)
-	if len(groups) != 2 {
-		t.Fatalf("groups = %d, want 2", len(groups))
+	sp := ReleaseMismatch(outdated)
+	if sp == nil || len(sp.Releases) != 2 {
+		t.Fatalf("outdated legacy = %+v, want a 2-release finding", sp)
 	}
-	if groups[0].Model != "APXi" || groups[1].Model != "ZPXi" {
-		t.Errorf("model order = [%q,%q], want [APXi,ZPXi]", groups[0].Model, groups[1].Model)
+
+	// A pure legacy fleet on the final release compares as empty: no finding.
+	if sp := ReleaseMismatch(sanctioned[:2]); sp != nil {
+		t.Errorf("all-legacy final-release fleet = %+v, want nil", sp)
 	}
 }
 

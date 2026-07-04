@@ -12,25 +12,6 @@ import (
 // presentation; it bakes in no HTML of its own.
 type NetHealthView struct {
 	Interfaces []NetHealthIface
-	// Firmware holds one row per Green-GO model family running mixed firmware (from
-	// the active 6464 scan). Empty when the fleet is uniform or no scan is running.
-	Firmware []FirmwareModelRow
-}
-
-// FirmwareModelRow is one model family's firmware mismatch: a one-line summary for
-// the card and the per-device breakdown for the info-tip tooltip (capped, with More
-// counting any devices beyond the cap).
-type FirmwareModelRow struct {
-	Summary string
-	Devices []FirmwareDeviceRow
-	More    int
-}
-
-// FirmwareDeviceRow is one device in a firmware-mismatch tooltip.
-type FirmwareDeviceRow struct {
-	Name    string
-	IP      string
-	Version string
 }
 
 // NetHealthIface is one monitored interface's health: its detector rows plus the
@@ -253,9 +234,6 @@ func netOverall(v NetHealthView) (ok, warn, err, avail int) {
 		warn += ifc.WarnCount
 		err += ifc.ErrCount
 	}
-	// A firmware mismatch is cross-cutting (not tied to one interface); count each
-	// mismatched model family as a warning so the collapsed card reflects it.
-	warn += len(v.Firmware)
 	return
 }
 
@@ -305,9 +283,6 @@ func netHealthRollupDetail(v NetHealthView) string {
 		return "Passive monitoring starts once a profile is active."
 	}
 	var issues []string
-	for _, fw := range v.Firmware {
-		issues = append(issues, "firmware: "+fw.Summary)
-	}
 	for _, ifc := range v.Interfaces {
 		for _, r := range ifc.Rows {
 			if r.Severity == "warn" || r.Severity == "error" {
@@ -389,6 +364,8 @@ func netHealthIcon(kind string) string {
 		return "headset" // Green-GO intercom device census
 	case "greengo_config":
 		return "sliders-horizontal" // the active Green-GO intercom configuration
+	case "firmware":
+		return "cpu" // mixed firmware within a Green-GO device family
 	default:
 		return "circle"
 	}

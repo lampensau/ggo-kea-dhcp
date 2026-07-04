@@ -82,7 +82,7 @@ type Scanner struct {
 }
 
 // NewScanner builds a scanner that opens a real UDP socket. Tests use the pure
-// helpers (parseScanReply, FirmwareMismatches) and never call Start.
+// helpers (parseScanReply, ReleaseMismatch) and never call Start.
 func NewScanner() *Scanner { return &Scanner{open: openConn, inv: newInventory()} }
 
 // Start (re)starts scanning for the given Green-GO scopes. Idempotent (stops any
@@ -106,6 +106,10 @@ func (s *Scanner) Start(specs []Spec) {
 	s.available = true
 	s.seen = map[string]bool{}
 	s.mu.Unlock()
+	// A (re)start scans a possibly different network (profile switch): drop the
+	// previous run's inventory rather than letting up to deviceTTL of the old
+	// network's devices color the new profile's census and firmware findings.
+	s.inv.clear()
 	s.wg.Add(2)
 	go s.sendLoop()
 	go s.recvLoop()
@@ -225,8 +229,11 @@ func (s *Scanner) recvLoop() {
 
 // parseScanReply decodes a G-G device-scan reply (type 0x11). srcIP is the UDP
 // source (the device's address). Field offsets are within the reply body (payload
-// after the 8-byte G-G header): name @0, MAC @0x12, firmware @0x2e. The reply
-// carries no config id. Returns ok=false for any non-0x11 / too-short frame.
+// after the 8-byte G-G header): name @0, MAC @0x12, then a 0x55aa marker @0x2e
+// with the firmware string @0x30 (verified against live BPX replies; reading the
+// string at 0x2e swallows the marker as "U\xaa" text). A reply without the marker
+// is read at 0x2e. The reply carries no config id. Returns ok=false for any
+// non-0x11 / too-short frame.
 func parseScanReply(payload []byte, srcIP string) (Device, bool) {
 	if len(payload) < 8 || payload[0] != 0x47 || payload[1] != 0x2d || payload[2] != 0x47 || payload[3] != 0x00 {
 		return Device{}, false
@@ -241,68 +248,87 @@ func parseScanReply(payload []byte, srcIP string) (Device, bool) {
 	name := asciiTrim(body[0:0x12])
 	mac := net.HardwareAddr(body[0x12:0x18]).String()
 	fw := ""
-	if len(body) > 0x2e {
+	switch {
+	case len(body) > 0x30 && body[0x2e] == 0x55 && body[0x2f] == 0xaa:
+		fw = asciiTrim(body[0x30:min(0x30+0x40, len(body))])
+	case len(body) > 0x2e:
 		fw = asciiTrim(body[0x2e:min(0x2e+0x40, len(body))])
 	}
 	model, version, _ := strings.Cut(fw, " ")
 	return Device{MAC: mac, Name: name, IP: srcIP, Firmware: fw, Model: model, Version: version}, true
 }
 
-// VersionCount is one firmware version and how many devices in a model family run it.
-type VersionCount struct {
-	Version string
+// Legacy device families are frozen on a final firmware release and interoperate
+// with newer system releases by design (vendor guidance), so a legacy device
+// running exactly that release is exempt from the release check. Model tokens are
+// the firmware string's leading word; adjust if a legacy family reports a
+// different token.
+const legacyFinalRelease = "5.2.1"
+
+var legacyModels = map[string]bool{"BP2": true, "MCD": true, "MCR": true, "WP": true}
+
+// releaseOf strips the per-model build number from a firmware version:
+// "5.1.0.14479" -> "5.1.0". Versions with three or fewer components pass through.
+func releaseOf(version string) string {
+	parts := strings.SplitN(version, ".", 4)
+	if len(parts) == 4 {
+		return strings.Join(parts[:3], ".")
+	}
+	return version
+}
+
+// ReleaseCount is one firmware release and how many devices run it.
+type ReleaseCount struct {
+	Release string
 	N       int
 }
 
-// ModelGroup is one model family with a firmware spread, ordered by count desc.
-type ModelGroup struct {
-	Model   string
-	Counts  []VersionCount // distinct versions, most common first
-	Devices []Device       // devices in this family (for the detail list)
+// ReleaseSpread is the fleet's firmware divergence: the distinct releases with
+// device counts, plus every device involved (for attribution and the roster).
+type ReleaseSpread struct {
+	Releases []ReleaseCount
+	Devices  []Device
 }
 
-// FirmwareMismatches returns, for each model family running two or more distinct
-// firmware versions, the version spread and devices - the input for the
-// firmware-mismatch warning. Families that are uniform (or have only one device) are
-// omitted. Deterministically ordered.
-func FirmwareMismatches(devs []Device) []ModelGroup {
-	byModel := map[string][]Device{}
+// ReleaseMismatch is THE firmware check: a Green-GO system normally runs one
+// firmware release (major.minor.patch) across every device type, so all devices
+// are compared on their release - the build number is ignored, since builds
+// differ per model within one release. The one sanctioned exception: legacy
+// devices frozen on legacyFinalRelease. Returns nil unless the remaining
+// devices span two or more releases.
+func ReleaseMismatch(devs []Device) *ReleaseSpread {
+	spread := &ReleaseSpread{}
+	counts := map[string]int{}
 	for _, d := range devs {
 		if d.Model == "" || d.Version == "" {
 			continue
 		}
-		byModel[d.Model] = append(byModel[d.Model], d)
+		release := releaseOf(d.Version)
+		if legacyModels[d.Model] && release == legacyFinalRelease {
+			continue // frozen legacy device on its sanctioned final release
+		}
+		counts[release]++
+		spread.Devices = append(spread.Devices, d)
 	}
-	var groups []ModelGroup
-	for model, list := range byModel {
-		counts := map[string]int{}
-		for _, d := range list {
-			counts[d.Version]++
-		}
-		if len(counts) < 2 {
-			continue // uniform within this family
-		}
-		vc := make([]VersionCount, 0, len(counts))
-		for v, n := range counts {
-			vc = append(vc, VersionCount{Version: v, N: n})
-		}
-		sort.Slice(vc, func(i, j int) bool {
-			if vc[i].N != vc[j].N {
-				return vc[i].N > vc[j].N
-			}
-			return vc[i].Version < vc[j].Version
-		})
-		ds := append([]Device(nil), list...)
-		sort.Slice(ds, func(i, j int) bool {
-			if ds[i].Version != ds[j].Version {
-				return ds[i].Version < ds[j].Version
-			}
-			return ds[i].Name < ds[j].Name
-		})
-		groups = append(groups, ModelGroup{Model: model, Counts: vc, Devices: ds})
+	if len(counts) < 2 {
+		return nil
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i].Model < groups[j].Model })
-	return groups
+	for r, n := range counts {
+		spread.Releases = append(spread.Releases, ReleaseCount{Release: r, N: n})
+	}
+	sort.Slice(spread.Releases, func(i, j int) bool {
+		if spread.Releases[i].N != spread.Releases[j].N {
+			return spread.Releases[i].N > spread.Releases[j].N
+		}
+		return spread.Releases[i].Release < spread.Releases[j].Release
+	})
+	sort.Slice(spread.Devices, func(i, j int) bool {
+		if spread.Devices[i].Version != spread.Devices[j].Version {
+			return spread.Devices[i].Version < spread.Devices[j].Version
+		}
+		return spread.Devices[i].Name < spread.Devices[j].Name
+	})
+	return spread
 }
 
 // inventory is the MAC-keyed device set, TTL-pruned on read.
@@ -312,6 +338,12 @@ type inventory struct {
 }
 
 func newInventory() *inventory { return &inventory{devices: make(map[string]Device)} }
+
+func (inv *inventory) clear() {
+	inv.mu.Lock()
+	inv.devices = make(map[string]Device)
+	inv.mu.Unlock()
+}
 
 func (inv *inventory) record(d Device, now time.Time) {
 	d.LastSeen = now
