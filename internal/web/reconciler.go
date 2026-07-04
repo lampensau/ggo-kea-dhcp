@@ -88,7 +88,11 @@ func (s *Server) scheduleReconcileHeld(label string, delay time.Duration, mode R
 		err := s.ReconcileApplianceState(mode, profileID)
 		wd.Stop()
 		if err != nil {
+			// Audit, not just stderr: these run detached from any request (settings
+			// save, reset, restore), so this row - surfaced on Diagnostics - is the
+			// only way the operator learns the convergence failed.
 			log.Printf("[reconcile:%s] reported: %v", label, err)
+			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", label, "", err.Error(), "WARNING")
 		}
 	}()
 }
@@ -133,9 +137,13 @@ func (s *Server) resumeInterruptedApply(profileID int) error {
 	// with errors.Join. Reverting a profile that was actually applied back to
 	// ONBOARDING on a transient boot hiccup would dump the operator to the SoftAP
 	// mid-deployment, so we re-try (reconcile is idempotent) before falling back.
+	// ModeApply, not Converge: the interrupted apply may have replaced a profile
+	// whose scopes the new one lacks, and only the full NM teardown evicts those
+	// stale connections (NM autoconnects them on boot and they would be re-IP'd,
+	// diverging from the served subnets). Idempotent, so retrying with it is safe.
 	var err error
 	for attempt := 1; attempt <= resumeApplyAttempts; attempt++ {
-		if err = s.reconcileActive(ModeConverge, profileID); err == nil {
+		if err = s.reconcileActive(ModeApply, profileID); err == nil {
 			break
 		}
 		log.Printf("[reconcile] resume attempt %d/%d did not complete: %v", attempt, resumeApplyAttempts, err)
@@ -148,7 +156,9 @@ func (s *Server) resumeInterruptedApply(profileID int) error {
 		if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); e != nil {
 			log.Printf("[reconcile] failed to persist ONBOARDING on revert: %v", e)
 		}
-		return s.reconcileOnboarding(ModeConverge)
+		// ModeApply for the same reason as above: the half-applied profile's VLAN
+		// connections must not linger into onboarding.
+		return s.reconcileOnboarding(ModeApply)
 	}
 	if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
 		log.Printf("[reconcile] completed interrupted apply but failed to persist ACTIVE: %v", e)
@@ -501,7 +511,7 @@ func (s *Server) snapshotKeaConf(reason string) (string, error) {
 		return "", fmt.Errorf("create snapshot dir: %w", err)
 	}
 	path := filepath.Join(s.cfg.SnapshotDir, fmt.Sprintf("kea-dhcp4.%d.conf", time.Now().UnixNano()))
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := writeFileSync(path, data, 0600); err != nil {
 		return "", fmt.Errorf("write snapshot: %w", err)
 	}
 	// The snapshot file is on disk; a failed index insert only hides it from the
@@ -510,6 +520,30 @@ func (s *Server) snapshotKeaConf(reason string) (string, error) {
 		log.Printf("[snapshot] wrote %s but failed to index it: %v", path, err)
 	}
 	return path, nil
+}
+
+// writeFileSync writes path in place (truncate + write + fsync), returning the
+// error from every step including Sync and the success-path Close. Deliberately
+// NOT temp-file+rename: /etc/kea is 0750 and root-owned - the service user owns
+// the conf file itself but cannot create files in the directory, so an atomic
+// rename is impossible there. The fsync closes the durability gap (a power loss
+// after a successful apply can no longer lose the config); the residual torn-write
+// window (crash mid-write) self-heals on the next reconcile, which re-renders from
+// SQLite and overwrites this file - it only bites if Kea itself restarts first.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // writeAndReloadKea validates, writes the rendered config to the live path, and
@@ -521,7 +555,7 @@ func (s *Server) writeAndReloadKea(configStr string) error {
 		return fmt.Errorf("kea config validation failed: %w", err)
 	}
 	live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-	if err := os.WriteFile(live, []byte(configStr), 0660); err != nil {
+	if err := writeFileSync(live, []byte(configStr), 0660); err != nil {
 		return fmt.Errorf("write kea conf: %w", err)
 	}
 	if err := s.kea.ReloadConfig(context.Background()); err != nil {
@@ -557,7 +591,7 @@ const keaServiceName = "isc-kea-dhcp4-server"
 // out, returning the last probe error.
 func (s *Server) waitKeaReachable(attempts int, delay time.Duration) error {
 	var err error
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		if err = s.kea.Ping(context.Background()); err == nil {
 			return nil
 		}
