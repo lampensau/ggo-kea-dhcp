@@ -110,7 +110,7 @@ func Factory(v FactoryView) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "Recover From Backup</h3><p class=\"help\">Already have an appliance backup? Restore it to recover your administrators, profiles, and reservations without onboarding again.</p><button type=\"button\" class=\"btn btn-secondary\" onclick=\"document.getElementById('factory-restore-dlg').showModal()\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "Recover From Backup</h3><p class=\"help\">Already have an appliance backup? Restore it to recover your administrators, profiles, and reservations without onboarding again.</p><button type=\"button\" class=\"btn btn-secondary btn-block\" onclick=\"document.getElementById('factory-restore-dlg').showModal()\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

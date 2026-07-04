@@ -81,7 +81,7 @@ func RestoreDialog(id, action, csrf string, sections bool) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" enctype=\"multipart/form-data\" onsubmit=\"return ggoConfirmRestore()\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" enctype=\"multipart/form-data\" data-busy><input type=\"hidden\" name=\"csrf_token\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -219,7 +219,9 @@ func restoreSection(value, label string) templ.Component {
 }
 
 // restoreScript wires the styled file picker (filename readout + enable Restore once a
-// file is chosen) and the destructive-action confirm, framework-free.
+// file is chosen), framework-free. The destructive-action confirmation is the styled
+// <dialog> itself (its warning body + the red "Restore Backup" button), matching the
+// reset/factory-wipe dialogs - no native confirm() on top.
 func restoreScript() templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -241,7 +243,7 @@ func restoreScript() templ.Component {
 			templ_7745c5c3_Var10 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<script>\n\t\twindow.ggoRestorePick = function (input) {\n\t\t\tvar name = (input.files && input.files.length) ? input.files[0].name : \"\";\n\t\t\tdocument.getElementById(\"restore_file_name\").textContent = name || \"No file selected\";\n\t\t\tdocument.getElementById(\"restore_submit\").disabled = !name;\n\t\t};\n\t\twindow.ggoConfirmRestore = function () {\n\t\t\treturn confirm(\"Restore will OVERWRITE the selected sections with the backup. Continue?\");\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<script>\n\t\twindow.ggoRestorePick = function (input) {\n\t\t\tvar name = (input.files && input.files.length) ? input.files[0].name : \"\";\n\t\t\tdocument.getElementById(\"restore_file_name\").textContent = name || \"No file selected\";\n\t\t\tdocument.getElementById(\"restore_submit\").disabled = !name;\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

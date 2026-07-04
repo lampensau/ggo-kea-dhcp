@@ -15,7 +15,7 @@ package views
 // chosen and confirms on submit (it overwrites the selected sections).
 templ RestoreDialog(id, action, csrf string, sections bool) {
 	<dialog id={ id } class="restore-dialog" aria-labelledby={ id + "-title" }>
-		<form method="post" action={ templ.SafeURL(action) } enctype="multipart/form-data" onsubmit="return ggoConfirmRestore()">
+		<form method="post" action={ templ.SafeURL(action) } enctype="multipart/form-data" data-busy>
 			<input type="hidden" name="csrf_token" value={ csrf }/>
 			<div class="dialog-head" id={ id + "-title" }>Restore from Backup</div>
 			<div class="dialog-body">
@@ -53,16 +53,15 @@ templ restoreSection(value, label string) {
 }
 
 // restoreScript wires the styled file picker (filename readout + enable Restore once a
-// file is chosen) and the destructive-action confirm, framework-free.
+// file is chosen), framework-free. The destructive-action confirmation is the styled
+// <dialog> itself (its warning body + the red "Restore Backup" button), matching the
+// reset/factory-wipe dialogs - no native confirm() on top.
 templ restoreScript() {
 	<script>
 		window.ggoRestorePick = function (input) {
 			var name = (input.files && input.files.length) ? input.files[0].name : "";
 			document.getElementById("restore_file_name").textContent = name || "No file selected";
 			document.getElementById("restore_submit").disabled = !name;
-		};
-		window.ggoConfirmRestore = function () {
-			return confirm("Restore will OVERWRITE the selected sections with the backup. Continue?");
 		};
 	</script>
 }

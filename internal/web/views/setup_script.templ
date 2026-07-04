@@ -95,8 +95,9 @@ templ setupScript() {
 			};
 
 			// ggoSetupScanWifi scans into the box-level uplink SSID select (the Profile card).
-			window.ggoSetupScanWifi = function () {
+			window.ggoSetupScanWifi = function (btn) {
 				var sel = document.getElementById("setup-uplink-ssid"); if (!sel) return;
+				ggoScanBusy(btn, true);
 				var cur = sel.value;
 				sel.innerHTML = "<option value=''>Scanning…</option>";
 				fetch("/wifi/scan").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {
@@ -104,7 +105,7 @@ templ setupScript() {
 					if (cur) { var c = document.createElement("option"); c.value = cur; c.textContent = cur + " (current)"; c.selected = true; sel.appendChild(c); }
 					(aps || []).forEach(function (ap) { if (ap.ssid === cur) return; var o = document.createElement("option"); o.value = ap.ssid; o.textContent = ap.ssid + " (" + ap.signal + "%, " + ap.security + ")"; sel.appendChild(o); });
 					if (!sel.options.length) { sel.innerHTML = "<option value=''>No networks found</option>"; }
-				}).catch(function () { sel.innerHTML = "<option value=''>Scan failed, click to retry</option>"; });
+				}).catch(function () { sel.innerHTML = "<option value=''>Scan failed, click to retry</option>"; }).finally(function () { ggoScanBusy(btn, false); });
 			};
 
 			// ggoValidateSetup blocks apply when more than one scope is left untagged

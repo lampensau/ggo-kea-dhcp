@@ -190,7 +190,7 @@ func Setup(v SetupView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</select> <button type=\"button\" class=\"btn btn-secondary wifi-scan-btn\" onclick=\"ggoSetupScanWifi()\" data-attr:disabled=\"!$up\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</select> <button type=\"button\" class=\"btn btn-secondary wifi-scan-btn\" onclick=\"ggoSetupScanWifi(this)\" data-attr:disabled=\"!$up\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
