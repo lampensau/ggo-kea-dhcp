@@ -76,3 +76,28 @@ func TestFactoryWipeDB(t *testing.T) {
 		}
 	}
 }
+
+// TestFactoryWipeDBAllOrNothing proves the wipe and the FACTORY state flip commit
+// as one transaction: when any statement fails, NOTHING is wiped - the failure
+// mode this prevents is a box with zero admins whose lifecycle still demands
+// login (a UI lockout only manual DB surgery could undo).
+func TestFactoryWipeDBAllOrNothing(t *testing.T) {
+	s, _ := newTestServer(t)
+	_, _ = s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')")
+	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+
+	// Force a mid-wipe failure: one of the wiped tables is gone.
+	if _, err := s.sqlite.Exec("DROP TABLE port_labels"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+
+	if err := s.factoryWipeDB(); err == nil {
+		t.Fatal("factoryWipeDB should report the failed statement")
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM users"); n != 1 {
+		t.Errorf("a failed wipe deleted the admin (users=%d) - the tx did not roll back", n)
+	}
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive {
+		t.Errorf("a failed wipe changed the lifecycle to %q - the tx did not roll back", st)
+	}
+}
