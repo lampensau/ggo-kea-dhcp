@@ -205,9 +205,7 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	time.Sleep(1 * time.Second) // let the flushed interstitial bytes drain to the client
 
 	if err := s.ReconcileApplianceState(ModeApply, plan.newProfileID); err == nil {
-		if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
-			log.Printf("[Apply] failed to persist ACTIVE state: %v", e)
-		}
+		s.setActiveAudited("APPLY_PROFILE", profileName)
 		// The new profile is live: drop the stashed prior copy of the same name.
 		if plan.stashProfileID != 0 {
 			if _, e := s.sqlite.Exec("DELETE FROM profiles WHERE id = ?", plan.stashProfileID); e != nil {
@@ -241,7 +239,7 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	if plan.snapPath != "" {
 		if data, e := os.ReadFile(plan.snapPath); e == nil {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-			if e := os.WriteFile(live, data, 0660); e != nil {
+			if e := writeFileSync(live, data, 0660); e != nil {
 				log.Printf("[Apply] rollback: restore snapshot conf: %v", e)
 			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[Apply] rollback: Kea reload after restore: %v", e)
@@ -259,9 +257,29 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	// failed forward apply created for a scope the prior profile lacks - otherwise a
 	// stale interface lingers, re-IP'd onto the new profile while Kea serves the old.
 	if e := s.ReconcileApplianceState(ModeApply, plan.prevProfileID); e != nil {
+		// The apply failed AND the recovery failed: the box is genuinely
+		// half-configured, which the plain FAILED row below doesn't convey.
 		log.Printf("[Apply] Rollback reconcile reported: %v", e)
+		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", profileName, "", e.Error(), "ERROR")
 	}
 	_ = s.sqlite.LogAudit(actor, "APPLY_PROFILE", profileName, "", "", "FAILED")
+}
+
+// setActiveAudited persists the ACTIVE lifecycle after a successful apply/switch
+// reconcile, retrying once (a transient SQLITE_BUSY is the plausible failure) and
+// auditing a persistent one: DHCP is serving but the UI would sit on the
+// CONFIGURING interstitial until a reboot finalizes the state, so the operator
+// must at least see why.
+func (s *Server) setActiveAudited(action, target string) {
+	err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	if err != nil {
+		err = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	}
+	if err != nil {
+		log.Printf("[%s] failed to persist ACTIVE state: %v", action, err)
+		_ = s.sqlite.LogAudit("SYSTEM", action, target, "",
+			"DHCP is serving but the ACTIVE state could not be persisted - the UI stays on Configuring until a reboot: "+err.Error(), "ERROR")
+	}
 }
 
 // rollbackProfileTables reverts the profiles table after a failed apply, in one
