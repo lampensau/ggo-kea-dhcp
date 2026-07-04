@@ -317,7 +317,10 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 		// it already holds doesn't knock it offline). Also clears the device's stale
 		// leases on other IPs - e.g. an old-format flex-id lease left from before the
 		// Option-82 change - so it stops showing as a duplicate learnable port.
-		s.evictForPin(r.Context(), ipStr, normalizeMAC(macStr), portIdentity)
+		// Post-commit best-effort cleanup: on context.Background(), not r.Context() -
+		// the pin is committed, so a mid-request disconnect must not skip freeing the
+		// conflicting leases the pinned device needs to adopt its address.
+		s.evictForPin(context.Background(), ipStr, normalizeMAC(macStr), portIdentity)
 	} else {
 		s.handleError(w, r, "MariaDB connection is not active", http.StatusInternalServerError)
 		return

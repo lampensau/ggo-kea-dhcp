@@ -82,7 +82,11 @@ func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
 	if err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err == nil {
 		if scopes, err := s.loadScopeConfigs(profileID); err == nil {
 			for _, sc := range scopes {
-				_, ipnet, _ := net.ParseCIDR(sc.CIDR)
+				_, ipnet, err := net.ParseCIDR(sc.CIDR)
+				if err != nil {
+					// A bad stored CIDR silently changes import subnet-matching; log it.
+					log.Printf("[import] scope CIDR %q unparseable, skipping in subnet matcher: %v", sc.CIDR, err)
+				}
 				nets = append(nets, ipnet) // nil for an unparseable CIDR; skipped below
 			}
 		}
@@ -237,7 +241,10 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	// Free the device's current lease and anything on the reserved IP so the device
 	// adopts the reservation on its next renewal rather than clinging to its old lease.
 	wantMAC := normalizeMAC(hw.String())
-	s.evictForReservation(r.Context(), ipStr, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
+	// Post-commit best-effort cleanup: must NOT be tied to r.Context() - if the
+	// operator navigates away now, the reservation is already committed and the
+	// eviction (so the device adopts it quickly) still has to run to completion.
+	s.evictForReservation(context.Background(), ipStr, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
 	_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", "", "SUCCESS")
 	// Propagate to other open pages now: the metrics-only live tick skips the
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease
@@ -297,9 +304,12 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 			s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Post-commit eviction runs once per imported row (each its own GetLeases): a
+		// large import can take many seconds, so it must not be abortable by the
+		// operator's browser disconnecting mid-request - the rows are already committed.
 		for _, o := range owners {
 			wantMAC := normalizeMAC(o.mac)
-			s.evictForReservation(r.Context(), o.ip, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
+			s.evictForReservation(context.Background(), o.ip, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
 		}
 	}
 
