@@ -5,9 +5,12 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"maps"
 	"net/http"
+	"net/url"
 	"os/signal"
 	"strings"
 	"sync"
@@ -144,7 +147,9 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// One memoized active-lease-IP provider shared by the ARP prober and the Green-GO
 	// scanner (both probe the same lease set on a ~10s cycle).
 	s.leaseIPs = memoizeLeaseIPs(func() ([]string, bool) {
-		leases, err := s.kea.GetLeases(1000)
+		ctx, cancel := opCtx()
+		defer cancel()
+		leases, err := s.kea.GetLeases(ctx, 1000)
 		if err != nil {
 			return nil, false
 		}
@@ -180,11 +185,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 func (s *Server) lastSeenSnapshot() map[string]int64 {
 	s.lastSeenMu.RLock()
 	defer s.lastSeenMu.RUnlock()
-	m := make(map[string]int64, len(s.lastSeen))
-	for k, v := range s.lastSeen {
-		m[k] = v
-	}
-	return m
+	return maps.Clone(s.lastSeen)
 }
 
 // auditResult maps a netmon severity to the audit_log Result string.
@@ -213,7 +214,11 @@ func (s *Server) Start() error {
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
 	go func() {
 		if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+			// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
+			// interface would otherwise look healthy everywhere but journalctl. The
+			// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
 			log.Printf("Boot reconcile (best-effort) reported: %v", err)
+			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
 		}
 		// Re-probe prerequisites now that the reconcile has brought Kea up (and
 		// waited for its control socket): the synchronous boot-time preflight in
@@ -230,6 +235,11 @@ func (s *Server) Start() error {
 	// Sample the dashboard trend series on an always-on cadence (independent of the
 	// client-gated ticker) so sparklines have history the moment a dashboard opens.
 	s.startMetricsSampler()
+
+	// Record system-clock steps and the first NTP sync to the audit log, so a
+	// lease-table wipe caused by an RTC-less box jumping its clock forward is
+	// diagnosable after the fact rather than a silent mystery.
+	s.startClockWatch()
 
 	// Probe MariaDB reachability so a runtime outage (and its recovery) surfaces in
 	// the UI and audit log. Kea health rides the metrics sampler.
@@ -400,11 +410,13 @@ func (s *Server) setFlash(w http.ResponseWriter, msg, msgType string) {
 		Type:    msgType,
 	}
 	data, _ := json.Marshal(flash)
+	// Server-read only (getFlash) - HttpOnly + Strict like the session cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "ggo_flash",
 		Value:    hex.EncodeToString(data),
 		Path:     "/",
-		HttpOnly: false,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   60,
 	})
 }
@@ -420,7 +432,8 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 		Name:     "ggo_flash",
 		Value:    "",
 		Path:     "/",
-		HttpOnly: false,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 
@@ -474,6 +487,11 @@ func (s *Server) getActor(r *http.Request) string {
 	return "admin"
 }
 
+// maxRequestBody bounds every authenticated mutating request's body, applied in
+// lifecycleMiddleware before the CSRF check's form parse. Sized to the largest
+// legitimate upload (a backup bundle / reservations CSV - see maxBackupUpload).
+const maxRequestBody = maxBackupUpload
+
 // isUnsafeMethod reports whether the HTTP method mutates state (and thus needs
 // CSRF validation).
 func isUnsafeMethod(m string) bool {
@@ -483,6 +501,37 @@ func isUnsafeMethod(m string) bool {
 	default:
 		return false
 	}
+}
+
+// sameOriginRequest is the pre-session CSRF defense for the FACTORY-state bootstrap
+// POSTs (/factory/setup, /factory/restore), which run before any session or CSRF
+// token exists. For an unsafe method it requires the Origin (else Referer) header,
+// when present, to match the request Host. A cross-origin browser POST always carries
+// a mismatched Origin and is rejected; a legitimate same-origin submit matches. When
+// both headers are absent (some non-browser clients) it allows the request rather than
+// break onboarding - the header check is defense-in-depth, not the sole gate. It does
+// not stop an attacker who forges a matching Origin; that needs an out-of-band recovery
+// secret, deliberately out of scope to keep zero-touch onboarding usable.
+func sameOriginRequest(r *http.Request) bool {
+	if !isUnsafeMethod(r.Method) {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		if ref := r.Header.Get("Referer"); ref != "" {
+			if u, err := url.Parse(ref); err == nil {
+				origin = u.Scheme + "://" + u.Host
+			}
+		}
+	}
+	if origin == "" {
+		return true // no Origin/Referer to check - allow (don't break onboarding)
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Host == r.Host
 }
 
 // handleAPIState returns the current lifecycle state as plain text. Public and
@@ -525,6 +574,14 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 				http.Redirect(w, r, "/factory", http.StatusFound)
 				return
 			}
+			// These POSTs run with no session/CSRF token (no admin exists yet), so a
+			// same-origin check is the only CSRF defense available - reject a
+			// cross-origin bootstrap/recovery POST before it can create an admin or
+			// restore a crafted bundle.
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -565,11 +622,31 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 		// SameSite=Strict on the cookie is the primary mitigation; this is the
 		// defense-in-depth token check.
 		if isUnsafeMethod(r.Method) {
+			// Bound the body BEFORE the FormValue fallback below: FormValue parses the
+			// whole (multipart) body into RAM and temp files, and this middleware runs
+			// ahead of every handler - so this is the appliance's real upload cap. A
+			// handler-level MaxBytesReader for a form POST would be dead code (the body
+			// is already consumed and the parsed form cached by the time it runs).
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 			provided := r.Header.Get("X-CSRF-Token")
 			if provided == "" {
+				// Parse explicitly (FormValue swallows parse errors) so an over-cap
+				// upload surfaces as 413 rather than a misleading CSRF failure.
+				if err := r.ParseMultipartForm(4 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+					if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+						// Route the 413 through the app error path (Datastar toast, or an error
+						// flash + redirect back for a native form) so an over-cap upload shows an
+						// in-app notification instead of a bare error page.
+						s.handleError(w, r, "That file is too large - backups and imports are limited to 8 MB.", http.StatusRequestEntityTooLarge)
+						return
+					}
+				}
 				provided = r.FormValue("csrf_token")
 			}
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(csrfToken)) != 1 {
+			// An empty stored token must never match an empty submission: createSession
+			// always sets one, but the sessions read COALESCEs a NULL to "", and an
+			// equal-empty compare would otherwise wave a token-less request through.
+			if csrfToken == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(csrfToken)) != 1 {
 				http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
 				return
 			}

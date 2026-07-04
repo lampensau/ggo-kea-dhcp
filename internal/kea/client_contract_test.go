@@ -27,13 +27,13 @@ func keaServer(t *testing.T, handler func(req Request) string) (*Client, *string
 
 func TestPingAndReloadCommands(t *testing.T) {
 	c, lastCmd := keaServer(t, func(Request) string { return `[{"result":0}]` })
-	if err := c.Ping(); err != nil {
+	if err := c.Ping(t.Context()); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
 	if *lastCmd != "version-get" {
 		t.Errorf("Ping sent %q want version-get", *lastCmd)
 	}
-	if err := c.ReloadConfig(); err != nil {
+	if err := c.ReloadConfig(t.Context()); err != nil {
 		t.Fatalf("ReloadConfig: %v", err)
 	}
 	if *lastCmd != "config-reload" {
@@ -44,12 +44,12 @@ func TestPingAndReloadCommands(t *testing.T) {
 func TestDeleteLeaseResultContract(t *testing.T) {
 	// result 3 ("no such lease") is success; any other non-zero result is an error.
 	c3, _ := keaServer(t, func(Request) string { return `[{"result":3,"text":"not found"}]` })
-	if err := c3.DeleteLease("10.0.0.9"); err != nil {
+	if err := c3.DeleteLease(t.Context(), "10.0.0.9"); err != nil {
 		t.Errorf("DeleteLease on missing lease should be nil, got %v", err)
 	}
 
 	c1, lastCmd := keaServer(t, func(Request) string { return `[{"result":1,"text":"boom"}]` })
-	if err := c1.DeleteLease("10.0.0.9"); err == nil {
+	if err := c1.DeleteLease(t.Context(), "10.0.0.9"); err == nil {
 		t.Error("DeleteLease should propagate a genuine error (result 1)")
 	}
 	if *lastCmd != "lease4-del" {
@@ -85,7 +85,7 @@ func TestGetLeasesPagination(t *testing.T) {
 		return fmt.Sprintf(`[{"result":0,"arguments":{"leases":[%s]}}]`, b.String())
 	})
 
-	leases, err := c.GetLeases(2)
+	leases, err := c.GetLeases(t.Context(), 2)
 	if err != nil {
 		t.Fatalf("GetLeases: %v", err)
 	}
@@ -116,11 +116,32 @@ func TestGetLeasesStopsOnResult3(t *testing.T) {
 		}
 		return `[{"result":3,"text":"no more leases"}]`
 	})
-	leases, err := c.GetLeases(2)
+	leases, err := c.GetLeases(t.Context(), 2)
 	if err != nil {
 		t.Fatalf("GetLeases: %v", err)
 	}
 	if len(leases) != 2 {
 		t.Errorf("got %d leases want 2", len(leases))
+	}
+}
+
+func TestGetLeasesStalledCursorAborts(t *testing.T) {
+	// A misbehaving Kea that returns the same full page forever (cursor never
+	// advances) must terminate with an error, not spin the loop.
+	calls := 0
+	c, _ := keaServer(t, func(Request) string {
+		calls++
+		return `[{"result":0,"arguments":{"leases":[{"ip-address":"10.0.0.1"},{"ip-address":"10.0.0.2"}]}}]`
+	})
+	_, err := c.GetLeases(t.Context(), 2)
+	if err == nil {
+		t.Fatal("GetLeases with a stalled cursor returned nil error")
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("error %q does not name the stalled cursor", err)
+	}
+	// start -> 10.0.0.2 -> 10.0.0.2 (stall detected on the third page).
+	if calls > 3 {
+		t.Errorf("server saw %d calls, want the loop to stop by the 3rd", calls)
 	}
 }

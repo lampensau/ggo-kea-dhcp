@@ -1,6 +1,10 @@
 package netmon
 
-import "golang.org/x/net/bpf"
+import (
+	"fmt"
+
+	"golang.org/x/net/bpf"
+)
 
 // The combined classic-BPF filter is the efficiency lever: it runs in-kernel and
 // drops the audio flood (Dante/AES67/NDI/sACN-data) before it ever wakes
@@ -53,14 +57,29 @@ func (a *bpfAsm) jump(cond bpf.JumpTest, val uint32, onTrue, onFalse string) {
 
 // resolve patches every recorded jump's SkipTrue/SkipFalse from its label. All
 // targets are forward (labels defined after the jump), so skips are non-negative.
+// An undefined label or a skip outside uint8 range is a programmer error in a
+// statically-built filter: panic so the unit tests fail loudly, instead of
+// emitting a syntactically-valid program that silently mis-drops frames (a
+// missing map key would read as 0 and wrap).
 func (a *bpfAsm) resolve() {
+	skip := func(label string, idx int) uint8 {
+		target, ok := a.labels[label]
+		if !ok {
+			panic(fmt.Sprintf("bpfAsm: jump at %d to undefined label %q", idx, label))
+		}
+		d := target - idx - 1
+		if d < 0 || d > 255 {
+			panic(fmt.Sprintf("bpfAsm: jump at %d to %q: skip %d outside uint8 range", idx, label, d))
+		}
+		return uint8(d)
+	}
 	for _, j := range a.jumps {
 		ji := a.ins[j.idx].(bpf.JumpIf)
 		if j.onTrue != "" {
-			ji.SkipTrue = uint8(a.labels[j.onTrue] - j.idx - 1)
+			ji.SkipTrue = skip(j.onTrue, j.idx)
 		}
 		if j.onFalse != "" {
-			ji.SkipFalse = uint8(a.labels[j.onFalse] - j.idx - 1)
+			ji.SkipFalse = skip(j.onFalse, j.idx)
 		}
 		a.ins[j.idx] = ji
 	}

@@ -25,7 +25,7 @@ func TestLastRTTRecordedOn200(t *testing.T) {
 	if c.LastRTT() != 0 {
 		t.Fatalf("LastRTT before any call = %v, want 0", c.LastRTT())
 	}
-	if _, err := c.SendCommand("config-get", nil); err != nil {
+	if _, err := c.SendCommand(t.Context(), "config-get", nil); err != nil {
 		t.Fatalf("SendCommand: %v", err)
 	}
 	if c.LastRTT() <= 0 {
@@ -55,7 +55,7 @@ func TestLastRTTNotRecordedOn500(t *testing.T) {
 	c := NewClient(srv.URL, "", "")
 
 	// First, a pure 500 against a fresh client: LastRTT must stay at its zero value.
-	if _, err := c.SendCommand("config-get", nil); err == nil {
+	if _, err := c.SendCommand(t.Context(), "config-get", nil); err == nil {
 		t.Fatal("expected a non-200 error from SendCommand")
 	}
 	if c.LastRTT() != 0 {
@@ -69,7 +69,7 @@ func TestLastRTTNotRecordedOn500(t *testing.T) {
 	// Now record a real RTT with a 200, then fire a 500 and assert the prior RTT is
 	// preserved (the 500 path does not touch lastRTT at all).
 	status = http.StatusOK
-	if _, err := c.SendCommand("config-get", nil); err != nil {
+	if _, err := c.SendCommand(t.Context(), "config-get", nil); err != nil {
 		t.Fatalf("SendCommand 200: %v", err)
 	}
 	good := c.LastRTT()
@@ -77,7 +77,7 @@ func TestLastRTTNotRecordedOn500(t *testing.T) {
 		t.Fatalf("LastRTT after 200 = %v, want > 0", good)
 	}
 	status = http.StatusInternalServerError
-	if _, err := c.SendCommand("config-get", nil); err == nil {
+	if _, err := c.SendCommand(t.Context(), "config-get", nil); err == nil {
 		t.Fatal("expected a non-200 error on the second 500")
 	}
 	if c.LastRTT() != good {
@@ -94,7 +94,7 @@ func TestSendCommandTransportFailureUnreachable(t *testing.T) {
 	srv.Close() // make the endpoint unreachable
 
 	c := NewClient(url, "", "")
-	if _, err := c.SendCommand("config-get", nil); err == nil {
+	if _, err := c.SendCommand(t.Context(), "config-get", nil); err == nil {
 		t.Fatal("expected a transport error against a closed server")
 	}
 	if c.Reachable() {

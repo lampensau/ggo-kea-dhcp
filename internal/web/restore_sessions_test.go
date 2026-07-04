@@ -20,7 +20,7 @@ func TestRestoreClearsSessions(t *testing.T) {
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
-	b, err := s.buildBackup()
+	b, err := s.buildBackup(t.Context())
 	if err != nil {
 		t.Fatalf("buildBackup: %v", err)
 	}

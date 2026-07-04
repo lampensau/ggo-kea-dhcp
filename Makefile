@@ -40,20 +40,24 @@ all: generate build vet test
 # is clean and green before tagging: templ output committed, gofmt, vendor in
 # sync, vet, test, native + arm64 build, golangci-lint, shellcheck.
 check: generate
-	@git diff --quiet -- '*_templ.go' || { echo "stale templ output - run 'templ generate' and commit *_templ.go"; git diff --stat -- '*_templ.go'; exit 1; }
+	@[ -z "$$(git status --porcelain -- '*_templ.go')" ] || { echo "stale or untracked templ output - run 'templ generate' and commit *_templ.go"; git status --porcelain -- '*_templ.go'; exit 1; }
 	@files=$$(git ls-files '*.go' | grep -vE '^vendor/|_templ\.go$$'); \
 		unformatted=$$(gofmt -l $$files); \
 		[ -z "$$unformatted" ] || { echo "gofmt needed:"; echo "$$unformatted"; exit 1; }
 	go mod verify
 	go mod vendor
-	@git diff --quiet -- vendor go.mod go.sum || { echo "vendor out of sync - run 'go mod vendor' and commit vendor/ go.mod go.sum"; git diff --stat -- vendor go.mod go.sum; exit 1; }
+	@[ -z "$$(git status --porcelain -- vendor go.mod go.sum)" ] || { echo "vendor out of sync or untracked - run 'go mod vendor' and commit vendor/ go.mod go.sum"; git status --porcelain -- vendor go.mod go.sum; exit 1; }
 	go vet $(GOFLAGS_VENDOR) ./...
 	go test $(GOFLAGS_VENDOR) -race -coverprofile=coverage.txt -covermode=atomic ./...
 	$(MAKE) cover-gate
 	go build $(GOFLAGS_VENDOR) .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS_VENDOR) -o ggo-kea-dhcp-arm64 .
 	$(GOLANGCI) run
-	@command -v shellcheck >/dev/null && shellcheck -S error install.sh packaging/scripts/*.sh || echo "shellcheck not installed - skipping (CI still runs it)"
+	@if command -v shellcheck >/dev/null; then \
+		shellcheck -S error install.sh packaging/scripts/*.sh; \
+	else \
+		echo "shellcheck not installed - skipping (CI still runs it)"; \
+	fi
 
 # Enforce the total-coverage threshold on an existing coverage.txt (produced by
 # `make test`). Single source of truth - CI calls this too.

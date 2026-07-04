@@ -7,6 +7,7 @@
 package preflight
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,16 +63,23 @@ func (r Result) Worst() Status {
 	return worst
 }
 
-// Run executes every probe and returns the results in a stable order.
+// Run executes every probe and returns the results grouped by subsystem, in a
+// stable order: the Kea DHCP engine first (its binary, hooks, writable config, then
+// live control socket), then the privileged tools, the reservation database, the
+// Linux capabilities, and finally the host clock. Grouping keeps related checks
+// adjacent (the config-dir check belongs with the other Kea checks, not stranded
+// after the database).
 func Run(cfg *config.Config) Result {
 	r := Result{
 		checkKeaBinary(),
 		checkHooks(),
+		checkKeaConfDir(cfg),
 		checkKeaSocket(cfg),
 	}
 	r = append(r, checkTools()...)
-	r = append(r, checkMariaDB(cfg), checkKeaConfDir(cfg))
+	r = append(r, checkMariaDB(cfg))
 	r = append(r, checkCaps()...)
+	r = append(r, checkClock())
 	return r
 }
 
@@ -89,7 +97,7 @@ func checkKeaBinary() Check {
 	if !strings.HasPrefix(v, "3.0.") {
 		return Check{name, Fail, fmt.Sprintf("found Kea %s but this appliance requires the 3.0.x series", v)}
 	}
-	return Check{name, OK, "Kea " + v}
+	return Check{name, OK, "version " + v}
 }
 
 // checkHooks verifies the required hook libraries exist in the detected hooks dir.
@@ -102,6 +110,7 @@ func checkHooks() Check {
 			missing = append(missing, lib)
 		}
 	}
+	dir = strings.TrimRight(dir, "/")
 	if len(missing) > 0 {
 		return Check{name, Fail, fmt.Sprintf("missing in %s: %s", dir, strings.Join(missing, ", "))}
 	}
@@ -116,7 +125,7 @@ func checkKeaSocket(cfg *config.Config) Check {
 	if err != nil {
 		return Check{name, Warn, fmt.Sprintf("cannot read API secret: %v", err)}
 	}
-	if err := kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(); err != nil {
+	if err := kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(context.Background()); err != nil {
 		return Check{name, Warn, fmt.Sprintf("%s unreachable: %v", cfg.KeaAPIURL, err)}
 	}
 	return Check{name, OK, "reachable at " + cfg.KeaAPIURL}
@@ -148,7 +157,7 @@ func checkMariaDB(cfg *config.Config) Check {
 		return Check{name, Warn, fmt.Sprintf("connect failed: %v", err)}
 	}
 	defer m.Close()
-	if err := m.VerifySchema(); err != nil {
+	if err := m.VerifySchema(context.Background()); err != nil {
 		return Check{name, Warn, fmt.Sprintf("schema not ready: %v", err)}
 	}
 	return Check{name, OK, "connected, hosts table present (" + config.RedactedMariaDSN(cfg.MariaDBDSN) + ")"}
@@ -171,14 +180,14 @@ func checkKeaConfDir(cfg *config.Config) Check {
 			return Check{name, Fail, fmt.Sprintf("%s not writable: %v", conf, err)}
 		}
 		_ = f.Close()
-		return Check{name, OK, conf + " is writable"}
+		return Check{name, OK, conf + " writable"}
 	}
 	probe := filepath.Join(dir, ".ggo-write-test")
 	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
 		return Check{name, Fail, fmt.Sprintf("%s not writable: %v", dir, err)}
 	}
 	_ = os.Remove(probe)
-	return Check{name, OK, dir + " is writable"}
+	return Check{name, OK, dir + " writable"}
 }
 
 // Linux capability bit numbers (see capabilities(7)).
@@ -206,6 +215,54 @@ func capCheck(name string, eff uint64, bit uint) Check {
 		return Check{name, OK, "held"}
 	}
 	return Check{name, Warn, "not held - feature disabled (granted via systemd AmbientCapabilities)"}
+}
+
+// checkClock reports the reliability of the time source, which lease expiry
+// depends on. The failure this guards against: an RTC-less box boots with a stale
+// clock, devices lease under that wrong time, and when the clock is later stepped
+// FORWARD (NTP syncs, or a late correction) every lease's expiry lands in the past
+// at once, so Kea reclaims them all - the whole active-lease table vanishes.
+//
+// A hardware RTC removes the risk entirely: the kernel restores a correct time
+// before userspace, so nothing steps forward later - hence RTC-present is OK
+// regardless of NTP. Without an RTC we rely on fake-hwclock (restores the
+// last-known time at boot, and only ever forward) plus NTP; the one genuinely
+// risky state is no RTC AND an undisciplined clock, where the wall-clock may be
+// wrong and a later sync could trip the wipe.
+func checkClock() Check {
+	return clockStatus(hasRTC(), clockSynced())
+}
+
+// clockStatus is the pure tri-state decision, split out so it is unit-testable
+// without touching the host.
+func clockStatus(rtc, synced bool) Check {
+	const name = "System clock / RTC"
+	switch {
+	case rtc:
+		return Check{name, OK, "hardware RTC present - survives reboot without NTP"}
+	case synced:
+		return Check{name, OK, "time-synced, fake-hwclock persists it (no RTC)"}
+	default:
+		return Check{name, Warn, "no RTC and not time-synced - leases run on last-known time"}
+	}
+}
+
+// hasRTC reports whether the kernel exposes a real-time clock device. Pi 4 and
+// earlier have none (empty /sys/class/rtc); Pi 5 exposes rtc0 - present whether or
+// not a coin cell is fitted, and the battery can't be probed at runtime, so device
+// presence is the best available signal (and still strictly better than no RTC).
+func hasRTC() bool {
+	entries, err := os.ReadDir("/sys/class/rtc")
+	return err == nil && len(entries) > 0
+}
+
+// clockSynced reports whether systemd-timesyncd has disciplined the clock. It drops
+// the /run/systemd/timesync/synchronized stamp file on first sync - the same signal
+// systemd-time-wait-sync waits on. A plain file read: seccomp-safe under the unit's
+// ProtectClock (which would block a live adjtimex query), and needs no privilege.
+func clockSynced() bool {
+	_, err := os.Stat("/run/systemd/timesync/synchronized")
+	return err == nil
 }
 
 // readCapEff parses the effective capability bitmask from /proc/self/status.

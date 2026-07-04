@@ -6,4 +6,24 @@
 # The app invokes these by bare name (`sudo nmcli ...`); sudo resolves them via
 # secure_path to the absolute paths below. Paths are the Debian Trixie (arm64)
 # locations.
-ggo-kea-dhcp ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/sbin/nft, /usr/sbin/ip, /usr/sbin/hostapd, /usr/bin/pkill, /usr/bin/systemctl, /usr/sbin/sysctl, /usr/sbin/kea-dhcp4, /usr/sbin/iw, /usr/sbin/iwlist
+#
+# Two tiers, to keep the blast radius of a web-UI compromise as small as practical:
+#
+# 1. Unrestricted arguments - nmcli/nft/ip/hostapd/iw/iwlist/kea-dhcp4. Their argument
+#    shapes vary per profile (interface names, CIDRs, SSIDs, rulesets), so scoping
+#    them is impractical.
+# 2. Exact-argument rules - systemctl, pkill and sysctl are broad escalation paths
+#    (any unit, any process, any kernel tunable), and the app only ever issues the
+#    fixed invocations below (network/manager.go, hostapd.go, firewall.go). sudoers
+#    matches the FULL argument list when arguments are given, so anything else
+#    (e.g. `systemctl stop caddy`, `pkill sshd`) is refused. Any NEW
+#    systemctl/pkill/sysctl invocation added to the app needs a matching line here.
+ggo-kea-dhcp ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/sbin/nft, /usr/sbin/ip, \
+	/usr/sbin/hostapd, /usr/sbin/iw, /usr/sbin/iwlist, /usr/sbin/kea-dhcp4, \
+	/usr/bin/systemctl restart isc-kea-dhcp4-server, \
+	/usr/bin/systemctl stop hostapd, \
+	/usr/bin/systemctl reboot, \
+	/usr/bin/systemctl poweroff, \
+	/usr/bin/pkill hostapd, \
+	/usr/sbin/sysctl -w net.ipv4.ip_forward=0, \
+	/usr/sbin/sysctl -w net.ipv4.ip_forward=1

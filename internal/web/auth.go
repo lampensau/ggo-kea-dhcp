@@ -106,6 +106,27 @@ func verifyPassword(stored, pw string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// reauthCurrentPassword verifies the request's "current_password" field against the
+// logged-in actor's stored hash. It gates the most destructive authenticated actions
+// (factory reset, backup restore) so a click-through confirm alone can't wipe or
+// overwrite the box. ok is false (with a user-facing reason) on a missing actor, an
+// unreadable credential, or a wrong password. Mirrors the account-change check in
+// handleSettingsSave.
+func (s *Server) reauthCurrentPassword(r *http.Request) (ok bool, reason string) {
+	actor := s.getActor(r)
+	if actor == "" {
+		return false, "Not signed in"
+	}
+	var stored string
+	if err := s.sqlite.QueryRow("SELECT password_hash FROM users WHERE username = ?", actor).Scan(&stored); err != nil {
+		return false, "Could not load current credentials"
+	}
+	if !verifyPassword(stored, r.FormValue("current_password")) {
+		return false, "Current password is incorrect"
+	}
+	return true, ""
+}
+
 // randomToken returns n random bytes hex-encoded.
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)

@@ -190,7 +190,7 @@ func Setup(v SetupView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</select> <button type=\"button\" class=\"btn btn-secondary wifi-scan-btn\" onclick=\"ggoSetupScanWifi()\" data-attr:disabled=\"!$up\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</select> <button type=\"button\" class=\"btn btn-secondary wifi-scan-btn\" onclick=\"ggoSetupScanWifi(this)\" data-attr:disabled=\"!$up\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -275,7 +275,7 @@ func Setup(v SetupView) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true).Render(ctx, templ_7745c5c3_Buffer)
+				templ_7745c5c3_Err = RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true, true).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

@@ -1,7 +1,10 @@
 package web
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -75,19 +78,44 @@ func (s *Server) handleResetRoutine(w http.ResponseWriter, r *http.Request) {
 // the handler so the DB effects are unit-testable without HTTP / the async reconcile.
 func (s *Server) routineResetDB() error {
 	if s.mariadb != nil {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}
-	_, _ = s.sqlite.Exec("UPDATE profiles SET active = 0")
+	// One transaction, lifecycle write included: a crash between a committed
+	// deactivate and the state flip would otherwise leave the box half-reset.
+	tx, err := s.sqlite.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+	_, e1 := tx.Exec("UPDATE profiles SET active = 0")
 	// Clear the box-level WiFi uplink: in ONBOARDING wlan0 hosts the SoftAP, not a
 	// client uplink, so these credentials can't apply and must not prefill the setup
 	// wizard. Saved profiles keep their own uplink, so re-applying one restores it.
-	_, _ = s.sqlite.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
-	return s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding)
+	_, e2 := tx.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
+	_, e3 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
+	if err := errors.Join(e1, e2, e3); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
+// lifecycleUpsertSQL mirrors db.SetState's upsert for use inside a transaction
+// (the SQLite pool is pinned to one connection, so calling s.sqlite.SetState
+// while a tx holds it would deadlock).
+const lifecycleUpsertSQL = `
+	INSERT INTO app_state (key, value) VALUES (?, ?)
+	ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+
 func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
+	// Re-auth before anything irreversible: a factory reset wipes the admin and
+	// opens the pre-auth FACTORY window, so a click-through confirm is not enough.
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "RESET_FACTORY", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	if !s.beginReconcile() {
 		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
 		return
@@ -114,10 +142,22 @@ func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
 // FACTORY. Split out from the handler so the DB effects are unit-testable.
 func (s *Server) factoryWipeDB() error {
 	if s.mariadb != nil {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}
+	// A silently-failed wipe is security-relevant: a "factory reset" that left the
+	// admin/sessions rows while reporting success would hand the box to whoever held
+	// the old credentials. One transaction, FACTORY state write included: committing
+	// the users/sessions deletes without the state flip would strand a box that
+	// demands login with zero admins (and /factory gated behind FACTORY) - a UI
+	// lockout only manual DB surgery could undo. All-or-nothing instead.
+	tx, err := s.sqlite.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
+	var wipeErr error
 	for _, q := range []string{
 		"DELETE FROM scopes",
 		"DELETE FROM profiles",
@@ -129,13 +169,25 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM users",
 		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass')",
 	} {
-		_, _ = s.sqlite.Exec(q)
+		if _, err := tx.Exec(q); err != nil {
+			wipeErr = errors.Join(wipeErr, fmt.Errorf("%s: %w", q, err))
+		}
 	}
-	// Drop the in-memory last-seen tracker too, so it doesn't repopulate the wiped
-	// table from stale memory on the next sample.
+	if _, err := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateFactory); err != nil {
+		wipeErr = errors.Join(wipeErr, fmt.Errorf("set FACTORY state: %w", err))
+	}
+	if wipeErr != nil {
+		return wipeErr // rolled back by the deferred Rollback - nothing was wiped
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Drop the in-memory last-seen tracker too (after the commit, so a failed wipe
+	// keeps memory and table consistent), so it doesn't repopulate the wiped table
+	// from stale memory on the next sample.
 	s.lastSeenMu.Lock()
 	s.lastSeen = map[string]int64{}
 	s.lastSeenWritten = map[string]int64{}
 	s.lastSeenMu.Unlock()
-	return s.sqlite.SetState(db.LifecycleStateKey, db.StateFactory)
+	return nil
 }

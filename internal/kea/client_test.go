@@ -26,7 +26,7 @@ func TestWipeLeasesCommand(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "", "")
-	if err := c.WipeLeases(); err != nil {
+	if err := c.WipeLeases(t.Context()); err != nil {
 		t.Fatalf("WipeLeases on an empty store should succeed (result 3), got %v", err)
 	}
 	if gotCmd != "lease4-wipe" {

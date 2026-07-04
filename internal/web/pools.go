@@ -21,7 +21,7 @@ import (
 // targeted by its index so an op/save posts only that scope's fields.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	_, _, scopes, _ := s.activeProfileScopes() // id-ordered so the edit index is stable
-	leases, _ := s.kea.GetLeases(1000)
+	leases, _ := s.kea.GetLeases(r.Context(), 1000)
 
 	boxUplink, _, _ := s.uplinkSettings()
 	v := views.PoolsView{Page: s.pageData(w, r, "DHCP Pools"), Profiles: s.listProfiles()}
@@ -143,7 +143,7 @@ func (s *Server) handlePoolsPlanOp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	leases, _ := s.kea.GetLeases(1000)
+	leases, _ := s.kea.GetLeases(r.Context(), 1000)
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
 }
 
@@ -257,7 +257,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	if !reloaded {
 		msg = "Scope saved - it will take effect on the next reload."
 	}
-	leases, _ := s.kea.GetLeases(1000)
+	leases, _ := s.kea.GetLeases(r.Context(), 1000)
 	_ = sse.PatchElementTempl(views.ScopeServices(s.scopeServicesView(sc, sIdx)))
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
 	_ = sse.PatchElementTempl(views.Toast(msg, "success"),

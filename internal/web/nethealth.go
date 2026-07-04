@@ -210,7 +210,9 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 	}
 
 	leaseFn := func() []netmon.LeasedAddr {
-		leases, err := s.kea.GetLeases(1000)
+		ctx, cancel := opCtx()
+		defer cancel()
+		leases, err := s.kea.GetLeases(ctx, 1000)
 		if err != nil {
 			return nil
 		}

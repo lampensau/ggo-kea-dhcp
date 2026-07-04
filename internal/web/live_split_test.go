@@ -29,8 +29,8 @@ func TestPeriodicVsFullFragments(t *testing.T) {
 
 	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
 
-	periodic := regionSet(s.periodicDashboardFragments(leases))
-	full := regionSet(s.dashboardFragments(leases))
+	periodic := regionSet(s.periodicDashboardFragments(t.Context(), leases))
+	full := regionSet(s.dashboardFragments(t.Context(), leases))
 
 	wantPeriodic := []string{"dash-tiles", "activity-feed", "state-badge", "link-status", "net-health", "net-health-rollup"}
 	leaseDerived := []string{"pool-table", "pool-rollup", "leases-body", "recent-leases"}

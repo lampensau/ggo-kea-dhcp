@@ -34,6 +34,11 @@ depends:
   - wireless-tools # iwlist fallback for the WiFi-uplink SSID scan
   - avahi-daemon   # publishes ggo-kea-dhcp.local (mDNS) - the by-name reconnect path
   - libnss-mdns    # lets the box itself resolve *.local (edits nsswitch.conf on install)
+  - fake-hwclock   # the Pi has no battery-backed RTC: without this it boots at a stale
+                   # time, devices lease under the wrong clock, and when NTP later steps
+                   # the clock forward Kea reclaims every lease at once (all expiries land
+                   # in the past). fake-hwclock restores the last-known time at boot,
+                   # bounding the skew so leases survive a reboot even with no uplink NTP.
 
 # We ship our own /etc/caddy/Caddyfile, a path the `caddy` package also owns. An
 # unversioned Replaces lets dpkg hand that single file over to us *without* removing

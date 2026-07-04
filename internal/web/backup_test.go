@@ -1,7 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -47,7 +50,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Export.
-	b, err := s.buildBackup()
+	b, err := s.buildBackup(t.Context())
 	if err != nil {
 		t.Fatalf("buildBackup: %v", err)
 	}
@@ -112,6 +115,63 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive {
 		t.Errorf("restored lifecycle = %q, want ACTIVE", st)
+	}
+}
+
+// TestSettingsRestoreRefusedWhileBusy proves the authenticated restore claims the
+// mutation guard BEFORE rewriting profiles/scopes/lifecycle: while an apply holds
+// the guard, the restore is refused and nothing in the database changes (it would
+// otherwise rewrite the very rows the in-flight apply is reconciling).
+func TestSettingsRestoreRefusedWhileBusy(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedAdmin(t, s, "pw")
+	if _, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Current','live',1)"); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+		t.Fatalf("seed lifecycle: %v", err)
+	}
+
+	// A valid bundle that would replace the profile set if the restore ran.
+	var schema int
+	_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&schema)
+	raw, _ := json.Marshal(&Backup{
+		Format: backupFormat, AppSchema: schema, Lifecycle: db.StateActive,
+		Users:    []BackupUser{{Username: "restored", PasswordHash: "hash"}},
+		Profiles: []BackupProfile{{Name: "Restored", Active: true}},
+	})
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	_ = mw.WriteField("current_password", "pw")
+	fw, _ := mw.CreateFormFile("backup", "b.json")
+	_, _ = fw.Write(raw)
+	_ = mw.Close()
+	req := httptest.NewRequest("POST", "/settings/restore", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	// An apply is in flight.
+	if !s.beginReconcile() {
+		t.Fatal("beginReconcile should succeed")
+	}
+	defer s.endReconcile()
+
+	rr := httptest.NewRecorder()
+	s.handleSettingsRestore(rr, req)
+
+	if rr.Code == http.StatusOK {
+		t.Errorf("busy restore returned 200 - it should have been refused")
+	}
+	var name string
+	if err := s.sqlite.QueryRow("SELECT name FROM profiles WHERE active = 1").Scan(&name); err != nil || name != "Current" {
+		t.Errorf("active profile = %q (err=%v), want the untouched 'Current'", name, err)
+	}
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateConfiguring {
+		t.Errorf("lifecycle = %q, want the untouched CONFIGURING", st)
+	}
+	var users int
+	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'restored'").Scan(&users)
+	if users != 0 {
+		t.Error("the bundle's users were written despite the busy refusal")
 	}
 }
 

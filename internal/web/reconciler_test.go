@@ -1,6 +1,7 @@
 package web
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -90,6 +91,35 @@ func TestApplyNATDrivesFirewall(t *testing.T) {
 	}
 	if !rec2.Ran("sysctl") || !rec2.Ran("nft") {
 		t.Error("teardown path should still touch sysctl + nft")
+	}
+}
+
+// TestWriteFileSync covers the durable in-place conf writer: create, overwrite
+// with truncation (a shorter config must not leave a tail of the old one), and
+// the error path (every step's error must surface, not vanish in a defer).
+func TestWriteFileSync(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kea-dhcp4.conf")
+
+	if err := writeFileSync(path, []byte("first-longer-content"), 0660); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := writeFileSync(path, []byte("short"), 0660); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "short" {
+		t.Errorf("content = %q, want %q (stale tail not truncated?)", got, "short")
+	}
+
+	if err := writeFileSync(dir, []byte("x"), 0660); err == nil {
+		t.Error("writing to a directory path should error")
+	}
+	if err := writeFileSync(filepath.Join(dir, "missing", "sub.conf"), []byte("x"), 0660); err == nil {
+		t.Error("writing into a missing directory should error")
 	}
 }
 

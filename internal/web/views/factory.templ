@@ -63,10 +63,10 @@ templ Factory(v FactoryView) {
 			<div class="card">
 				<h3>@Icon("upload") Recover From Backup</h3>
 				<p class="help">Already have an appliance backup? Restore it to recover your administrators, profiles, and reservations without onboarding again.</p>
-				<button type="button" class="btn btn-secondary" onclick="document.getElementById('factory-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
+				<button type="button" class="btn btn-secondary btn-block" onclick="document.getElementById('factory-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
 			</div>
 		</div>
-		@RestoreDialog("factory-restore-dlg", "/factory/restore", v.Page.CSRFToken, true)
+		@RestoreDialog("factory-restore-dlg", "/factory/restore", v.Page.CSRFToken, true, false)
 		@pwStrengthScript()
 		@restoreScript()
 	}

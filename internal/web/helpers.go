@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -299,4 +300,12 @@ func isPrintable(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// opCtx bounds one background IO operation (live ticker, samplers, memoized
+// lease fetches, event-driven publishes) that no HTTP request scopes. 15s
+// comfortably covers the Kea client's 10s transport timeout plus MariaDB
+// round-trips; requests use r.Context() instead.
+func opCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 15*time.Second)
 }

@@ -31,6 +31,16 @@ templ Base(d PageData) {
 				<main id="content" class="container auth-wrap">
 					{ children... }
 				</main>
+				// Auth pages (login/factory) carry no app chrome, but still report the
+				// product version in the same fixed footer as the rest of the app - a
+				// version-less factory screen is the one place an operator can't otherwise
+				// see what build they're recovering.
+				<div class="save-bar-spacer" aria-hidden="true"></div>
+				<footer class="app-footer">
+					<div class="app-footer-inner is-center">
+						<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
+					</div>
+				</footer>
 			}
 			<div id="toast-container" aria-live="polite" aria-atomic="true">
 				if d.Flash != nil {
@@ -339,6 +349,24 @@ templ busySubmitScript() {
 				setTimeout(function () { btn.disabled = true; }, 0);
 			}
 		}, false);
+
+		// ggoScanBusy toggles the same busy treatment on an ordinary async-action button
+		// (the WiFi Scan buttons: an onclick fetch, not a form submit). Called with on=true
+		// at the start of the scan and on=false in the fetch's finally, so the button spins
+		// and is unclickable for the several seconds a scan takes. On restore the button's
+		// own data-attr:disabled (bound to the uplink toggle) governs again.
+		window.ggoScanBusy = function (btn, on) {
+			if (!btn) return;
+			if (on) {
+				btn.classList.add('is-busy');
+				btn.setAttribute('aria-busy', 'true');
+				btn.disabled = true;
+			} else {
+				btn.classList.remove('is-busy');
+				btn.removeAttribute('aria-busy');
+				btn.disabled = false;
+			}
+		};
 	</script>
 }
 

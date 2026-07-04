@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ type BackupHost struct {
 }
 
 // buildBackup assembles the full backup bundle from SQLite + MariaDB.
-func (s *Server) buildBackup() (*Backup, error) {
+func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	b := &Backup{
 		Format:     backupFormat,
 		AppVersion: version.Number,
@@ -173,7 +174,7 @@ func (s *Server) buildBackup() (*Backup, error) {
 	// flag records that so restore knows whether an empty list means "none" or
 	// "uncaptured" (see Backup.ReservationsIncluded).
 	if s.mariadb != nil {
-		if hosts, err := s.mariadb.AllReservations(); err == nil {
+		if hosts, err := s.mariadb.AllReservations(ctx); err == nil {
 			b.ReservationsIncluded = true
 			for _, h := range hosts {
 				b.Reservations = append(b.Reservations, BackupHost{
@@ -336,7 +337,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	// fully restore. lifecycle is still returned non-empty, so the caller knows the
 	// SQLite restore itself succeeded and can still reconcile.
 	if sel["reservations"] && s.mariadb != nil && (b.ReservationsIncluded || len(b.Reservations) > 0) {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[restore] clearing MariaDB hosts failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
@@ -350,7 +351,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 				Hostname:       h.Hostname,
 			})
 		}
-		if err := s.mariadb.InsertReservations(hosts); err != nil {
+		if err := s.mariadb.InsertReservations(context.Background(), hosts); err != nil {
 			log.Printf("[restore] inserting reservations failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
@@ -361,7 +362,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 
 // handleBackupExport serves the full appliance backup as a downloadable JSON file.
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
-	b, err := s.buildBackup()
+	b, err := s.buildBackup(r.Context())
 	if err != nil {
 		s.handleError(w, r, "Failed to build backup: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -470,7 +471,7 @@ func (s *Server) handleFactoryRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginThrottle.succeed(throttleKey) // a completed restore clears the backoff
-	s.finishRestore(w, "SYSTEM", lifecycle, rerr,
+	s.finishRestore(w, "SYSTEM", lifecycle, rerr, false,
 		"Backup restored. Sign in with your restored administrator account.")
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
@@ -478,20 +479,38 @@ func (s *Server) handleFactoryRestore(w http.ResponseWriter, r *http.Request) {
 // handleSettingsRestore restores from an uploaded backup (authenticated path) and
 // reconciles runtime state to the restored profile.
 func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBackupUpload)
+	// No MaxBytesReader here: lifecycleMiddleware's CSRF check already parsed (and
+	// bounded, maxRequestBody) the multipart body before this handler runs.
 	b, err := parseUploadedBackup(r)
 	if err != nil {
 		s.handleError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Re-auth before overwriting the appliance: restore can replace the admin set,
+	// profiles, and reservations, so require the current password (parseUploadedBackup
+	// already parsed the multipart form, so current_password is available).
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "BACKUP_RESTORE", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
+	// Claim the mutation guard BEFORE rewriting profiles/scopes/lifecycle: a restore
+	// racing an in-flight apply/switch would rewrite the very rows its finish half is
+	// reconciling, and that half's ACTIVE write would then clobber the restored
+	// lifecycle. Refuse instead (the route is reachable during CONFIGURING).
+	if !s.beginReconcile() {
+		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		return
+	}
 	lifecycle, rerr := s.restore(b, selectedSections(r))
 	if lifecycle == "" {
 		// Hard failure: the SQLite restore itself did not happen (nothing changed).
+		s.endReconcile()
 		_ = s.sqlite.LogAudit(s.getActor(r), "BACKUP_RESTORE", "appliance", "", rerr.Error(), "ERROR")
 		s.handleError(w, r, "Restore failed: "+rerr.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.finishRestore(w, s.getActor(r), lifecycle, rerr,
+	s.finishRestore(w, s.getActor(r), lifecycle, rerr, true,
 		"Backup restored. The appliance is re-applying the restored configuration.")
 	http.Redirect(w, r, "/settings", http.StatusFound)
 }
@@ -501,9 +520,16 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 // according to whether the MariaDB hosts table also fully restored. A non-nil rerr
 // here means the control plane restored but reservations did not - reported as a
 // warning, not unqualified success, so the operator knows the box is half-restored.
-func (s *Server) finishRestore(w http.ResponseWriter, actor, lifecycle string, rerr error, okMsg string) {
-	if s.beginReconcile() {
-		s.scheduleReconcileHeld("restore", 0, ModeConverge, 0)
+// guardHeld says the caller already owns the reconcile guard (the settings path
+// claims it before mutating); the pre-auth factory path self-claims here instead
+// (FACTORY has no apply to race - at worst a reset's teardown reconcile is still
+// draining, and the boot reconcile then converges to the restored state).
+func (s *Server) finishRestore(w http.ResponseWriter, actor, lifecycle string, rerr error, guardHeld bool, okMsg string) {
+	if guardHeld || s.beginReconcile() {
+		// ModeApply, not Converge: a restore intentionally does a full NM teardown
+		// (brief link bounce even for a same-profile restore) - it is the only way to
+		// evict a stale VLAN connection the restored profile no longer carries.
+		s.scheduleReconcileHeld("restore", 0, ModeApply, 0)
 	} else {
 		log.Printf("[restore] post-restore reconcile deferred - a configuration change is in progress")
 	}

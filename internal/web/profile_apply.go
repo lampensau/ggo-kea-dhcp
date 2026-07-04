@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -129,7 +130,12 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, plan *
 		}
 		plan.stashProfileID = stashID
 	}
-	_, _ = tx.Exec("UPDATE profiles SET active = 0")
+	// Deactivate is load-bearing: a silent failure here would leave the prior profile
+	// active alongside the new one (two active rows). Check it like the INSERT below.
+	if _, err := tx.Exec("UPDATE profiles SET active = 0"); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("Failed to deactivate current profile: %w", err)
+	}
 	res, err := tx.Exec("INSERT INTO profiles (name, active) VALUES (?, 1)", profileName)
 	if err != nil {
 		_ = tx.Rollback()
@@ -199,9 +205,7 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	time.Sleep(1 * time.Second) // let the flushed interstitial bytes drain to the client
 
 	if err := s.ReconcileApplianceState(ModeApply, plan.newProfileID); err == nil {
-		if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
-			log.Printf("[Apply] failed to persist ACTIVE state: %v", e)
-		}
+		s.setActiveAudited("APPLY_PROFILE", profileName)
 		// The new profile is live: drop the stashed prior copy of the same name.
 		if plan.stashProfileID != 0 {
 			if _, e := s.sqlite.Exec("DELETE FROM profiles WHERE id = ?", plan.stashProfileID); e != nil {
@@ -235,9 +239,9 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	if plan.snapPath != "" {
 		if data, e := os.ReadFile(plan.snapPath); e == nil {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-			if e := os.WriteFile(live, data, 0660); e != nil {
+			if e := writeFileSync(live, data, 0660); e != nil {
 				log.Printf("[Apply] rollback: restore snapshot conf: %v", e)
-			} else if e := s.kea.ReloadConfig(); e != nil {
+			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[Apply] rollback: Kea reload after restore: %v", e)
 			}
 		}
@@ -253,9 +257,29 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	// failed forward apply created for a scope the prior profile lacks - otherwise a
 	// stale interface lingers, re-IP'd onto the new profile while Kea serves the old.
 	if e := s.ReconcileApplianceState(ModeApply, plan.prevProfileID); e != nil {
+		// The apply failed AND the recovery failed: the box is genuinely
+		// half-configured, which the plain FAILED row below doesn't convey.
 		log.Printf("[Apply] Rollback reconcile reported: %v", e)
+		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", profileName, "", e.Error(), "ERROR")
 	}
 	_ = s.sqlite.LogAudit(actor, "APPLY_PROFILE", profileName, "", "", "FAILED")
+}
+
+// setActiveAudited persists the ACTIVE lifecycle after a successful apply/switch
+// reconcile, retrying once (a transient SQLITE_BUSY is the plausible failure) and
+// auditing a persistent one: DHCP is serving but the UI would sit on the
+// CONFIGURING interstitial until a reboot finalizes the state, so the operator
+// must at least see why.
+func (s *Server) setActiveAudited(action, target string) {
+	err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	if err != nil {
+		err = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	}
+	if err != nil {
+		log.Printf("[%s] failed to persist ACTIVE state: %v", action, err)
+		_ = s.sqlite.LogAudit("SYSTEM", action, target, "",
+			"DHCP is serving but the ACTIVE state could not be persisted - the UI stays on Configuring until a reboot: "+err.Error(), "ERROR")
+	}
 }
 
 // rollbackProfileTables reverts the profiles table after a failed apply, in one
@@ -269,6 +293,10 @@ func (s *Server) rollbackProfileTables(plan applyPlan, profileName string) error
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	// All-or-nothing: committing a partial revert (e.g. the DELETE landed but the
+	// stash rename didn't) would strand the prior profile under its stash name.
+	// Rollback is a no-op after a successful Commit.
+	defer func() { _ = rtx.Rollback() }()
 	_, e1 := rtx.Exec("UPDATE profiles SET active = 0")
 	// Drop the failed new profile first, freeing its UNIQUE name for the stash.
 	_, e2 := rtx.Exec("DELETE FROM profiles WHERE id = ?", plan.newProfileID)
@@ -280,5 +308,8 @@ func (s *Server) rollbackProfileTables(plan applyPlan, profileName string) error
 	if plan.prevProfileID != 0 {
 		_, e4 = rtx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", plan.prevProfileID)
 	}
-	return errors.Join(e1, e2, e3, e4, rtx.Commit())
+	if err := errors.Join(e1, e2, e3, e4); err != nil {
+		return err
+	}
+	return rtx.Commit()
 }

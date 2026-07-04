@@ -38,7 +38,7 @@ templ Settings(v SettingsView) {
 											<option value="">Scan to find networks</option>
 										}
 									</select>
-									<button type="button" class="btn btn-secondary wifi-scan-btn" onclick="ggoSettingsScanWifi()" data-attr:disabled="!$uplink">@Icon("search") Scan</button>
+									<button type="button" class="btn btn-secondary wifi-scan-btn" onclick="ggoSettingsScanWifi(this)" data-attr:disabled="!$uplink">@Icon("search") Scan</button>
 								</div>
 							</div>
 							<div class="form-group no-margin">
@@ -165,7 +165,7 @@ templ settingsBackupCard(v SettingsView) {
 			<button type="button" class="btn btn-secondary" onclick="document.getElementById('settings-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
 		</div>
 	</div>
-	@RestoreDialog("settings-restore-dlg", "/settings/restore", v.Page.CSRFToken, true)
+	@RestoreDialog("settings-restore-dlg", "/settings/restore", v.Page.CSRFToken, true, true)
 }
 
 // settingsWifiScript scans for WiFi networks (GET /wifi/scan) into the uplink SSID
@@ -173,8 +173,9 @@ templ settingsBackupCard(v SettingsView) {
 // option so leaving the field untouched keeps the existing network selected.
 templ settingsWifiScript() {
 	<script>
-		window.ggoSettingsScanWifi = function () {
+		window.ggoSettingsScanWifi = function (btn) {
 			var sel = document.getElementById("uplink_ssid"); if (!sel) return;
+			ggoScanBusy(btn, true);
 			var cur = sel.value;
 			sel.innerHTML = "<option value=''>Scanning…</option>";
 			fetch("/wifi/scan").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {
@@ -189,7 +190,7 @@ templ settingsWifiScript() {
 				sel.innerHTML = "";
 				if (cur) { var c = document.createElement("option"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }
 				var e = document.createElement("option"); e.value = ""; e.textContent = "Scan failed, click Scan to retry"; sel.appendChild(e);
-			});
+			}).finally(function () { ggoScanBusy(btn, false); });
 		};
 	</script>
 }

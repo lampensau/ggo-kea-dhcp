@@ -175,7 +175,9 @@ func (s *Server) sampleMetrics() {
 		s.sysHealth.sample()
 	}
 
-	leases, err := s.kea.GetLeases(1000)
+	ctx, cancel := opCtx()
+	defer cancel()
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	// Record Kea reachability (the HTTP transport reached the socket) regardless of
 	// whether the lease query itself errored, and warn on a transition. This is the
 	// runtime "DHCP Server Offline" signal.

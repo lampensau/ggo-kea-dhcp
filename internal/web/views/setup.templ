@@ -58,7 +58,7 @@ templ Setup(v SetupView) {
 										<option value="">Scan to find networks</option>
 									}
 								</select>
-								<button type="button" class="btn btn-secondary wifi-scan-btn" onclick="ggoSetupScanWifi()" data-attr:disabled="!$up">@Icon("search") Scan</button>
+								<button type="button" class="btn btn-secondary wifi-scan-btn" onclick="ggoSetupScanWifi(this)" data-attr:disabled="!$up">@Icon("search") Scan</button>
 							</div>
 						</div>
 						<div class="form-group no-margin">
@@ -88,7 +88,7 @@ templ Setup(v SetupView) {
 			// The restore <dialog> lives here, OUTSIDE the apply form above - a dialog owns
 			// its own form in the top layer, so the trigger button inside the apply form
 			// just opens it (no nested forms).
-			@RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true)
+			@RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true, true)
 			@restoreScript()
 		}
 	}

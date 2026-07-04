@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -197,13 +198,21 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		s.endReconcile()
 		return switchPlan{}, fmt.Errorf("Database error: %w", err)
 	}
-	_, _ = tx.Exec("UPDATE profiles SET active = 0")
-	_, _ = tx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", targetID)
-	_, _ = tx.Exec(`
+	// Every statement is load-bearing: a silently-failed active-flag toggle would
+	// commit a tree with no (or two) active profiles. SQLite does not fail Commit for
+	// a prior statement error, so each is checked and rolls the whole switch back.
+	_, e1 := tx.Exec("UPDATE profiles SET active = 0")
+	_, e2 := tx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", targetID)
+	_, e3 := tx.Exec(`
 		INSERT INTO app_state (key, value)
 		VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		db.LifecycleStateKey, db.StateConfiguring)
+	if err := errors.Join(e1, e2, e3); err != nil {
+		_ = tx.Rollback()
+		s.endReconcile()
+		return switchPlan{}, fmt.Errorf("Failed to switch active profile: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		s.endReconcile()
 		return switchPlan{}, fmt.Errorf("Failed to switch active profile: %w", err)
@@ -233,9 +242,7 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 	time.Sleep(1 * time.Second) // let the flushed interstitial bytes drain to the client
 
 	if err := s.ReconcileApplianceState(ModeApply, plan.targetProfileID); err == nil {
-		if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
-			log.Printf("[Switch] failed to persist ACTIVE state: %v", e)
-		}
+		s.setActiveAudited("SWITCH_PROFILE", plan.profileName)
 		_ = s.sqlite.LogAudit(actor, "SWITCH_PROFILE", plan.profileName, "", "", "SUCCESS")
 		log.Printf("[Switch] Switched to profile %q; appliance is ACTIVE.", plan.profileName)
 		s.publishDashboard()
@@ -263,9 +270,9 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 	if plan.snapPath != "" {
 		if data, e := os.ReadFile(plan.snapPath); e == nil {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-			if e := os.WriteFile(live, data, 0660); e != nil {
+			if e := writeFileSync(live, data, 0660); e != nil {
 				log.Printf("[Switch] rollback: restore snapshot conf: %v", e)
-			} else if e := s.kea.ReloadConfig(); e != nil {
+			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[Switch] rollback: Kea reload after restore: %v", e)
 			}
 		}
@@ -280,7 +287,10 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 	// failed forward switch created for a scope the previous profile lacks - else a
 	// stale interface lingers, addressing diverging from the served subnets.
 	if e := s.ReconcileApplianceState(ModeApply, plan.prevProfileID); e != nil {
+		// The switch failed AND the recovery failed: the box is genuinely
+		// half-configured, which the plain FAILED row below doesn't convey.
 		log.Printf("[Switch] Rollback reconcile reported: %v", e)
+		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", plan.profileName, "", e.Error(), "ERROR")
 	}
 	_ = s.sqlite.LogAudit(actor, "SWITCH_PROFILE", plan.profileName, "", "", "FAILED")
 }

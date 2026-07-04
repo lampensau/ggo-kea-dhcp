@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 )
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	s.renderTempl(w, r, views.Dashboard(s.buildDashboardView(s.pageData(w, r, "Dashboard"))))
+	s.renderTempl(w, r, views.Dashboard(s.buildDashboardView(r.Context(), s.pageData(w, r, "Dashboard"))))
 }
 
 // buildDashboardView gathers the appliance state (active profile, scopes, leases)
@@ -22,20 +23,20 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // and the address-pool table. It is shared by the page handler and the SSE ticker
 // (live.go), so first paint and every live fragment derive from the same
 // computation and cannot drift. pd is the shell context (empty for the ticker).
-func (s *Server) buildDashboardView(pd views.PageData) views.DashboardView {
-	leases, keaErr := s.kea.GetLeases(1000)
+func (s *Server) buildDashboardView(ctx context.Context, pd views.PageData) views.DashboardView {
+	leases, keaErr := s.kea.GetLeases(ctx, 1000)
 	if keaErr != nil {
 		log.Printf("[Dashboard] Kea lease query failed: %v", keaErr)
 	}
-	return s.buildDashboardViewWithLeases(pd, leases)
+	return s.buildDashboardViewWithLeases(ctx, pd, leases)
 }
 
 // buildDashboardViewWithLeases builds the dashboard view from an already-fetched
 // lease set, so the live ticker can fetch leases once (the only unavoidable poll),
 // decide nothing changed, and skip this work entirely. It collects the netmon
 // snapshot once and delegates to buildDashboardViewWith.
-func (s *Server) buildDashboardViewWithLeases(pd views.PageData, leases []kea.ActiveLease) views.DashboardView {
-	return s.buildDashboardViewWith(pd, leases, s.collectNetSnapshot(), true)
+func (s *Server) buildDashboardViewWithLeases(ctx context.Context, pd views.PageData, leases []kea.ActiveLease) views.DashboardView {
+	return s.buildDashboardViewWith(ctx, pd, leases, s.collectNetSnapshot(), true)
 }
 
 // buildDashboardViewWith builds the dashboard view from an already-fetched lease
@@ -45,7 +46,7 @@ func (s *Server) buildDashboardViewWithLeases(pd views.PageData, leases []kea.Ac
 // false so it refreshes the periodic-cheap regions (tiles, net-health, activity)
 // without the pinning/reservation round-trips - those regions change only on a
 // lease change or an explicit pin op, both of which build the full view.
-func (s *Server) buildDashboardViewWith(pd views.PageData, leases []kea.ActiveLease, ns netSnapshotData, withPinning bool) views.DashboardView {
+func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, leases []kea.ActiveLease, ns netSnapshotData, withPinning bool) views.DashboardView {
 	var profileID int
 	var profileName string
 	if err := s.sqlite.QueryRow("SELECT id, name FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID, &profileName); err != nil {
@@ -95,7 +96,7 @@ func (s *Server) buildDashboardViewWith(pd views.PageData, leases []kea.ActiveLe
 	// metrics-only refresh (withPinning=false) to avoid the round-trip.
 	var pinned, learnable []views.PortRow
 	if withPinning {
-		pinned, learnable = s.fetchPinningSplit(leases)
+		pinned, learnable = s.fetchPinningSplit(ctx, leases)
 	}
 	sig := ns.Signals
 
@@ -186,7 +187,7 @@ func poolDataForScope(sc ScopeConfig, leases []kea.ActiveLease) []views.PoolRow 
 }
 
 func (s *Server) handleLeases(w http.ResponseWriter, r *http.Request) {
-	leases, err := s.kea.GetLeases(1000)
+	leases, err := s.kea.GetLeases(r.Context(), 1000)
 	if err != nil {
 		log.Printf("Kea API lease query failed: %v", err)
 		s.renderTempl(w, r, views.Leases(views.LeasesView{
@@ -197,7 +198,7 @@ func (s *Server) handleLeases(w http.ResponseWriter, r *http.Request) {
 	}
 	s.renderTempl(w, r, views.Leases(views.LeasesView{
 		Page:       s.pageData(w, r, "Leases"),
-		Leases:     s.unifiedLeaseRows(leases),
+		Leases:     s.unifiedLeaseRows(r.Context(), leases),
 		CanReserve: s.mariadb != nil,
 	}))
 }
@@ -232,7 +233,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	_ = datastar.ReadSignals(r, &sig)
 
 	_, csrf, _ := s.sessionInfo(r)
-	leases, err := s.kea.GetLeases(1000)
+	leases, err := s.kea.GetLeases(r.Context(), 1000)
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
 		log.Printf("Kea API lease query failed: %v", err)
@@ -242,7 +243,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filtered := filterLeases(s.unifiedLeaseRows(leases), sig.Search)
+	filtered := filterLeases(s.unifiedLeaseRows(r.Context(), leases), sig.Search)
 	sse := datastar.NewSSE(w, r)
 	_ = sse.PatchElementTempl(views.LeasesBody(filtered, csrf, s.mariadb != nil))
 }
@@ -252,7 +253,7 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[Leases] Manually releasing lease for %s...", ip)
 
 	sse := datastar.NewSSE(w, r)
-	if err := s.kea.DeleteLease(ip); err != nil {
+	if err := s.kea.DeleteLease(r.Context(), ip); err != nil {
 		_ = sse.PatchElementTempl(views.Toast("Failed to release "+ip+": "+err.Error(), "error"),
 			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
 		return
@@ -260,10 +261,15 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	_ = s.sqlite.LogAudit(s.getActor(r), "LEASE_RELEASE", ip, "", "", "SUCCESS")
 
 	// Re-render the lease table and confirm. The live channel also refreshes the
-	// list, but patching here makes the release feel immediate.
+	// list, but patching here makes the release feel immediate. On a re-fetch
+	// error leave the table untouched: repainting from a failed query would show
+	// an empty table under the green toast, indistinguishable from a real wipe.
 	_, csrf, _ := s.sessionInfo(r)
-	leases, _ := s.kea.GetLeases(1000)
-	_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(leases), csrf, s.mariadb != nil))
+	if leases, err := s.kea.GetLeases(r.Context(), 1000); err != nil {
+		log.Printf("[Leases] post-release refresh failed (table left as-is): %v", err)
+	} else {
+		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), csrf, s.mariadb != nil))
+	}
 	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
 		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
 }

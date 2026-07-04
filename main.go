@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -100,7 +101,7 @@ func main() {
 	var mariadb *db.MariaDB
 	mariadb, err = db.ConnectMariaDB(cfg.MariaDBDSN)
 	if err == nil {
-		if err := mariadb.VerifySchema(); err != nil {
+		if err := mariadb.VerifySchema(context.Background()); err != nil {
 			log.Printf("Warning: MariaDB connection succeeded but schema verification failed: %v", err)
 		} else {
 			log.Println("MariaDB Data Plane connected and verified successfully.")

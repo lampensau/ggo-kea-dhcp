@@ -40,8 +40,9 @@ func (m *Manager) RestartService(name string) error {
 
 // Reboot reboots the host (sudo systemctl reboot) through the Commander seam.
 // The box goes down shortly after the command is issued; callers flush their HTTP
-// response first. No-ops in dev when systemctl is absent. `systemctl` is already
-// whitelisted in the sudoers drop-in, so no packaging change is needed.
+// response first. No-ops in dev when systemctl is absent. `systemctl reboot` and
+// `systemctl poweroff` each have their own exact-argument line in the sudoers
+// drop-in (systemctl is not whitelisted with unrestricted args).
 func (m *Manager) Reboot() error {
 	_, err := m.cmd.Run("systemctl", "reboot")
 	return err

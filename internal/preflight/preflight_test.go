@@ -38,6 +38,24 @@ func TestResultWorst(t *testing.T) {
 	}
 }
 
+func TestClockStatus(t *testing.T) {
+	// Only "no RTC AND not synced" is risky; a present RTC is OK regardless of NTP.
+	cases := []struct {
+		rtc, synced bool
+		want        Status
+	}{
+		{true, true, OK},
+		{true, false, OK},    // RTC alone is enough - no forward step to fear
+		{false, true, OK},    // no RTC but disciplined + fake-hwclock persists it
+		{false, false, Warn}, // the lease-wipe-prone state
+	}
+	for _, c := range cases {
+		if got := clockStatus(c.rtc, c.synced); got.Status != c.want {
+			t.Errorf("clockStatus(rtc=%v, synced=%v)=%v want %v", c.rtc, c.synced, got.Status, c.want)
+		}
+	}
+}
+
 func TestCapCheck(t *testing.T) {
 	// bit 13 (CAP_NET_RAW) held -> OK; absent -> Warn.
 	const bit = 13

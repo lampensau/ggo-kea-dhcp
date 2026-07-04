@@ -387,7 +387,6 @@ func detectHooksDir() string {
 		"/usr/lib/aarch64-linux-gnu/kea/hooks/",
 		"/usr/lib/x86_64-linux-gnu/kea/hooks/",
 		"/usr/lib/kea/hooks/",
-		"./test-kea-gui/", // testing path
 	}
 
 	for _, path := range paths {
