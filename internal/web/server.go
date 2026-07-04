@@ -58,6 +58,13 @@ type Server struct {
 	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
 	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
 	ggoscan *ggoscan.Scanner
+	// ggoFwMu guards ggoFwScopes: the greengo-preset scopes the scanner targets
+	// (iface + subnet), refreshed on every startGgoScan. Used to attribute
+	// firmware-mismatch findings to the owning scope's Network Health sub-card.
+	// Never cleared on Stop - outside ACTIVE netmon is down too, so there are no
+	// interface cards to attach to and a stale mapping is inert.
+	ggoFwMu     sync.Mutex
+	ggoFwScopes []fwScope
 	// leaseIPs is a single TTL-memoized provider of the active-lease IPs, shared by the
 	// ARP prober and the Green-GO scanner so their ~10s cycles collapse to ONE Kea
 	// GetLeases round-trip per cycle instead of one each.

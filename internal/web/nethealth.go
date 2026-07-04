@@ -380,14 +380,15 @@ func (s *Server) buildNetSignals() netSignals {
 		s.addInterfaceSnapshot(&sig, snap)
 	}
 	if s.ggoscan != nil {
-		sig.Health.Firmware = buildFirmwareRows(s.ggoscan.Snapshot())
+		s.attachFirmware(&sig.Health, s.ggoscan.Snapshot())
 	}
 	return sig
 }
 
 // statusPillView aggregates the lifecycle state with the live network-health signals
 // (the same per-interface detector warn/err counts the Network Health card rollup
-// shows, plus firmware mismatches) into the header status-pill view. The Details are
+// shows; firmware mismatches arrive as regular interface rows via attachFirmware)
+// into the header status-pill view. The Details are
 // the alert titles, shown in the pill's tooltip. Backend service health (Kea/MariaDB/
 // uplink) is deliberately NOT folded in here - it gets the more prominent
 // #backend-alert strip above the page h1 (see views.BackendAlert / health.go).
@@ -407,10 +408,6 @@ func (s *Server) statusPillView(state string, nh views.NetHealthView) views.Stat
 				v.Details = append(v.Details, label+": "+r.Title)
 			}
 		}
-	}
-	for _, fw := range nh.Firmware { // mixed firmware is a warning
-		v.WarnCount++
-		v.Details = append(v.Details, fw.Summary)
 	}
 	return v
 }
@@ -433,7 +430,7 @@ func (s *Server) collectNetSnapshot() netSnapshotData {
 	}
 	if s.ggoscan != nil {
 		snap := s.ggoscan.Snapshot() // one scanner snapshot for both firmware rows + names
-		ns.Signals.Health.Firmware = buildFirmwareRows(snap)
+		s.attachFirmware(&ns.Signals.Health, snap)
 		ns.GgoNames = namesFromDevices(snap.Devices)
 	}
 	ns.Live, ns.Available = s.presenceByIP()
@@ -508,18 +505,23 @@ func (s *Server) addInterfaceSnapshot(sig *netSignals, snap netmon.Snapshot) {
 			}
 		}
 	}
-	// Order detector rows by severity first (errors, warnings, the green "confirmed
-	// good", then the gray "informational / not yet observed"), and WITHIN a severity
-	// by detector relevance (DHCP integrity → Green-GO → fabric → link), so even an
-	// all-clear card reads in a deliberate order rather than detector-registration order.
-	sort.SliceStable(ifc.Rows, func(i, j int) bool {
-		ri, rj := rowSeverityRank(ifc.Rows[i].Severity), rowSeverityRank(ifc.Rows[j].Severity)
+	sortNetHealthRows(ifc.Rows)
+	sig.Health.Interfaces = append(sig.Health.Interfaces, ifc)
+}
+
+// sortNetHealthRows orders detector rows by severity first (errors, warnings, the
+// green "confirmed good", then the gray "informational / not yet observed"), and
+// WITHIN a severity by detector relevance (DHCP integrity → Green-GO → fabric →
+// link), so even an all-clear card reads in a deliberate order rather than
+// detector-registration order. Also applied when attachFirmware appends a row.
+func sortNetHealthRows(rows []views.NetHealthRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, rj := rowSeverityRank(rows[i].Severity), rowSeverityRank(rows[j].Severity)
 		if ri != rj {
 			return ri < rj
 		}
-		return detectorKindOrder(ifc.Rows[i].Kind) < detectorKindOrder(ifc.Rows[j].Kind)
+		return detectorKindOrder(rows[i].Kind) < detectorKindOrder(rows[j].Kind)
 	})
-	sig.Health.Interfaces = append(sig.Health.Interfaces, ifc)
 }
 
 // rowSeverityRank orders detector rows by severity: errors, warnings, the green
@@ -554,20 +556,22 @@ func detectorKindOrder(kind string) int {
 		return 3
 	case "greengo_config":
 		return 4
-	case "vlan":
+	case "firmware":
 		return 5
-	case "igmp":
+	case "vlan":
 		return 6
-	case "ptp":
+	case "igmp":
 		return 7
-	case "sacn":
+	case "ptp":
 		return 8
-	case "lldp":
+	case "sacn":
 		return 9
-	case "storm":
+	case "lldp":
 		return 10
-	case "idle":
+	case "storm":
 		return 11
+	case "idle":
+		return 12
 	default:
 		return 99
 	}

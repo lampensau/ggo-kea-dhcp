@@ -877,19 +877,10 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .nh-row-info .info-tip-text { left:auto; right:-6px; transform:none; width:max-content; max-width:320px; }
 .nh-row-info .info-tip-text::after { left:auto; right:9px; transform:none; }
 
-/* Firmware-mismatch row: a single non-wrapping summary line; the per-device list
-   lives in the info-tip so the card layout never breaks at fleet scale. */
-.nh-firmware { margin-bottom:var(--sp-3); }
-.nh-fw-summary { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.nh-row-info .info-tip-text.fw-tip { max-width:360px; white-space:normal; }
-.fw-tip-row { display:flex; justify-content:space-between; gap:14px; }
-.fw-tip-row + .fw-tip-row { margin-top:3px; }
-
 /* Device roster tooltip: one device per row, each on a single non-wrapping line. */
 .nh-row-info .info-tip-text.nh-roster { max-width:none; white-space:nowrap; }
 .nh-roster-row { display:block; }
 .nh-roster-row + .nh-roster-row { margin-top:3px; }
-.fw-tip-more { display:block; margin-top:5px; color:var(--text-muted); }
 
 .status-pill.is-err { color:var(--err); border-color:var(--err-border); background:var(--err-tint); }
 

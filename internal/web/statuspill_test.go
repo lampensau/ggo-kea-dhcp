@@ -8,9 +8,10 @@ import (
 )
 
 // TestStatusPillView_Aggregates proves statusPillView sums per-interface
-// warn/err counts, collects warn+error row titles into Details, and folds each
-// firmware-mismatch row in as one extra warning. (s.health is nil here, so only the
-// netmon + firmware contributions are exercised.)
+// warn/err counts and collects warn+error row titles into Details. Firmware
+// mismatches ride along as regular per-interface warn rows (attachFirmware),
+// so no separate aggregation path exists. (s.health is nil here, so only the
+// netmon contributions are exercised.)
 func TestStatusPillView_Aggregates(t *testing.T) {
 	s, _ := newTestServer(t)
 
@@ -18,10 +19,11 @@ func TestStatusPillView_Aggregates(t *testing.T) {
 		Interfaces: []views.NetHealthIface{
 			{
 				Iface:     "eth0",
-				WarnCount: 1,
+				WarnCount: 2,
 				ErrCount:  2,
 				Rows: []views.NetHealthRow{
 					{Severity: "warn", Title: "Rogue DHCP"},
+					{Kind: "firmware", Severity: "warn", Title: "Mixed firmware: BPX - 2 on 5.1, 1 on 5.0"},
 					{Severity: "error", Title: "Duplicate IP"},
 					{Severity: "ok", Title: "All good"},   // not surfaced
 					{Severity: "info", Title: "Neighbor"}, // not surfaced
@@ -29,26 +31,26 @@ func TestStatusPillView_Aggregates(t *testing.T) {
 			},
 			{Iface: "eth0.10", WarnCount: 3, ErrCount: 0},
 		},
-		Firmware: []views.FirmwareModelRow{
-			{Summary: "BPX: 2 firmware versions"},
-		},
 	}
 
 	v := s.statusPillView("ACTIVE", nh)
 	if v.State != "ACTIVE" {
 		t.Errorf("State = %q want ACTIVE", v.State)
 	}
-	// 1+3 interface warns + 1 firmware warn = 5; 2+0 errs.
+	// 2+3 interface warns (firmware included); 2+0 errs.
 	if v.WarnCount != 5 {
 		t.Errorf("WarnCount = %d want 5", v.WarnCount)
 	}
 	if v.ErrCount != 2 {
 		t.Errorf("ErrCount = %d want 2", v.ErrCount)
 	}
-	// Details: the two warn/error row titles, each prefixed with their interface so
-	// identical warnings on different scopes are distinguishable, + the firmware
-	// summary (ok/info excluded; firmware is fleet-wide, so no interface prefix).
-	wantDetails := map[string]bool{"eth0: Rogue DHCP": true, "eth0: Duplicate IP": true, "BPX: 2 firmware versions": true}
+	// Details: the warn/error row titles, each prefixed with their interface so
+	// identical warnings on different scopes are distinguishable (ok/info excluded).
+	wantDetails := map[string]bool{
+		"eth0: Rogue DHCP":   true,
+		"eth0: Duplicate IP": true,
+		"eth0: Mixed firmware: BPX - 2 on 5.1, 1 on 5.0": true,
+	}
 	if len(v.Details) != len(wantDetails) {
 		t.Fatalf("Details = %v, want the 3 actionable lines", v.Details)
 	}

@@ -106,6 +106,10 @@ func (s *Scanner) Start(specs []Spec) {
 	s.available = true
 	s.seen = map[string]bool{}
 	s.mu.Unlock()
+	// A (re)start scans a possibly different network (profile switch): drop the
+	// previous run's inventory rather than letting up to deviceTTL of the old
+	// network's devices color the new profile's census and firmware findings.
+	s.inv.clear()
 	s.wg.Add(2)
 	go s.sendLoop()
 	go s.recvLoop()
@@ -312,6 +316,12 @@ type inventory struct {
 }
 
 func newInventory() *inventory { return &inventory{devices: make(map[string]Device)} }
+
+func (inv *inventory) clear() {
+	inv.mu.Lock()
+	inv.devices = make(map[string]Device)
+	inv.mu.Unlock()
+}
 
 func (inv *inventory) record(d Device, now time.Time) {
 	d.LastSeen = now
