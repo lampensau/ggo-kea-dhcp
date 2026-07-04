@@ -73,6 +73,7 @@ func Run(cfg *config.Config) Result {
 	r = append(r, checkTools()...)
 	r = append(r, checkMariaDB(cfg), checkKeaConfDir(cfg))
 	r = append(r, checkCaps()...)
+	r = append(r, checkClock())
 	return r
 }
 
@@ -207,6 +208,54 @@ func capCheck(name string, eff uint64, bit uint) Check {
 		return Check{name, OK, "held"}
 	}
 	return Check{name, Warn, "not held - feature disabled (granted via systemd AmbientCapabilities)"}
+}
+
+// checkClock reports the reliability of the time source, which lease expiry
+// depends on. The failure this guards against: an RTC-less box boots with a stale
+// clock, devices lease under that wrong time, and when the clock is later stepped
+// FORWARD (NTP syncs, or a late correction) every lease's expiry lands in the past
+// at once, so Kea reclaims them all - the whole active-lease table vanishes.
+//
+// A hardware RTC removes the risk entirely: the kernel restores a correct time
+// before userspace, so nothing steps forward later - hence RTC-present is OK
+// regardless of NTP. Without an RTC we rely on fake-hwclock (restores the
+// last-known time at boot, and only ever forward) plus NTP; the one genuinely
+// risky state is no RTC AND an undisciplined clock, where the wall-clock may be
+// wrong and a later sync could trip the wipe.
+func checkClock() Check {
+	return clockStatus(hasRTC(), clockSynced())
+}
+
+// clockStatus is the pure tri-state decision, split out so it is unit-testable
+// without touching the host.
+func clockStatus(rtc, synced bool) Check {
+	const name = "System clock / RTC"
+	switch {
+	case rtc:
+		return Check{name, OK, "hardware RTC present - the clock survives a reboot without NTP, so lease expiry stays correct"}
+	case synced:
+		return Check{name, OK, "no hardware RTC; the clock is time-synced and fake-hwclock persists it across reboots"}
+	default:
+		return Check{name, Warn, "no hardware RTC and the clock is not time-synced yet - lease expiry runs on the last-known (fake-hwclock) time; check the date shown on this page before trusting leases"}
+	}
+}
+
+// hasRTC reports whether the kernel exposes a real-time clock device. Pi 4 and
+// earlier have none (empty /sys/class/rtc); Pi 5 exposes rtc0 - present whether or
+// not a coin cell is fitted, and the battery can't be probed at runtime, so device
+// presence is the best available signal (and still strictly better than no RTC).
+func hasRTC() bool {
+	entries, err := os.ReadDir("/sys/class/rtc")
+	return err == nil && len(entries) > 0
+}
+
+// clockSynced reports whether systemd-timesyncd has disciplined the clock. It drops
+// the /run/systemd/timesync/synchronized stamp file on first sync - the same signal
+// systemd-time-wait-sync waits on. A plain file read: seccomp-safe under the unit's
+// ProtectClock (which would block a live adjtimex query), and needs no privilege.
+func clockSynced() bool {
+	_, err := os.Stat("/run/systemd/timesync/synchronized")
+	return err == nil
 }
 
 // readCapEff parses the effective capability bitmask from /proc/self/status.
