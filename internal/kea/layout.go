@@ -2,6 +2,7 @@ package kea
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"strings"
 )
@@ -256,8 +257,10 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 		}
 		g := gaps[gi]
 		// firstFitGap/the elastic min above guarantee sz fits the gap; make the
-		// bound explicit so the uint32 conversion below can never wrap.
-		if sz <= 0 || uint64(sz) > uint64(g.hi-g.lo)+1 {
+		// bound explicit so the uint32 conversion below can never wrap. The
+		// MaxUint32 clause matters on its own: a gap spanning the whole IPv4
+		// space has 2^32 addresses, one more than uint32 can hold.
+		if sz <= 0 || uint64(sz) > math.MaxUint32 || uint64(sz) > uint64(g.hi-g.lo)+1 {
 			return nil, fmt.Errorf("internal: pool %q size %d exceeds gap", specs[i].Class, sz)
 		}
 		end := g.lo + uint32(sz) - 1

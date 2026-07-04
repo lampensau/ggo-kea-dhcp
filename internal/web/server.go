@@ -410,7 +410,9 @@ func logSafe(s string) string {
 // redirect navigates the client to path: a Datastar SSE redirect for Datastar
 // actions, else a plain 302 (native form posts and full page loads).
 func (s *Server) redirectHTMX(w http.ResponseWriter, r *http.Request, path string) {
-	if !safeReturnPath(path) {
+	// Same rule as safeReturnPath, kept inline: the scanner only recognizes the
+	// redirect guard when the prefix checks dominate the sink directly.
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.HasPrefix(path, "/\\") {
 		path = "/"
 	}
 	if isDatastar(r) {
