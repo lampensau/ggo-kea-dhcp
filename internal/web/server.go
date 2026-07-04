@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os/signal"
 	"strings"
@@ -182,11 +183,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 func (s *Server) lastSeenSnapshot() map[string]int64 {
 	s.lastSeenMu.RLock()
 	defer s.lastSeenMu.RUnlock()
-	m := make(map[string]int64, len(s.lastSeen))
-	for k, v := range s.lastSeen {
-		m[k] = v
-	}
-	return m
+	return maps.Clone(s.lastSeen)
 }
 
 // auditResult maps a netmon severity to the audit_log Result string.
@@ -232,6 +229,11 @@ func (s *Server) Start() error {
 	// Sample the dashboard trend series on an always-on cadence (independent of the
 	// client-gated ticker) so sparklines have history the moment a dashboard opens.
 	s.startMetricsSampler()
+
+	// Record system-clock steps and the first NTP sync to the audit log, so a
+	// lease-table wipe caused by an RTC-less box jumping its clock forward is
+	// diagnosable after the fact rather than a silent mystery.
+	s.startClockWatch()
 
 	// Probe MariaDB reachability so a runtime outage (and its recovery) surfaces in
 	// the UI and audit log. Kea health rides the metrics sampler.
