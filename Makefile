@@ -20,7 +20,7 @@ GGO_VERSION ?= $(shell sed -n 's/.*Number = "\(.*\)".*/\1/p' internal/version/ve
 DEPLOY_HOST ?= 10.0.0.1
 DEPLOY_USER ?= timo
 
-.PHONY: generate build vet test all check pi deb deploy release
+.PHONY: generate build vet test all check cover-gate pi deb deploy release
 
 generate:
 	$(TEMPL) generate
@@ -32,7 +32,7 @@ vet: generate
 	go vet $(GOFLAGS_VENDOR) ./...
 
 test: generate
-	go test $(GOFLAGS_VENDOR) ./...
+	go test $(GOFLAGS_VENDOR) -race -coverprofile=coverage.txt -covermode=atomic ./...
 
 all: generate build vet test
 
@@ -48,11 +48,26 @@ check: generate
 	go mod vendor
 	@git diff --quiet -- vendor go.mod go.sum || { echo "vendor out of sync - run 'go mod vendor' and commit vendor/ go.mod go.sum"; git diff --stat -- vendor go.mod go.sum; exit 1; }
 	go vet $(GOFLAGS_VENDOR) ./...
-	go test $(GOFLAGS_VENDOR) ./...
+	go test $(GOFLAGS_VENDOR) -race -coverprofile=coverage.txt -covermode=atomic ./...
+	$(MAKE) cover-gate
 	go build $(GOFLAGS_VENDOR) .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS_VENDOR) -o ggo-kea-dhcp-arm64 .
 	$(GOLANGCI) run
 	@command -v shellcheck >/dev/null && shellcheck -S error install.sh packaging/scripts/*.sh || echo "shellcheck not installed - skipping (CI still runs it)"
+
+# Enforce the total-coverage threshold on an existing coverage.txt (produced by
+# `make test`). Single source of truth - CI calls this too.
+cover-gate:
+	@go tool cover -func=coverage.txt | awk -v threshold="50.0" '/total:/ { \
+		split($$NF, a, "%"); \
+		coverage = a[1]; \
+		if (coverage < threshold) { \
+			print "Error: Code coverage (" coverage "%) is below threshold (" threshold "%)" > "/dev/stderr"; \
+			exit 1; \
+		} else { \
+			print "Success: Code coverage (" coverage "%) meets threshold (" threshold "%)"; \
+		} \
+	}'
 
 # Cross-compile for the Raspberry Pi (ARM64). Adjust GOARCH=arm + GOARM=7 for 32-bit.
 pi: generate

@@ -5,13 +5,23 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@v6
+      - name: Register Shellcheck matcher
+        run: echo "::add-matcher::.github/matchers/shellcheck.json"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -41,7 +51,10 @@ jobs:
         run: go vet -mod=vendor ./...
 
       - name: go test
-        run: go test -mod=vendor ./...
+        run: go test -mod=vendor -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Enforce test coverage threshold
+        run: make cover-gate
 
       - name: Build (native)
         run: go build -mod=vendor .
@@ -52,14 +65,17 @@ jobs:
       - name: Shellcheck packaging scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S error install.sh packaging/scripts/*.sh
+          shellcheck -f gcc -S error install.sh packaging/scripts/*.sh
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-go@v6
+      - name: Register golangci-lint matcher
+        run: echo "::add-matcher::.github/matchers/golangci-lint.json"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 

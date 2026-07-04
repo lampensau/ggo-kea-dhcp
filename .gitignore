@@ -29,3 +29,6 @@ gui/venv/
 # Packaging output (produced by nfpm in the release workflow)
 /dist/
 *.deb
+
+# Test coverage profiles
+coverage.txt
