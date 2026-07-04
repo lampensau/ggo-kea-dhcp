@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -36,9 +37,20 @@ func hasControlChar(s string) bool {
 	return strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0
 }
 
-// softAPConfPath is where the generated hostapd.conf is written (/tmp because the
-// service user can't write /etc/kea).
-const softAPConfPath = "/tmp/hostapd.conf"
+// softAPRunDir is the unit's RuntimeDirectory (service-owned, auto-created by
+// systemd) - preferred over world-writable /tmp, where any local user could
+// pre-create or swap /tmp/hostapd.conf between our write and root's read.
+const softAPRunDir = "/run/ggo-kea-dhcp"
+
+// softAPConfPath returns where the generated hostapd.conf is written: the
+// RuntimeDirectory on a packaged box, falling back to the system temp dir on a
+// dev machine without the unit. sudo hostapd reads it as root either way.
+func softAPConfPath() string {
+	if fi, err := os.Stat(softAPRunDir); err == nil && fi.IsDir() {
+		return filepath.Join(softAPRunDir, "hostapd.conf")
+	}
+	return filepath.Join(os.TempDir(), "hostapd.conf")
+}
 
 // StartSoftAP configures and launches hostapd on wlan0.
 func (m *Manager) StartSoftAP(ssid, passphrase string) error {
@@ -55,7 +67,8 @@ func (m *Manager) StartSoftAP(ssid, passphrase string) error {
 	} else {
 		confContent = fmt.Sprintf("interface=wlan0\ndriver=nl80211\nssid=%s\nhw_mode=g\nchannel=6\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0\nwpa=2\nwpa_passphrase=%s\nwpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\n", ssid, passphrase)
 	}
-	if err := os.WriteFile(softAPConfPath, []byte(confContent), 0600); err != nil {
+	confPath := softAPConfPath()
+	if err := os.WriteFile(confPath, []byte(confContent), 0600); err != nil {
 		return fmt.Errorf("failed to write hostapd config: %w", err)
 	}
 
@@ -80,7 +93,7 @@ func (m *Manager) StartSoftAP(ssid, passphrase string) error {
 
 	// Start hostapd as a background daemon (-B). The Commander bypasses (no error)
 	// when hostapd isn't installed, so this is a no-op in dev.
-	if _, err := m.cmd.Run("hostapd", "-B", softAPConfPath); err != nil {
+	if _, err := m.cmd.Run("hostapd", "-B", confPath); err != nil {
 		return fmt.Errorf("failed to start hostapd: %w", err)
 	}
 

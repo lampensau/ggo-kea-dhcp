@@ -33,6 +33,10 @@ Restart=on-failure
 RestartSec=3
 # Create/own /var/lib/ggo-kea-dhcp automatically.
 StateDirectory=ggo-kea-dhcp
+# Create/own /run/ggo-kea-dhcp for the generated hostapd.conf: service-owned, so
+# no other local user can pre-create or swap the file the way they could in
+# world-writable /tmp (root reads it via sudo hostapd, mode bits don't apply).
+RuntimeDirectory=ggo-kea-dhcp
 
 # Grant exactly the capabilities the app itself needs: AF_PACKET raw sockets for the
 # passive network monitor (CAP_NET_RAW) and the onboarding DNS bind on :53
@@ -45,7 +49,9 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 # therefore remain available - deliberately NO NoNewPrivileges, NO ProtectSystem, NO
 # RestrictSUIDSGID (all three block sudo), NO ProtectKernelTunables (blocks the
 # `sudo sysctl net.ipv4.ip_forward` NAT toggle - the sandbox covers the whole unit,
-# sudo children included) and NO PrivateTmp (hostapd reads /tmp/hostapd.conf).
+# sudo children included). hostapd.conf lives under RuntimeDirectory now (not /tmp),
+# but PrivateTmp stays off: multipart uploads spill to the shared temp dir and the
+# dev fallback still writes there.
 #
 # The directives below ARE safe alongside sudo: none of the escalated helpers touch
 # /home, kmsg, the system clock, realtime scheduling or personality(2), so each
