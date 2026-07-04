@@ -127,8 +127,8 @@ fi
 
 # 8. Enable + start services. The supporting services never touch the operator's
 #    network, so start them now. The control-plane app is the exception (see below).
-systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable isc-kea-dhcp4-server >/dev/null 2>&1 || true
+systemctl daemon-reload >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - systemctl daemon-reload failed; run it manually." >&2
+systemctl enable isc-kea-dhcp4-server >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - could not enable isc-kea-dhcp4-server; enable it manually." >&2
 # RESTART (not just enable --now): the stock isc-kea package, configured earlier in
 # this same apt run, may already be running with its unix-only default config. In
 # that case `enable --now` is a no-op and Kea never opens the :8004 HTTP control
@@ -136,11 +136,14 @@ systemctl enable isc-kea-dhcp4-server >/dev/null 2>&1 || true
 # locked out (config-reload needs :8004 and cannot bootstrap it). A restart makes
 # Kea re-read the file we just wrote. Safe mid-transaction: Kea only serves DHCP on
 # the (currently empty) configured interfaces, it never touches the operator network.
-systemctl restart isc-kea-dhcp4-server >/dev/null 2>&1 || true
+# Load-bearing: without the :8004 control socket this restart opens, the control
+# plane can never reload Kea. Surface a failure instead of hiding it.
+systemctl restart isc-kea-dhcp4-server >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - Kea failed to restart onto the new config; the control socket (:8004) may be down. Check 'systemctl status isc-kea-dhcp4-server'." >&2
 if [ -d "$HOOKS_DIR" ]; then :; fi
-# Caddy: load our reverse-proxy config.
-systemctl enable --now caddy >/dev/null 2>&1 || true
-systemctl reload caddy >/dev/null 2>&1 || systemctl restart caddy >/dev/null 2>&1 || true
+# Caddy: load our reverse-proxy config. Caddy is the only HTTPS front door, so a
+# failure here means the UI is unreachable - do not hide it.
+systemctl enable --now caddy >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - could not enable/start caddy; the web UI (HTTPS front door) may be unreachable." >&2
+systemctl reload caddy >/dev/null 2>&1 || systemctl restart caddy >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - caddy did not reload/restart onto our Caddyfile; check 'systemctl status caddy'." >&2
 
 # 8b. mDNS: publish ggo-kea-dhcp.local so operators reach the box by name instead of
 #     memorizing an IP (the PRD's zero-IP-memory reconnect path). Setting the system
@@ -156,24 +159,35 @@ fi
 if ! grep -qE "127\.0\.1\.1[[:space:]]+ggo-kea-dhcp" /etc/hosts 2>/dev/null; then
 	printf '127.0.1.1\tggo-kea-dhcp\n' >> /etc/hosts
 fi
-systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+systemctl enable --now avahi-daemon >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - could not start avahi-daemon; reaching the box by ggo-kea-dhcp.local may not work (an IP still does)." >&2
 
 # Control-plane activation.
 # FRESH install (or one never activated): only ENABLE it. Its first start seizes
 # eth0 -> 10.0.0.1 and raises the wlan0 SoftAP, which would instantly drop an SSH
 # session over eth0 and can race systemd mid-apt - so we defer the takeover to the
 # operator's deliberate reboot (the closing banner explains how to reconnect).
-# UPGRADE/REINSTALL of an already-RUNNING box: restart it onto the new binary now.
+# UPGRADE/REINSTALL of an already-ACTIVATED box: restart it onto the new binary now.
 # That is the same idempotent boot reconcile the box has already done, on the same
-# IP, so nothing re-seizes eth0 and no session drops. The is-active guard is the key
-# safety: a not-yet-activated box is never started here (that would seize eth0 mid-
-# apt), and keying on "running" (not a version delta) means a same-version reinstall
-# exercises the restart path too.
-systemctl enable ggo-kea-dhcp >/dev/null 2>&1 || true
+# IP, so nothing re-seizes eth0 and no session drops.
+#
+# The "already activated?" signal is the presence of a ggo- NM connection (the app
+# names every connection it creates on takeover ggo-*), NOT `systemctl is-active`.
+# is-active is unreliable here: dpkg stops the old service before this script runs, so
+# on a real upgrade it always reads inactive and the box would wrongly defer to reboot.
+# The NM-connection profile persists across that stop, so it correctly reports whether
+# eth0 was ever seized (present -> SSH is on the appliance IP, restart is safe; absent
+# -> fresh box, defer). A same-version reinstall of an activated box restarts too.
+systemctl enable ggo-kea-dhcp >/dev/null 2>&1 || echo "ggo-kea-dhcp: WARNING - could not enable ggo-kea-dhcp; it will not start on the next boot. Enable it manually." >&2
 ggo_restarted=false
-if systemctl is-active --quiet ggo-kea-dhcp 2>/dev/null; then
-	systemctl restart ggo-kea-dhcp >/dev/null 2>&1 || true
-	ggo_restarted=true
+if systemctl is-active --quiet ggo-kea-dhcp 2>/dev/null \
+	|| nmcli -t -f NAME connection show 2>/dev/null | grep -q '^ggo-'; then
+	# A failed restart leaves the OLD binary running (or the box down) while the closing
+	# banner would otherwise claim the new version - surface it so that is not silent.
+	if systemctl restart ggo-kea-dhcp >/dev/null 2>&1; then
+		ggo_restarted=true
+	else
+		echo "ggo-kea-dhcp: WARNING - failed to restart onto the new binary; check 'systemctl status ggo-kea-dhcp'." >&2
+	fi
 fi
 
 # 9. Report prerequisite status (informational - never fails the install). Pass the
