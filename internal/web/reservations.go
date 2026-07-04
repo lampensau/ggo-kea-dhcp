@@ -32,7 +32,7 @@ import (
 func (s *Server) reservationConflict(ctx context.Context, subnetID int, ip uint32, ipStr string, identifier []byte, idType int, ownMAC string) (string, bool) {
 	if s.mariadb != nil {
 		if existing, found, err := s.mariadb.ReservationByIP(ctx, subnetID, ip); err != nil {
-			log.Printf("[reservation] conflict lookup for %s failed: %v", ipStr, err)
+			log.Printf("[reservation] conflict lookup for %s failed: %v", logSafe(ipStr), err)
 		} else if found && (existing.IdentifierType != idType || !bytes.Equal(existing.Identifier, identifier)) {
 			what := "reserved for another device"
 			if existing.IdentifierType == 4 {
@@ -181,7 +181,7 @@ func (s *Server) evictForPin(ctx context.Context, reservedIP, wantMAC, portIdent
 // formReturn returns a safe same-site redirect target from the posted "return"
 // field (must be a root-relative path), else def. Prevents an open redirect.
 func formReturn(r *http.Request, def string) string {
-	if rt := r.FormValue("return"); strings.HasPrefix(rt, "/") && !strings.HasPrefix(rt, "//") {
+	if rt := r.FormValue("return"); safeReturnPath(rt) {
 		return rt
 	}
 	return def
@@ -250,7 +250,7 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease
 	// would otherwise not appear until the next lease change.
 	s.publishDashboard()
-	s.setFlash(w, fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr), "success")
+	s.setFlash(w, r, fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr), "success")
 	s.redirectHTMX(w, r, formReturn(r, "/leases"))
 }
 
@@ -324,10 +324,10 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 	msg := fmt.Sprintf("Imported %d reservation(s)", len(toInsert))
 	if skipped > 0 {
 		msg += fmt.Sprintf(", skipped %d (%s)", skipped, strings.Join(problems, "; "))
-		s.setFlash(w, msg, "warning")
+		s.setFlash(w, r, msg, "warning")
 	} else {
 		msg += " - devices adopt them on their next DHCP renewal."
-		s.setFlash(w, msg, "success")
+		s.setFlash(w, r, msg, "success")
 	}
 	s.redirectHTMX(w, r, formReturn(r, "/leases"))
 }
@@ -458,7 +458,7 @@ func (s *Server) handleReservationDelete(w http.ResponseWriter, r *http.Request)
 	_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_DELETE", macStr, "", "", "SUCCESS")
 	// Event-driven propagation (see handleReservationAdd).
 	s.publishDashboard()
-	s.setFlash(w, "Removed reservation for "+macStr, "success")
+	s.setFlash(w, r, "Removed reservation for "+macStr, "success")
 	s.redirectHTMX(w, r, formReturn(r, "/leases"))
 }
 

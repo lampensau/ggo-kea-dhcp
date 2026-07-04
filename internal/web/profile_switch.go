@@ -128,7 +128,7 @@ func (s *Server) handleProfileDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.sqlite.LogAudit(s.getActor(r), "DELETE_PROFILE", name, "", "", "SUCCESS")
-	s.setFlash(w, "Deleted configuration "+name, "success")
+	s.setFlash(w, r, "Deleted configuration "+name, "success")
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 

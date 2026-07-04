@@ -395,9 +395,24 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 // Middleware & helper utilities
 
+// safeReturnPath reports whether p is a root-relative path usable as a
+// same-site redirect target: "/x" but not "//host" or "/\host" (browsers
+// normalize the backslash into a scheme-relative URL).
+func safeReturnPath(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\")
+}
+
+// logSafe strips CR/LF so attacker-supplied values can't forge log lines.
+func logSafe(s string) string {
+	return strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
+}
+
 // redirect navigates the client to path: a Datastar SSE redirect for Datastar
 // actions, else a plain 302 (native form posts and full page loads).
 func (s *Server) redirectHTMX(w http.ResponseWriter, r *http.Request, path string) {
+	if !safeReturnPath(path) {
+		path = "/"
+	}
 	if isDatastar(r) {
 		sse := datastar.NewSSE(w, r)
 		_ = sse.Redirect(path)
@@ -411,18 +426,20 @@ type FlashMessage struct {
 	Type    string `json:"type"`
 }
 
-func (s *Server) setFlash(w http.ResponseWriter, msg, msgType string) {
+func (s *Server) setFlash(w http.ResponseWriter, r *http.Request, msg, msgType string) {
 	flash := FlashMessage{
 		Message: msg,
 		Type:    msgType,
 	}
 	data, _ := json.Marshal(flash)
-	// Server-read only (getFlash) - HttpOnly + Strict like the session cookie.
+	// Server-read only (getFlash) - HttpOnly + Strict + Secure like the session
+	// cookie (conditional: FACTORY/ONBOARDING runs over plain HTTP on the SoftAP).
 	http.SetCookie(w, &http.Cookie{
 		Name:     "ggo_flash",
 		Value:    hex.EncodeToString(data),
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   60,
 	})
@@ -440,6 +457,7 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
@@ -458,7 +476,7 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 }
 
 func (s *Server) handleError(w http.ResponseWriter, r *http.Request, msg string, code int) {
-	log.Printf("Error: %s (status code: %d)", msg, code)
+	log.Printf("Error: %s (status code: %d)", logSafe(msg), code)
 	if isDatastar(r) {
 		// Append an error toast into the live toast region; the page stays put.
 		sse := datastar.NewSSE(w, r)
@@ -477,10 +495,10 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, msg string,
 	// failing page is its own Referer.
 	if isUnsafeMethod(r.Method) {
 		back := refererPath(r)
-		if !strings.HasPrefix(back, "/") || strings.HasPrefix(back, "//") {
+		if !safeReturnPath(back) {
 			back = "/"
 		}
-		s.setFlash(w, msg, "error")
+		s.setFlash(w, r, msg, "error")
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}

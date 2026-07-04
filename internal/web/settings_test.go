@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,19 +22,31 @@ func flashCookie(rr *httptest.ResponseRecorder) *http.Cookie {
 }
 
 // TestFlashCookieFlags proves the flash cookie carries the same protective flags
-// as the session cookie (HttpOnly + SameSite=Strict) on both the set and the
-// delete write - it is only ever read server-side by getFlash.
+// as the session cookie (HttpOnly + SameSite=Strict + conditional Secure) on both
+// the set and the delete write - it is only ever read server-side by getFlash.
 func TestFlashCookieFlags(t *testing.T) {
 	s := &Server{}
 
 	rr := httptest.NewRecorder()
-	s.setFlash(rr, "hello", "info")
+	s.setFlash(rr, httptest.NewRequest("GET", "/", nil), "hello", "info")
 	c := flashCookie(rr)
 	if c == nil {
 		t.Fatal("setFlash wrote no ggo_flash cookie")
 	}
 	if !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
 		t.Errorf("setFlash cookie flags: HttpOnly=%v SameSite=%v, want HttpOnly=true SameSite=Strict", c.HttpOnly, c.SameSite)
+	}
+	if c.Secure {
+		t.Error("setFlash over plain HTTP must not set Secure (onboarding runs on the HTTP SoftAP)")
+	}
+
+	// Over HTTPS (mirroring the session cookie's isHTTPS) Secure must be set.
+	tlsReq := httptest.NewRequest("GET", "https://box/", nil)
+	tlsReq.TLS = &tls.ConnectionState{}
+	rrTLS := httptest.NewRecorder()
+	s.setFlash(rrTLS, tlsReq, "hello", "info")
+	if ct := flashCookie(rrTLS); ct == nil || !ct.Secure {
+		t.Error("setFlash over HTTPS must set Secure")
 	}
 
 	// The delete rewrite in getFlash must carry the same flags.

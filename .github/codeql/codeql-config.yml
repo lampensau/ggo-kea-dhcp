@@ -1,0 +1,4 @@
+# Generated code (templ output) is not hand-maintained; excluding it keeps the
+# alert list actionable. The .templ sources are still analyzed via the generated build.
+paths-ignore:
+  - "**/*_templ.go"
