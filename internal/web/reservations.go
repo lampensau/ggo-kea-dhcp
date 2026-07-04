@@ -266,7 +266,8 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 		s.handleError(w, r, "MariaDB (Kea host storage) is not connected, so reservations can't be imported.", http.StatusServiceUnavailable)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBackupUpload) // bound the upload before csv.ReadAll loads it all into memory
+	// No MaxBytesReader here: lifecycleMiddleware's CSRF check already parsed (and
+	// bounded, maxRequestBody) the multipart body before this handler runs.
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		s.handleError(w, r, "Choose a CSV file to import (mac,ip,hostname).", http.StatusBadRequest)

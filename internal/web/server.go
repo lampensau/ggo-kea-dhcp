@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"maps"
@@ -213,7 +214,11 @@ func (s *Server) Start() error {
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
 	go func() {
 		if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+			// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
+			// interface would otherwise look healthy everywhere but journalctl. The
+			// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
 			log.Printf("Boot reconcile (best-effort) reported: %v", err)
+			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
 		}
 		// Re-probe prerequisites now that the reconcile has brought Kea up (and
 		// waited for its control socket): the synchronous boot-time preflight in
@@ -482,6 +487,11 @@ func (s *Server) getActor(r *http.Request) string {
 	return "admin"
 }
 
+// maxRequestBody bounds every authenticated mutating request's body, applied in
+// lifecycleMiddleware before the CSRF check's form parse. Sized to the largest
+// legitimate upload (a backup bundle / reservations CSV - see maxBackupUpload).
+const maxRequestBody = maxBackupUpload
+
 // isUnsafeMethod reports whether the HTTP method mutates state (and thus needs
 // CSRF validation).
 func isUnsafeMethod(m string) bool {
@@ -612,11 +622,31 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 		// SameSite=Strict on the cookie is the primary mitigation; this is the
 		// defense-in-depth token check.
 		if isUnsafeMethod(r.Method) {
+			// Bound the body BEFORE the FormValue fallback below: FormValue parses the
+			// whole (multipart) body into RAM and temp files, and this middleware runs
+			// ahead of every handler - so this is the appliance's real upload cap. A
+			// handler-level MaxBytesReader for a form POST would be dead code (the body
+			// is already consumed and the parsed form cached by the time it runs).
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 			provided := r.Header.Get("X-CSRF-Token")
 			if provided == "" {
+				// Parse explicitly (FormValue swallows parse errors) so an over-cap
+				// upload surfaces as 413 rather than a misleading CSRF failure.
+				if err := r.ParseMultipartForm(4 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+					if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+						// Route the 413 through the app error path (Datastar toast, or an error
+						// flash + redirect back for a native form) so an over-cap upload shows an
+						// in-app notification instead of a bare error page.
+						s.handleError(w, r, "That file is too large - backups and imports are limited to 8 MB.", http.StatusRequestEntityTooLarge)
+						return
+					}
+				}
 				provided = r.FormValue("csrf_token")
 			}
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(csrfToken)) != 1 {
+			// An empty stored token must never match an empty submission: createSession
+			// always sets one, but the sessions read COALESCEs a NULL to "", and an
+			// equal-empty compare would otherwise wave a token-less request through.
+			if csrfToken == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(csrfToken)) != 1 {
 				http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
 				return
 			}
