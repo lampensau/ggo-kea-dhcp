@@ -27,9 +27,11 @@ jobs:
           go-version-file: go.mod
 
       - name: Install templ + nfpm
+        # Both pinned so re-tagging reproduces the same .deb (an @latest nfpm could
+        # change package layout between two builds of the same tag).
         run: |
           go install github.com/a-h/templ/cmd/templ@v0.3.1020
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 
       - name: Generate templ components
         run: templ generate
