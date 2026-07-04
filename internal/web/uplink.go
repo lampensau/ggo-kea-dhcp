@@ -20,25 +20,38 @@ const (
 // gateway. It returns the dial RTT in ms when the gateway answers - a TCP connect
 // OR a fast connection-refused both prove the gateway is reachable - or -1 when
 // the uplink is offline/isolated (no default route, or the dial times out / has no
-// route). The dashboard tile renders -1 as neutral "Offline", never red, since an
-// isolated show network is the expected state. Runs on the always-on sampler, so
-// the 1s timeout is bounded and off the request path. Pure Go, cgo-free.
+// route). A failed dial is retried once: WiFi drops single packets routinely
+// (power-save buffering, channel scans), and the 1s deadline expires right at the
+// kernel's SYN-retransmit RTO, so without the retry one lost packet flips the
+// dashboard tile to Offline for a whole sample cycle (issue #3). The dashboard
+// tile renders -1 as neutral "Offline", never red, since an isolated show network
+// is the expected state. Runs on the always-on sampler, so the worst-case 2s is
+// bounded and off the request path. Pure Go, cgo-free.
 func (s *Server) uplinkProbe() int {
 	gw := defaultGateway(uplinkProbeIface)
 	if gw == "" {
 		return -1
 	}
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(gw, "80"), uplinkProbeTimeout)
-	elapsed := int(time.Since(start) / time.Millisecond)
-	if err == nil {
-		_ = conn.Close()
-		return elapsed
+	return probeGateway(gw, net.DialTimeout)
+}
+
+// probeGateway is uplinkProbe's dial loop with the dialer injected for tests.
+func probeGateway(gw string, dial func(network, addr string, timeout time.Duration) (net.Conn, error)) int {
+	for attempt := 0; ; attempt++ {
+		start := time.Now()
+		conn, err := dial("tcp", net.JoinHostPort(gw, "80"), uplinkProbeTimeout)
+		elapsed := int(time.Since(start) / time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return elapsed
+		}
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return elapsed // reachable: the host answered with an RST
+		}
+		if attempt == 1 {
+			return -1 // two independent dials failed -> genuinely offline
+		}
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return elapsed // reachable: the host answered with an RST
-	}
-	return -1 // timeout / no route -> offline
 }
 
 // defaultGateway reads the IPv4 default-route gateway for iface from
