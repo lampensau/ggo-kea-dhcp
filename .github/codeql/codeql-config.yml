@@ -1,4 +1,12 @@
 # Generated code (templ output) is not hand-maintained; excluding it keeps the
 # alert list actionable. The .templ sources are still analyzed via the generated build.
+#
+# paths-ignore only filters results for languages analyzed without a build, and our
+# Go job builds (templ generate + vendored go build), so it cannot catch the templ
+# output on its own. The query filter below is what actually suppresses the one rule
+# that fires on generated code; golangci-lint (ineffassign) covers hand-written Go.
 paths-ignore:
   - "**/*_templ.go"
+query-filters:
+  - exclude:
+      id: go/useless-assignment-to-local
