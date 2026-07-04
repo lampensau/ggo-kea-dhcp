@@ -471,7 +471,7 @@ func (s *Server) handleFactoryRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.loginThrottle.succeed(throttleKey) // a completed restore clears the backoff
-	s.finishRestore(w, "SYSTEM", lifecycle, rerr, false,
+	s.finishRestore(w, r, "SYSTEM", lifecycle, rerr, false,
 		"Backup restored. Sign in with your restored administrator account.")
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
@@ -510,7 +510,7 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Restore failed: "+rerr.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.finishRestore(w, s.getActor(r), lifecycle, rerr, true,
+	s.finishRestore(w, r, s.getActor(r), lifecycle, rerr, true,
 		"Backup restored. The appliance is re-applying the restored configuration.")
 	http.Redirect(w, r, "/settings", http.StatusFound)
 }
@@ -524,7 +524,7 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 // claims it before mutating); the pre-auth factory path self-claims here instead
 // (FACTORY has no apply to race - at worst a reset's teardown reconcile is still
 // draining, and the boot reconcile then converges to the restored state).
-func (s *Server) finishRestore(w http.ResponseWriter, actor, lifecycle string, rerr error, guardHeld bool, okMsg string) {
+func (s *Server) finishRestore(w http.ResponseWriter, r *http.Request, actor, lifecycle string, rerr error, guardHeld bool, okMsg string) {
 	if guardHeld || s.beginReconcile() {
 		// ModeApply, not Converge: a restore intentionally does a full NM teardown
 		// (brief link bounce even for a same-profile restore) - it is the only way to
@@ -535,9 +535,9 @@ func (s *Server) finishRestore(w http.ResponseWriter, actor, lifecycle string, r
 	}
 	if rerr != nil {
 		_ = s.sqlite.LogAudit(actor, "BACKUP_RESTORE", "appliance", "", "lifecycle="+lifecycle+"; "+rerr.Error(), "WARNING")
-		s.setFlash(w, "Control plane restored, but "+rerr.Error()+" - re-run the restore or re-add the reservations.", "info")
+		s.setFlash(w, r, "Control plane restored, but "+rerr.Error()+" - re-run the restore or re-add the reservations.", "info")
 		return
 	}
 	_ = s.sqlite.LogAudit(actor, "BACKUP_RESTORE", "appliance", "", "lifecycle="+lifecycle, "SUCCESS")
-	s.setFlash(w, okMsg, "success")
+	s.setFlash(w, r, okMsg, "success")
 }

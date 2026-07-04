@@ -269,7 +269,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	hostname := r.FormValue("hostname")
 	macStr := r.FormValue("mac") // the learned device's MAC, used to clear its stale leases
 
-	log.Printf("[Pinning] Pinning port %s to IP %s...", portIdentity, ipStr)
+	log.Printf("[Pinning] Pinning port %s to IP %s...", logSafe(portIdentity), logSafe(ipStr))
 
 	ip := net.ParseIP(ipStr)
 	if ip == nil || ip.To4() == nil {
@@ -330,7 +330,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// can name a port as they pin it (empty leaves any existing label untouched).
 	if label := r.FormValue("label"); label != "" {
 		if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?) ON CONFLICT(flex_id_hex) DO UPDATE SET label=excluded.label", portIdentity, label); err != nil {
-			log.Printf("[Pinning] pin-time label save failed for %s: %v", portIdentity, err)
+			log.Printf("[Pinning] pin-time label save failed for %s: %v", logSafe(portIdentity), err)
 		}
 	}
 
@@ -342,7 +342,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// must propagate event-driven rather than waiting for the next lease change.
 	s.publishDashboard()
 
-	s.setFlash(w, fmt.Sprintf("Port %s pinned to %s - the device adopts it on its next DHCP renewal (within a few minutes).", portIdentity, ipStr), "success")
+	s.setFlash(w, r, fmt.Sprintf("Port %s pinned to %s - the device adopts it on its next DHCP renewal (within a few minutes).", portIdentity, ipStr), "success")
 
 	// Redirect back to pinning page
 	s.redirectHTMX(w, r, "/pinning")
@@ -352,7 +352,7 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	portIdentity := r.FormValue("port_identity")
 
-	log.Printf("[Pinning] Unpinning port %s...", portIdentity)
+	log.Printf("[Pinning] Unpinning port %s...", logSafe(portIdentity))
 
 	if s.mariadb == nil {
 		s.handleError(w, r, "MariaDB connection is not active", http.StatusInternalServerError)
@@ -371,7 +371,7 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 	// able to clear it regardless.
 	var labelN int64
 	if res, e := s.sqlite.Exec("DELETE FROM port_labels WHERE flex_id_hex = ?", portIdentity); e != nil {
-		log.Printf("[Pinning] failed to clear port label for %s: %v", portIdentity, e)
+		log.Printf("[Pinning] failed to clear port label for %s: %v", logSafe(portIdentity), e)
 	} else {
 		labelN, _ = res.RowsAffected()
 	}
@@ -385,7 +385,7 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 	// MariaDB pinning regions, so broadcast the unpin now.
 	s.publishDashboard()
 
-	s.setFlash(w, fmt.Sprintf("Port %s successfully unbound", portIdentity), "success")
+	s.setFlash(w, r, fmt.Sprintf("Port %s successfully unbound", portIdentity), "success")
 
 	s.redirectHTMX(w, r, "/pinning")
 }
@@ -395,7 +395,7 @@ func (s *Server) handleLabel(w http.ResponseWriter, r *http.Request) {
 	portIdentity := r.FormValue("port_identity")
 	label := r.FormValue("label")
 
-	log.Printf("[Pinning] Updating label for port %s to '%s'...", portIdentity, label)
+	log.Printf("[Pinning] Updating label for port %s to '%s'...", logSafe(portIdentity), logSafe(label))
 
 	// Save to SQLite
 	_, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?) ON CONFLICT(flex_id_hex) DO UPDATE SET label=excluded.label", portIdentity, label)
@@ -417,6 +417,6 @@ func (s *Server) handleLabel(w http.ResponseWriter, r *http.Request) {
 			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
 		return
 	}
-	s.setFlash(w, "Label updated for "+portIdentity, "success")
+	s.setFlash(w, r, "Label updated for "+portIdentity, "success")
 	s.redirectHTMX(w, r, "/pinning")
 }

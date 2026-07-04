@@ -223,7 +223,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 	// "wrong" - and it never reveals whether the username exists.
 	ip := clientIP(r)
 	if ok, retry := s.loginThrottle.allow(ip); !ok {
-		log.Printf("[Login] throttled %s (retry in ~%s)", ip, retry.Round(time.Second))
+		log.Printf("[Login] throttled %s (retry in ~%s)", logSafe(ip), retry.Round(time.Second))
 		s.loginThrottled(w, r, retry)
 		return
 	}

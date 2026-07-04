@@ -255,6 +255,11 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 			}
 		}
 		g := gaps[gi]
+		// firstFitGap/the elastic min above guarantee sz fits the gap; make the
+		// bound explicit so the uint32 conversion below can never wrap.
+		if sz <= 0 || uint64(sz) > uint64(g.hi-g.lo)+1 {
+			return nil, fmt.Errorf("internal: pool %q size %d exceeds gap", specs[i].Class, sz)
+		}
 		end := g.lo + uint32(sz) - 1
 		ranges[i] = fmt.Sprintf("%s - %s", Uint32ToIP(g.lo), Uint32ToIP(end))
 		gaps = shrinkGap(gaps, gi, end)

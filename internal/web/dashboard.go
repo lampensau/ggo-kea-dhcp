@@ -250,7 +250,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	ip := r.URL.Query().Get("ip")
-	log.Printf("[Leases] Manually releasing lease for %s...", ip)
+	log.Printf("[Leases] Manually releasing lease for %s...", logSafe(ip))
 
 	sse := datastar.NewSSE(w, r)
 	if err := s.kea.DeleteLease(r.Context(), ip); err != nil {

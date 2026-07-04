@@ -75,7 +75,7 @@ func (s *Server) handleFactorySetup(w http.ResponseWriter, r *http.Request) {
 	}
 	setSessionCookie(w, r, sessionID)
 
-	s.setFlash(w, "Administrator credentials initialized successfully!", "success")
+	s.setFlash(w, r, "Administrator credentials initialized successfully!", "success")
 
 	s.redirectHTMX(w, r, "/setup")
 }
@@ -319,7 +319,7 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profileName := r.FormValue("profile_name")
-	log.Printf("[Wizard] Applying setup: ProfileName='%s'", profileName)
+	log.Printf("[Wizard] Applying setup: ProfileName='%s'", logSafe(profileName))
 
 	scopes, err := parseSetupScopes(r)
 	if err != nil {

@@ -46,6 +46,7 @@ jobs:
           languages: ${{ matrix.language }}
           # security-and-quality is a superset of security-extended
           queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       # Custom build steps to handle code generation (templ) and Go vendoring.
       # The 'actions' language is buildless - these only apply to Go.

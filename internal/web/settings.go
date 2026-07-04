@@ -272,7 +272,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// yet live and to save again once the in-flight change completes (rather than
 		// implying an automatic retry that never comes).
 		if !s.beginReconcile() {
-			s.setFlash(w, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}
@@ -296,13 +296,13 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			// persisted but the reconcile did NOT run - tell the operator, don't let
 			// the success flash imply the change is live.
 			log.Printf("[settings] soft reconcile deferred - a configuration change is in progress")
-			s.setFlash(w, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}
 	}
 
-	s.setFlash(w, "Settings saved.", "success")
+	s.setFlash(w, r, "Settings saved.", "success")
 	s.redirectHTMX(w, r, "/settings")
 }
 

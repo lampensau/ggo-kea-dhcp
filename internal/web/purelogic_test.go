@@ -269,6 +269,7 @@ func TestFormReturn(t *testing.T) {
 	}{
 		{"/pinning", "/pinning"},
 		{"//evil.com", "/dashboard"},          // protocol-relative -> rejected
+		{`/\evil.com`, "/dashboard"},          // backslash variant (browsers treat as //) -> rejected
 		{"https://evil.com", "/dashboard"},    // absolute -> rejected
 		{"", "/dashboard"},                    // missing -> default
 		{"javascript:alert(1)", "/dashboard"}, // no leading slash -> rejected
