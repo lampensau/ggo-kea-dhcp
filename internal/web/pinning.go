@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -66,14 +67,14 @@ func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pinned, err := s.fetchPinnedPorts()
+	pinned, err := s.fetchPinnedPorts(r.Context())
 	if err != nil {
 		log.Printf("MariaDB hosts query failed: %v", err)
 		pinningErr(fmt.Sprintf("Failed to query port reservations from MariaDB: %v", err))
 		return
 	}
 
-	leases, err := s.kea.GetLeases(200)
+	leases, err := s.kea.GetLeases(r.Context(), 200)
 	if err != nil {
 		log.Printf("Kea API leases query failed: %v", err)
 		pinningErr(fmt.Sprintf("Failed to query active leases from Kea: %v", err))
@@ -117,8 +118,8 @@ func (s *Server) fetchPortLabels() (map[string]string, error) {
 
 // fetchPinnedPorts reads the Kea host reservations (flex-id pins) from MariaDB,
 // keyed by port identity.
-func (s *Server) fetchPinnedPorts() (map[string]db.HostReservation, error) {
-	rows, err := s.mariadb.Query("SELECT dhcp_identifier, dhcp4_subnet_id, ipv4_address, hostname FROM hosts WHERE dhcp_identifier_type = 4")
+func (s *Server) fetchPinnedPorts(ctx context.Context) (map[string]db.HostReservation, error) {
+	rows, err := s.mariadb.QueryContext(ctx, "SELECT dhcp_identifier, dhcp4_subnet_id, ipv4_address, hostname FROM hosts WHERE dhcp_identifier_type = 4")
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +291,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// Refuse only a real conflict: the IP already pinned/reserved for a different
 	// device, or a different device live on it right now. Pinning a port to the
 	// address its own device already holds is the normal case and stays allowed.
-	if reason, conflict := s.reservationConflict(subnetID, ipVal, ipStr, flexIDToBytes(portIdentity), 4, macStr); conflict {
+	if reason, conflict := s.reservationConflict(r.Context(), subnetID, ipVal, ipStr, flexIDToBytes(portIdentity), 4, macStr); conflict {
 		_ = s.sqlite.LogAudit(s.getActor(r), "PIN_PORT", portIdentity+" -> "+ipStr, "", reason, "WARNING")
 		s.handleError(w, r, reason, http.StatusConflict)
 		return
@@ -305,7 +306,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 			IPv4Address:    ipVal,
 			Hostname:       hostname,
 		}
-		err := s.mariadb.InsertReservation(res)
+		err := s.mariadb.InsertReservation(r.Context(), res)
 		if err != nil {
 			log.Printf("Failed to insert reservation: %v", err)
 			s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
@@ -316,7 +317,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 		// it already holds doesn't knock it offline). Also clears the device's stale
 		// leases on other IPs - e.g. an old-format flex-id lease left from before the
 		// Option-82 change - so it stops showing as a duplicate learnable port.
-		s.evictForPin(ipStr, normalizeMAC(macStr), portIdentity)
+		s.evictForPin(r.Context(), ipStr, normalizeMAC(macStr), portIdentity)
 	} else {
 		s.handleError(w, r, "MariaDB connection is not active", http.StatusInternalServerError)
 		return
@@ -354,7 +355,7 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "MariaDB connection is not active", http.StatusInternalServerError)
 		return
 	}
-	n, err := s.mariadb.DeleteReservation(flexIDToBytes(portIdentity), 4)
+	n, err := s.mariadb.DeleteReservation(r.Context(), flexIDToBytes(portIdentity), 4)
 	if err != nil {
 		log.Printf("Failed to delete reservation: %v", err)
 		s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)

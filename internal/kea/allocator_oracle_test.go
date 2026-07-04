@@ -24,8 +24,9 @@ const oracleOthersHeadroom = 2
 // clamps so subnets too small for a .10 start still yield a valid, in-subnet,
 // non-inverted range - a /29 or smaller otherwise produced a broken range
 // (first offset past broadcast, with last < first). For /28 and larger the
-// result is unchanged (".10 - .<broadcast-1>"). Shared by the non-greengo
-// render path and the dashboard utilization view so they never disagree.
+// result is unchanged (".10 - .<broadcast-1>"). Test-only oracle: the live
+// render path is LayoutPools; this is retained solely as the golden reference
+// asserted against it (see pools_golden_test.go).
 func DynamicPoolRange(ipnet *net.IPNet) string {
 	maskSize, _ := ipnet.Mask.Size()
 	total := 1 << (32 - maskSize)

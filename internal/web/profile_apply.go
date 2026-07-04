@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -237,7 +238,7 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
 			if e := os.WriteFile(live, data, 0660); e != nil {
 				log.Printf("[Apply] rollback: restore snapshot conf: %v", e)
-			} else if e := s.kea.ReloadConfig(); e != nil {
+			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[Apply] rollback: Kea reload after restore: %v", e)
 			}
 		}
@@ -269,6 +270,10 @@ func (s *Server) rollbackProfileTables(plan applyPlan, profileName string) error
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	// All-or-nothing: committing a partial revert (e.g. the DELETE landed but the
+	// stash rename didn't) would strand the prior profile under its stash name.
+	// Rollback is a no-op after a successful Commit.
+	defer func() { _ = rtx.Rollback() }()
 	_, e1 := rtx.Exec("UPDATE profiles SET active = 0")
 	// Drop the failed new profile first, freeing its UNIQUE name for the stash.
 	_, e2 := rtx.Exec("DELETE FROM profiles WHERE id = ?", plan.newProfileID)
@@ -280,5 +285,8 @@ func (s *Server) rollbackProfileTables(plan applyPlan, profileName string) error
 	if plan.prevProfileID != 0 {
 		_, e4 = rtx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", plan.prevProfileID)
 	}
-	return errors.Join(e1, e2, e3, e4, rtx.Commit())
+	if err := errors.Join(e1, e2, e3, e4); err != nil {
+		return err
+	}
+	return rtx.Commit()
 }

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -75,7 +76,7 @@ func (s *Server) handleResetRoutine(w http.ResponseWriter, r *http.Request) {
 // the handler so the DB effects are unit-testable without HTTP / the async reconcile.
 func (s *Server) routineResetDB() error {
 	if s.mariadb != nil {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}
@@ -114,7 +115,7 @@ func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
 // FACTORY. Split out from the handler so the DB effects are unit-testable.
 func (s *Server) factoryWipeDB() error {
 	if s.mariadb != nil {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}

@@ -7,6 +7,7 @@
 package preflight
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,7 +117,7 @@ func checkKeaSocket(cfg *config.Config) Check {
 	if err != nil {
 		return Check{name, Warn, fmt.Sprintf("cannot read API secret: %v", err)}
 	}
-	if err := kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(); err != nil {
+	if err := kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(context.Background()); err != nil {
 		return Check{name, Warn, fmt.Sprintf("%s unreachable: %v", cfg.KeaAPIURL, err)}
 	}
 	return Check{name, OK, "reachable at " + cfg.KeaAPIURL}
@@ -148,7 +149,7 @@ func checkMariaDB(cfg *config.Config) Check {
 		return Check{name, Warn, fmt.Sprintf("connect failed: %v", err)}
 	}
 	defer m.Close()
-	if err := m.VerifySchema(); err != nil {
+	if err := m.VerifySchema(context.Background()); err != nil {
 		return Check{name, Warn, fmt.Sprintf("schema not ready: %v", err)}
 	}
 	return Check{name, OK, "connected, hosts table present (" + config.RedactedMariaDSN(cfg.MariaDBDSN) + ")"}

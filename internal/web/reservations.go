@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"fmt"
 	"log"
@@ -28,9 +29,9 @@ import (
 // ownMAC == "" (a pin from a row with no learned MAC) skips the ARP check rather than
 // risk blocking a legitimate re-pin; if ARP is unavailable, liveness is unknown and (B)
 // is likewise skipped (never block on unknown).
-func (s *Server) reservationConflict(subnetID int, ip uint32, ipStr string, identifier []byte, idType int, ownMAC string) (string, bool) {
+func (s *Server) reservationConflict(ctx context.Context, subnetID int, ip uint32, ipStr string, identifier []byte, idType int, ownMAC string) (string, bool) {
 	if s.mariadb != nil {
-		if existing, found, err := s.mariadb.ReservationByIP(subnetID, ip); err != nil {
+		if existing, found, err := s.mariadb.ReservationByIP(ctx, subnetID, ip); err != nil {
 			log.Printf("[reservation] conflict lookup for %s failed: %v", ipStr, err)
 		} else if found && (existing.IdentifierType != idType || !bytes.Equal(existing.Identifier, identifier)) {
 			what := "reserved for another device"
@@ -103,11 +104,11 @@ func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
 // and (b) any lease occupying the reserved IP itself. Best-effort: lookups/deletes are
 // logged but never fail the reservation. This does NOT force an immediate switch - the
 // server cannot push a renew; the device adopts the reserved IP when it next re-DHCPs.
-func (s *Server) evictForReservation(reservedIP string, isOwner func(kea.ActiveLease) bool) {
+func (s *Server) evictForReservation(ctx context.Context, reservedIP string, isOwner func(kea.ActiveLease) bool) {
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(1000)
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
 		log.Printf("[Reservation] lease lookup for eviction failed: %v", err)
 		return
@@ -119,7 +120,7 @@ func (s *Server) evictForReservation(reservedIP string, isOwner func(kea.ActiveL
 		}
 	}
 	for ip := range del {
-		if err := s.kea.DeleteLease(ip); err != nil {
+		if err := s.kea.DeleteLease(ctx, ip); err != nil {
 			log.Printf("[Reservation] lease4-del %s failed: %v", ip, err)
 		}
 	}
@@ -140,11 +141,11 @@ func (s *Server) evictForReservation(reservedIP string, isOwner func(kea.ActiveL
 // wantMAC may be empty (pin from a row with no live MAC); then only the reserved IP
 // and the pinned flex-id identify the device. Best-effort: lookups/deletes are logged
 // but never fail the pin.
-func (s *Server) evictForPin(reservedIP, wantMAC, portIdentity string) {
+func (s *Server) evictForPin(ctx context.Context, reservedIP, wantMAC, portIdentity string) {
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(1000)
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
 		log.Printf("[Pinning] lease lookup for eviction failed: %v", err)
 		return
@@ -167,7 +168,7 @@ func (s *Server) evictForPin(reservedIP, wantMAC, portIdentity string) {
 		// isPinnedDevice && onReservedIP -> keep: already correct, deleting it is churn.
 	}
 	for ip := range del {
-		if err := s.kea.DeleteLease(ip); err != nil {
+		if err := s.kea.DeleteLease(ctx, ip); err != nil {
 			log.Printf("[Pinning] lease4-del %s failed: %v", ip, err)
 		}
 	}
@@ -217,7 +218,7 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, ipStr+" is not inside any configured subnet.", http.StatusBadRequest)
 		return
 	}
-	if reason, conflict := s.reservationConflict(subnetID, kea.IPToUint32(ip), ipStr, []byte(hw), 0, hw.String()); conflict {
+	if reason, conflict := s.reservationConflict(r.Context(), subnetID, kea.IPToUint32(ip), ipStr, []byte(hw), 0, hw.String()); conflict {
 		_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", reason, "WARNING")
 		s.handleError(w, r, reason, http.StatusConflict)
 		return
@@ -229,14 +230,14 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		IPv4Address:    kea.IPToUint32(ip),
 		Hostname:       hostname,
 	}
-	if err := s.mariadb.InsertReservation(res); err != nil {
+	if err := s.mariadb.InsertReservation(r.Context(), res); err != nil {
 		s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Free the device's current lease and anything on the reserved IP so the device
 	// adopts the reservation on its next renewal rather than clinging to its old lease.
 	wantMAC := normalizeMAC(hw.String())
-	s.evictForReservation(ipStr, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
+	s.evictForReservation(r.Context(), ipStr, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
 	_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", "", "SUCCESS")
 	// Propagate to other open pages now: the metrics-only live tick skips the
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease
@@ -286,19 +287,19 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 		// rows blocks up to ~400ms probing an almost-always-unused IP (a 200-row
 		// import would hang for ~80s). The IP-level config conflict check still runs.
 		func(subnetID int, ipU uint32, ipStr string, id []byte, mac string) (string, bool) {
-			return s.reservationConflict(subnetID, ipU, ipStr, id, 0, "")
+			return s.reservationConflict(r.Context(), subnetID, ipU, ipStr, id, 0, "")
 		},
 		s.defaultHostnameFor,
 	)
 
 	if len(toInsert) > 0 {
-		if err := s.mariadb.InsertReservations(toInsert); err != nil {
+		if err := s.mariadb.InsertReservations(r.Context(), toInsert); err != nil {
 			s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		for _, o := range owners {
 			wantMAC := normalizeMAC(o.mac)
-			s.evictForReservation(o.ip, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
+			s.evictForReservation(r.Context(), o.ip, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
 		}
 	}
 
@@ -434,7 +435,7 @@ func (s *Server) handleReservationDelete(w http.ResponseWriter, r *http.Request)
 		s.handleError(w, r, "invalid MAC address", http.StatusBadRequest)
 		return
 	}
-	n, err := s.mariadb.DeleteReservation([]byte(hw), 0)
+	n, err := s.mariadb.DeleteReservation(r.Context(), []byte(hw), 0)
 	if err != nil {
 		s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -456,18 +457,18 @@ func (s *Server) handleReservationDelete(w http.ResponseWriter, r *http.Request)
 // lease (offline devices) are appended so the reservation stays visible and
 // removable. Presence (online/offline) is tagged from the active ARP prober (keyed by
 // IP). Sorted by IP.
-func (s *Server) unifiedLeaseRows(leases []kea.ActiveLease) []views.LeaseRow {
+func (s *Server) unifiedLeaseRows(ctx context.Context, leases []kea.ActiveLease) []views.LeaseRow {
 	reachable, available := s.presenceByIP()
-	return s.unifiedLeaseRowsWith(leases, reachable, available)
+	return s.unifiedLeaseRowsWith(ctx, leases, reachable, available)
 }
 
 // unifiedLeaseRowsWith is unifiedLeaseRows over an already-collected presence set, so the
 // live broadcast can share one prober snapshot with the dashboard view build. It fetches
 // the pinned-port set itself (the /leases page path); the dashboard broadcast reuses the
 // pins it already fetched via unifiedLeaseRowsWithPins.
-func (s *Server) unifiedLeaseRowsWith(leases []kea.ActiveLease, reachable map[string]bool, available bool) []views.LeaseRow {
+func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool) []views.LeaseRow {
 	// /leases path: no shared scanner snapshot here, so self-fetch the name map.
-	return s.unifiedLeaseRowsWithPins(leases, reachable, available, s.pinnedPortKeys(), s.ggoNamesByMAC())
+	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC())
 }
 
 // pinnedPortKeys returns the set of pinned switch-port identities (flex-id, type-4
@@ -475,11 +476,11 @@ func (s *Server) unifiedLeaseRowsWith(leases []kea.ActiveLease, reachable map[st
 // nil when MariaDB is absent or the query fails. The dashboard broadcast builds the
 // equivalent set from the pins buildDashboardViewWith already fetched (v.Pinned), so it
 // never queries type-4 reservations twice per render.
-func (s *Server) pinnedPortKeys() map[string]bool {
+func (s *Server) pinnedPortKeys(ctx context.Context) map[string]bool {
 	if s.mariadb == nil {
 		return nil
 	}
-	p, err := s.fetchPinnedPorts()
+	p, err := s.fetchPinnedPorts(ctx)
 	if err != nil {
 		log.Printf("[Reservations] pinned-port read failed: %v", err)
 		return nil
@@ -525,12 +526,12 @@ func dedupeStaleLeases(leases []kea.ActiveLease) []kea.ActiveLease {
 // A lease whose flex-id matches a pinned port is fixed by its port; the row must not
 // offer a MAC reservation (Kea's flex-id reservation wins, so a hw-address one is
 // shadowed) - but a leftover hw-address reservation stays removable (see LeasesBody).
-func (s *Server) unifiedLeaseRowsWithPins(leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string) []views.LeaseRow {
+func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string) []views.LeaseRow {
 	rows := buildLeaseRows(dedupeStaleLeases(activeLeases(leases)))
 
 	res := map[string]db.HostReservation{}
 	if s.mariadb != nil {
-		if list, err := s.mariadb.HWReservations(); err == nil {
+		if list, err := s.mariadb.HWReservations(ctx); err == nil {
 			for _, rsv := range list {
 				res[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = rsv
 			}

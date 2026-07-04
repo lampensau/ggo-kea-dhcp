@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -249,7 +250,7 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 		// from them - would otherwise persist. Wipe now that Kea is up with the onboarding
 		// config. Best-effort: a wipe failure must not fail the reset. (A first onboarding
 		// has no leases, so this is a harmless no-op there.)
-		if werr := s.kea.WipeLeases(); werr != nil {
+		if werr := s.kea.WipeLeases(context.Background()); werr != nil {
 			log.Printf("[Reconcile] onboarding lease wipe failed: %v", werr)
 		}
 	}
@@ -348,7 +349,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// Best-effort; gated on a successful reload so we never act against a config Kea
 	// did not accept.
 	if reloadOK {
-		s.rebalanceLeases(scopes)
+		s.rebalanceLeases(context.Background(), scopes)
 	}
 
 	// Passive network-health monitoring AND the active ARP presence prober run only in
@@ -517,7 +518,7 @@ func (s *Server) writeAndReloadKea(configStr string) error {
 	if err := os.WriteFile(live, []byte(configStr), 0660); err != nil {
 		return fmt.Errorf("write kea conf: %w", err)
 	}
-	if err := s.kea.ReloadConfig(); err != nil {
+	if err := s.kea.ReloadConfig(context.Background()); err != nil {
 		// If the control socket itself was unreachable (transport refused, not a
 		// command-level rejection), Kea is running a config without the :8004 HTTP
 		// socket - and config-reload can never recover that, because it needs :8004.
@@ -551,7 +552,7 @@ const keaServiceName = "isc-kea-dhcp4-server"
 func (s *Server) waitKeaReachable(attempts int, delay time.Duration) error {
 	var err error
 	for i := 0; i < attempts; i++ {
-		if err = s.kea.Ping(); err == nil {
+		if err = s.kea.Ping(context.Background()); err == nil {
 			return nil
 		}
 		time.Sleep(delay)

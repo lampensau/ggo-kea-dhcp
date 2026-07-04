@@ -99,3 +99,15 @@ func TestBPFFilter_PTPUDPAccepted(t *testing.T) {
 		t.Error("filter dropped PTP-UDP announce, want accept")
 	}
 }
+
+func TestBPFAsm_ResolvePanicsOnUndefinedLabel(t *testing.T) {
+	a := newBPFAsm()
+	a.jump(bpf.JumpEqual, 1, "no-such-label", "")
+	a.emit(bpf.RetConstant{Val: bpfReject})
+	defer func() {
+		if recover() == nil {
+			t.Fatal("resolve() with an undefined label did not panic - a missing label would silently assemble a wrong filter")
+		}
+	}()
+	a.resolve()
+}

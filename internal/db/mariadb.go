@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -52,14 +53,14 @@ func ConnectMariaDB(dsn string) (*MariaDB, error) {
 
 // VerifySchema checks if Kea's tables (hosts, lease4) exist and are queryable.
 // It returns an error if the schema is not initialized.
-func (m *MariaDB) VerifySchema() error {
+func (m *MariaDB) VerifySchema(ctx context.Context) error {
 	// Ping first to verify network/access health
-	if err := m.Ping(); err != nil {
+	if err := m.PingContext(ctx); err != nil {
 		return fmt.Errorf("database ping failed: %w", err)
 	}
 
 	// Check if the 'hosts' table exists and is accessible
-	_, err := m.Exec("SELECT 1 FROM hosts LIMIT 1")
+	_, err := m.ExecContext(ctx, "SELECT 1 FROM hosts LIMIT 1")
 	if err != nil {
 		return fmt.Errorf("kea schema hosts table verification failed (check if kea-admin db-init mysql was run): %w", err)
 	}
@@ -81,8 +82,8 @@ type HostReservation struct {
 }
 
 // InsertReservation inserts a single host reservation directly into MariaDB.
-func (m *MariaDB) InsertReservation(res HostReservation) error {
-	_, err := m.Exec(`
+func (m *MariaDB) InsertReservation(ctx context.Context, res HostReservation) error {
+	_, err := m.ExecContext(ctx, `
 		INSERT INTO hosts (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -95,15 +96,15 @@ func (m *MariaDB) InsertReservation(res HostReservation) error {
 // InsertReservations inserts many host reservations in one transaction, reusing a
 // prepared statement per row - so restoring a box with hundreds of pins is one
 // batched commit rather than hundreds of serial round-trips to MariaDB.
-func (m *MariaDB) InsertReservations(res []HostReservation) error {
+func (m *MariaDB) InsertReservations(ctx context.Context, res []HostReservation) error {
 	if len(res) == 0 {
 		return nil
 	}
-	tx, err := m.Begin()
+	tx, err := m.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`
+	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO hosts (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
@@ -115,7 +116,7 @@ func (m *MariaDB) InsertReservations(res []HostReservation) error {
 	}
 	defer stmt.Close()
 	for _, r := range res {
-		if _, err := stmt.Exec(r.Identifier, r.IdentifierType, r.SubnetID, r.IPv4Address, r.Hostname); err != nil {
+		if _, err := stmt.ExecContext(ctx, r.Identifier, r.IdentifierType, r.SubnetID, r.IPv4Address, r.Hostname); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -126,8 +127,8 @@ func (m *MariaDB) InsertReservations(res []HostReservation) error {
 // HWReservations returns all client (hardware-address, type 0) reservations - the
 // per-device fixed-IP entries managed from the leases view, distinct from the
 // flex-id (type 4) switch-port pins.
-func (m *MariaDB) HWReservations() ([]HostReservation, error) {
-	rows, err := m.Query("SELECT dhcp_identifier, dhcp4_subnet_id, ipv4_address, hostname FROM hosts WHERE dhcp_identifier_type = 0")
+func (m *MariaDB) HWReservations(ctx context.Context) ([]HostReservation, error) {
+	rows, err := m.QueryContext(ctx, "SELECT dhcp_identifier, dhcp4_subnet_id, ipv4_address, hostname FROM hosts WHERE dhcp_identifier_type = 0")
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +149,8 @@ func (m *MariaDB) HWReservations() ([]HostReservation, error) {
 
 // AllReservations returns every row in Kea's hosts table - both type-0 MAC
 // reservations and type-4 flex-id port pins - for a full appliance backup.
-func (m *MariaDB) AllReservations() ([]HostReservation, error) {
-	rows, err := m.Query("SELECT dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname FROM hosts")
+func (m *MariaDB) AllReservations(ctx context.Context) ([]HostReservation, error) {
+	rows, err := m.QueryContext(ctx, "SELECT dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname FROM hosts")
 	if err != nil {
 		return nil, err
 	}
@@ -173,10 +174,10 @@ func (m *MariaDB) AllReservations() ([]HostReservation, error) {
 // (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id) and excludes ipv4_address, so
 // a blind INSERT ... ON DUPLICATE KEY would create a SECOND row for one IP rather than
 // dedupe it.
-func (m *MariaDB) ReservationByIP(subnetID int, ip uint32) (HostReservation, bool, error) {
+func (m *MariaDB) ReservationByIP(ctx context.Context, subnetID int, ip uint32) (HostReservation, bool, error) {
 	var res HostReservation
 	var ipVal uint32
-	err := m.QueryRow(`
+	err := m.QueryRowContext(ctx, `
 		SELECT dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname
 		FROM hosts WHERE dhcp4_subnet_id = ? AND ipv4_address = ? LIMIT 1`,
 		subnetID, ip).Scan(&res.Identifier, &res.IdentifierType, &res.SubnetID, &ipVal, &res.Hostname)
@@ -195,8 +196,8 @@ func (m *MariaDB) ReservationByIP(subnetID int, ip uint32) (HostReservation, boo
 // single reservation, and keying the delete on a form-supplied subnet_id let a stale or
 // mismatched value silently delete zero rows while reporting success - leaving a live,
 // unclearable pin. Rows-affected lets the caller tell the operator nothing matched.
-func (m *MariaDB) DeleteReservation(identifier []byte, identifierType int) (int64, error) {
-	res, err := m.Exec(`
+func (m *MariaDB) DeleteReservation(ctx context.Context, identifier []byte, identifierType int) (int64, error) {
+	res, err := m.ExecContext(ctx, `
 		DELETE FROM hosts
 		WHERE dhcp_identifier = ? AND dhcp_identifier_type = ?`,
 		identifier, identifierType)
@@ -211,7 +212,7 @@ func (m *MariaDB) DeleteReservation(identifier []byte, identifierType int) (int6
 // per-job state, so returning to onboarding / factory must not leave a previous
 // event's pins and reserved leases live (they survive a config reload because they
 // live in the DB, not the config file).
-func (m *MariaDB) DeleteAllReservations() error {
-	_, err := m.Exec("DELETE FROM hosts")
+func (m *MariaDB) DeleteAllReservations(ctx context.Context) error {
+	_, err := m.ExecContext(ctx, "DELETE FROM hosts")
 	return err
 }

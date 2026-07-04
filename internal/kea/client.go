@@ -2,6 +2,7 @@ package kea
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +66,9 @@ type Response struct {
 }
 
 // SendCommand sends a command to the Kea HTTP API and returns the first response.
-func (c *Client) SendCommand(command string, args any) (*Response, error) {
+// ctx bounds the call (handlers pass the request context; background samplers a
+// per-iteration timeout) on top of the client's own 10s transport timeout.
+func (c *Client) SendCommand(ctx context.Context, command string, args any) (*Response, error) {
 	reqPayload := Request{
 		Command:   command,
 		Service:   []string{"dhcp4"},
@@ -77,7 +80,7 @@ func (c *Client) SendCommand(command string, args any) (*Response, error) {
 		return nil, fmt.Errorf("failed to marshal kea request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
 	}
@@ -152,14 +155,14 @@ func (c *Client) LastError() string {
 // Ping reports whether Kea's control socket is reachable and answering. It issues
 // version-get (a cheap, always-available command); a nil return means Kea
 // responded, any error means the socket is down, unauthorized, or misconfigured.
-func (c *Client) Ping() error {
-	_, err := c.SendCommand("version-get", nil)
+func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.SendCommand(ctx, "version-get", nil)
 	return err
 }
 
 // ReloadConfig triggers Kea to reload its configuration from the disk.
-func (c *Client) ReloadConfig() error {
-	_, err := c.SendCommand("config-reload", nil)
+func (c *Client) ReloadConfig(ctx context.Context) error {
+	_, err := c.SendCommand(ctx, "config-reload", nil)
 	return err
 }
 
@@ -167,8 +170,8 @@ func (c *Client) ReloadConfig() error {
 // (Kea result 3) is treated as success - the caller wanted the address to have no
 // lease and it already has none. Used to free an address so a host reservation or a
 // pool-class change takes effect on the device's next renewal.
-func (c *Client) DeleteLease(ip string) error {
-	res, err := c.SendCommand("lease4-del", map[string]any{"ip-address": ip})
+func (c *Client) DeleteLease(ctx context.Context, ip string) error {
+	res, err := c.SendCommand(ctx, "lease4-del", map[string]any{"ip-address": ip})
 	if err != nil {
 		if res != nil && res.Result == 3 {
 			return nil // no such lease - nothing to delete
@@ -183,8 +186,8 @@ func (c *Client) DeleteLease(ip string) error {
 // - don't survive into the next job (leases are memfile and persist across a config
 // reload). Requires memfile storage + the lease_cmds hook, both present here. A "no
 // leases" result (Kea result 3) is treated as success.
-func (c *Client) WipeLeases() error {
-	res, err := c.SendCommand("lease4-wipe", map[string]any{"subnet-id": 0})
+func (c *Client) WipeLeases(ctx context.Context) error {
+	res, err := c.SendCommand(ctx, "lease4-wipe", map[string]any{"subnet-id": 0})
 	if err != nil {
 		if res != nil && res.Result == 3 {
 			return nil // nothing to wipe
@@ -208,10 +211,17 @@ type ActiveLease struct {
 	State    int    `json:"state"`
 }
 
+// maxLeasePages caps the lease4-get-page loop. At the default page size that is
+// 512k leases - far beyond any subnet this appliance serves - so hitting it means
+// a misbehaving Kea, not a real result set.
+const maxLeasePages = 512
+
 // GetLeases retrieves all leases from Kea, paging through lease4-get-page with
 // the `from` cursor so result sets larger than one page are fully returned.
-// pageSize controls the per-request page size.
-func (c *Client) GetLeases(pageSize int) ([]ActiveLease, error) {
+// pageSize controls the per-request page size. A cursor that stops advancing or
+// a page count past maxLeasePages terminates the loop with an error (a buggy
+// Kea must not be able to spin this loop forever).
+func (c *Client) GetLeases(ctx context.Context, pageSize int) ([]ActiveLease, error) {
 	if pageSize <= 0 {
 		pageSize = 1000
 	}
@@ -219,12 +229,15 @@ func (c *Client) GetLeases(pageSize int) ([]ActiveLease, error) {
 	var all []ActiveLease
 	from := "start"
 
-	for {
+	for page := 0; ; page++ {
+		if page >= maxLeasePages {
+			return all, fmt.Errorf("lease4-get-page exceeded %d pages - aborting (misbehaving Kea?)", maxLeasePages)
+		}
 		args := map[string]any{
 			"limit": pageSize,
 			"from":  from,
 		}
-		res, err := c.SendCommand("lease4-get-page", args)
+		res, err := c.SendCommand(ctx, "lease4-get-page", args)
 		if err != nil {
 			// Kea returns result 3 when there are no (more) leases - a normal
 			// terminal state, not a command failure.
@@ -245,8 +258,13 @@ func (c *Client) GetLeases(pageSize int) ([]ActiveLease, error) {
 		if len(out.Leases) < pageSize {
 			break // last (partial) page
 		}
-		// Next page starts after the last address returned.
-		from = out.Leases[len(out.Leases)-1].IPAddress
+		// Next page starts after the last address returned. A cursor that does not
+		// advance would re-fetch the same page forever - fail instead.
+		next := out.Leases[len(out.Leases)-1].IPAddress
+		if next == from {
+			return all, fmt.Errorf("lease4-get-page cursor stalled at %q - aborting", from)
+		}
+		from = next
 	}
 
 	return all, nil

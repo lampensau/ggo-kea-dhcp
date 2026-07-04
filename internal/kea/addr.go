@@ -63,10 +63,6 @@ func Uint32ToIP(n uint32) net.IP {
 	return net.IP(b)
 }
 
-func u32ToIP(n uint32) net.IP {
-	return Uint32ToIP(n)
-}
-
 // poolIvl is an inclusive [lo,hi] address interval used while packing pools.
 type poolIvl struct{ lo, hi uint32 }
 

@@ -47,7 +47,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Export.
-	b, err := s.buildBackup()
+	b, err := s.buildBackup(t.Context())
 	if err != nil {
 		t.Fatalf("buildBackup: %v", err)
 	}

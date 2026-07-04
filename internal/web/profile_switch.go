@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -265,7 +266,7 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
 			if e := os.WriteFile(live, data, 0660); e != nil {
 				log.Printf("[Switch] rollback: restore snapshot conf: %v", e)
-			} else if e := s.kea.ReloadConfig(); e != nil {
+			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[Switch] rollback: Kea reload after restore: %v", e)
 			}
 		}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -108,20 +109,20 @@ func rebalanceTargets(scopes []ScopeConfig, leases []kea.ActiveLease, fixed map[
 // alone. Such a device would only be re-granted the same IP on re-request, so deleting
 // its lease just makes it disappear from the table until its next renewal. Empty (nothing
 // fixed) when MariaDB is absent, which also disables rebalance migration of those rows.
-func (s *Server) fixedLeaseIPs(leases []kea.ActiveLease) map[string]bool {
+func (s *Server) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease) map[string]bool {
 	fixed := map[string]bool{}
 	if s.mariadb == nil {
 		return fixed
 	}
 	resMACs := map[string]bool{}
-	if list, err := s.mariadb.HWReservations(); err == nil {
+	if list, err := s.mariadb.HWReservations(ctx); err == nil {
 		for _, rsv := range list {
 			resMACs[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
 		}
 	} else {
 		log.Printf("[Rebalance] reservation read failed: %v", err)
 	}
-	pinnedKeys := s.pinnedPortKeys()
+	pinnedKeys := s.pinnedPortKeys(ctx)
 	for _, l := range leases {
 		if resMACs[normalizeMAC(l.HWAddress)] {
 			fixed[l.IPAddress] = true
@@ -161,19 +162,19 @@ func classIndex(pools []poolBound, class string) int {
 // deletes are logged/audited but never fail a reconcile. Run after a successful Kea
 // reload (the new, exclusive class guards must be live first - otherwise a released
 // device could be re-granted its old address).
-func (s *Server) rebalanceLeases(scopes []ScopeConfig) {
+func (s *Server) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(1000)
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
 		log.Printf("[Rebalance] lease fetch failed: %v", err)
 		return
 	}
-	fixed := s.fixedLeaseIPs(leases)
+	fixed := s.fixedLeaseIPs(ctx, leases)
 	moved := 0
 	for _, m := range rebalanceTargets(scopes, leases, fixed) {
-		if err := s.kea.DeleteLease(m.IP); err != nil {
+		if err := s.kea.DeleteLease(ctx, m.IP); err != nil {
 			log.Printf("[Rebalance] lease4-del %s failed: %v", m.IP, err)
 			continue
 		}

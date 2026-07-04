@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,7 +71,12 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// initKeaSecret ensures the Kea basic auth secret file exists and is populated with a random token.
+// initKeaSecret ensures the Kea basic auth secret file exists and is populated
+// with a random token. Side effect: if the configured secret directory is not
+// writable (read-only fs, missing permissions - i.e. a dev machine), it redirects
+// BOTH c.KeaSecretPath and c.KeaConfDir to the local ./test-kea-gui fallback, so
+// rendered Kea configs follow the secret. On a production box that redirect is a
+// misconfiguration - it is logged loudly so journald shows why /etc/kea stays stale.
 func (c *Config) initKeaSecret() error {
 	// If the file already exists, we use the existing secret
 	if _, err := os.Stat(c.KeaSecretPath); err == nil {
@@ -89,6 +95,8 @@ func (c *Config) initKeaSecret() error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		// Fallback to a local path if the system directory is not writable (e.g. read-only fs, permission denied)
 		localDir := "./test-kea-gui"
+		slog.Warn("kea secret dir not writable - falling back to local dev paths (Kea configs will be written there too)",
+			"dir", dir, "fallback", localDir, "err", err)
 		c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
 		c.KeaConfDir = localDir
 		if err := os.MkdirAll(localDir, 0755); err != nil {
@@ -100,6 +108,8 @@ func (c *Config) initKeaSecret() error {
 	if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
 		// Fallback on write error
 		localDir := "./test-kea-gui"
+		slog.Warn("kea secret not writable - falling back to local dev paths (Kea configs will be written there too)",
+			"path", c.KeaSecretPath, "fallback", localDir, "err", err)
 		c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
 		c.KeaConfDir = localDir
 		_ = os.MkdirAll(localDir, 0755)

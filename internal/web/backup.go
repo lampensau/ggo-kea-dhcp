@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ type BackupHost struct {
 }
 
 // buildBackup assembles the full backup bundle from SQLite + MariaDB.
-func (s *Server) buildBackup() (*Backup, error) {
+func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	b := &Backup{
 		Format:     backupFormat,
 		AppVersion: version.Number,
@@ -173,7 +174,7 @@ func (s *Server) buildBackup() (*Backup, error) {
 	// flag records that so restore knows whether an empty list means "none" or
 	// "uncaptured" (see Backup.ReservationsIncluded).
 	if s.mariadb != nil {
-		if hosts, err := s.mariadb.AllReservations(); err == nil {
+		if hosts, err := s.mariadb.AllReservations(ctx); err == nil {
 			b.ReservationsIncluded = true
 			for _, h := range hosts {
 				b.Reservations = append(b.Reservations, BackupHost{
@@ -336,7 +337,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	// fully restore. lifecycle is still returned non-empty, so the caller knows the
 	// SQLite restore itself succeeded and can still reconcile.
 	if sel["reservations"] && s.mariadb != nil && (b.ReservationsIncluded || len(b.Reservations) > 0) {
-		if err := s.mariadb.DeleteAllReservations(); err != nil {
+		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
 			log.Printf("[restore] clearing MariaDB hosts failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
@@ -350,7 +351,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 				Hostname:       h.Hostname,
 			})
 		}
-		if err := s.mariadb.InsertReservations(hosts); err != nil {
+		if err := s.mariadb.InsertReservations(context.Background(), hosts); err != nil {
 			log.Printf("[restore] inserting reservations failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
@@ -361,7 +362,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 
 // handleBackupExport serves the full appliance backup as a downloadable JSON file.
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
-	b, err := s.buildBackup()
+	b, err := s.buildBackup(r.Context())
 	if err != nil {
 		s.handleError(w, r, "Failed to build backup: "+err.Error(), http.StatusInternalServerError)
 		return

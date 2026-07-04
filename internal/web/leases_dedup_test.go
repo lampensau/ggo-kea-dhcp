@@ -134,7 +134,7 @@ func TestUnifiedLeaseRowsWithPins_NoMariaDB(t *testing.T) {
 		{IPAddress: "10.0.0.99", HWAddress: "00:1f:80:20:cc:cc", SubnetID: 1, Cltt: now - 7200, ValidLft: 60},
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(leases, map[string]bool{}, false, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 active rows (expired dropped), got %d: %+v", len(rows), rows)
 	}
@@ -163,7 +163,7 @@ func TestUnifiedLeaseRowsWithPins_Presence(t *testing.T) {
 	}
 	reachable := map[string]bool{"10.0.0.20": true}
 
-	rows := s.unifiedLeaseRowsWithPins(leases, reachable, true, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil)
 	byIP := map[string]string{}
 	for _, r := range rows {
 		byIP[r.IPAddress] = r.Presence

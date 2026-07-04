@@ -144,7 +144,9 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// One memoized active-lease-IP provider shared by the ARP prober and the Green-GO
 	// scanner (both probe the same lease set on a ~10s cycle).
 	s.leaseIPs = memoizeLeaseIPs(func() ([]string, bool) {
-		leases, err := s.kea.GetLeases(1000)
+		ctx, cancel := opCtx()
+		defer cancel()
+		leases, err := s.kea.GetLeases(ctx, 1000)
 		if err != nil {
 			return nil, false
 		}
@@ -400,11 +402,13 @@ func (s *Server) setFlash(w http.ResponseWriter, msg, msgType string) {
 		Type:    msgType,
 	}
 	data, _ := json.Marshal(flash)
+	// Server-read only (getFlash) - HttpOnly + Strict like the session cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "ggo_flash",
 		Value:    hex.EncodeToString(data),
 		Path:     "/",
-		HttpOnly: false,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   60,
 	})
 }
@@ -420,7 +424,8 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 		Name:     "ggo_flash",
 		Value:    "",
 		Path:     "/",
-		HttpOnly: false,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 

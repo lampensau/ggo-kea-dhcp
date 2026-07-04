@@ -157,15 +157,15 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 			return nil, fmt.Errorf("pool %q has an invalid range %q", s.Class, r)
 		}
 		if a < poolLo || b > hi {
-			return nil, fmt.Errorf("pool %q range %s falls outside the subnet's usable addresses (%s - %s)", s.Class, r, u32ToIP(poolLo), u32ToIP(hi))
+			return nil, fmt.Errorf("pool %q range %s falls outside the subnet's usable addresses (%s - %s)", s.Class, r, Uint32ToIP(poolLo), Uint32ToIP(hi))
 		}
 		for _, iv := range pinned {
 			if a <= iv.hi && b >= iv.lo {
-				return nil, fmt.Errorf("pinned pools overlap (around %s)", u32ToIP(a))
+				return nil, fmt.Errorf("pinned pools overlap (around %s)", Uint32ToIP(a))
 			}
 		}
 		pinned = append(pinned, poolIvl{a, b})
-		ranges[i] = fmt.Sprintf("%s - %s", u32ToIP(a), u32ToIP(b))
+		ranges[i] = fmt.Sprintf("%s - %s", Uint32ToIP(a), Uint32ToIP(b))
 	}
 	sortIvls(pinned)
 	gaps := freeGaps(poolLo, hi, pinned)
@@ -256,7 +256,7 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 		}
 		g := gaps[gi]
 		end := g.lo + uint32(sz) - 1
-		ranges[i] = fmt.Sprintf("%s - %s", u32ToIP(g.lo), u32ToIP(end))
+		ranges[i] = fmt.Sprintf("%s - %s", Uint32ToIP(g.lo), Uint32ToIP(end))
 		gaps = shrinkGap(gaps, gi, end)
 	}
 

@@ -1,6 +1,7 @@
 package netmon
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -56,5 +57,8 @@ func (h *hostTracker) liveWithin(now time.Time) []string {
 		}
 		out = append(out, macString(mac))
 	}
+	// Map iteration order is random - sort so snapshots are stable for
+	// change-detection hashing and any future display use.
+	slices.Sort(out)
 	return out
 }

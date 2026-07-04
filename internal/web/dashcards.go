@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -60,12 +61,12 @@ func topLeases(rows []views.LeaseRow, n int) []views.LeaseRow {
 // and SQLite labels, then splits into pinned (configured) and learnable ports.
 // One fetch serves the dashboard pinnings card and the /pinning page live regions.
 // Returns nil, nil when MariaDB is absent or a query fails (graceful empty state).
-func (s *Server) fetchPinningSplit(leases []kea.ActiveLease) (pinned, learnable []views.PortRow) {
+func (s *Server) fetchPinningSplit(ctx context.Context, leases []kea.ActiveLease) (pinned, learnable []views.PortRow) {
 	if s.mariadb == nil {
 		return nil, nil
 	}
 	labels, err1 := s.fetchPortLabels()
-	pinnedMap, err2 := s.fetchPinnedPorts()
+	pinnedMap, err2 := s.fetchPinnedPorts(ctx)
 	if err1 != nil || err2 != nil {
 		return nil, nil
 	}

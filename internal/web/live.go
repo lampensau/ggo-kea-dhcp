@@ -233,7 +233,9 @@ func (s *Server) startLiveTicker() {
 // poll + a hash per tick, not a full re-render). Lifecycle/profile changes publish
 // via publishDashboard (event-driven), so this only needs to watch the leases.
 func (s *Server) tickDashboard() {
-	leases, err := s.kea.GetLeases(1000)
+	ctx, cancel := opCtx()
+	defer cancel()
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
 		return // can't tell if anything changed; next tick retries
 	}
@@ -253,7 +255,7 @@ func (s *Server) tickDashboard() {
 	case leasesChanged:
 		// A lease change rebuilds every region (the full set includes the periodic
 		// ones, so tiles/net-health/activity still refresh on this path).
-		s.publishDashboardWithLeases(leases)
+		s.publishDashboardWithLeases(ctx, leases)
 	case metricsChanged:
 		// Metrics tick (every 12s): refresh the periodic-cheap regions, and - when a
 		// client is connected - force-resync the lease-row regions so their presence dots
@@ -262,7 +264,7 @@ func (s *Server) tickDashboard() {
 		// until a full reload). Skipped entirely with no viewers, so an idle box pays
 		// nothing.
 		if s.live.clientCount() > 0 {
-			s.publishMetricsTick(leases)
+			s.publishMetricsTick(ctx, leases)
 		}
 	}
 }
@@ -279,8 +281,8 @@ func (s *Server) tickDashboard() {
 // value and the current one". The rows stay current without the cache re-send: the 4s
 // ticker re-renders them whenever the lease set, presence, or expiry bucket changes, and
 // between those the client tick keeps the countdown live from the absolute data-expires.
-func (s *Server) publishMetricsTick(leases []kea.ActiveLease) {
-	s.publishFragments(s.periodicDashboardFragments(leases))
+func (s *Server) publishMetricsTick(ctx context.Context, leases []kea.ActiveLease) {
+	s.publishFragments(s.periodicDashboardFragments(ctx, leases))
 	// Re-sync only the MariaDB-backed pinning regions from their last rendered fragment so
 	// a client whose view drifted stale (a dropped/raced push) reconciles within 12s. These
 	// carry no client-ticked value, so re-sending the cache is safe (unlike the lease rows).
@@ -294,11 +296,13 @@ func (s *Server) publishMetricsTick(leases []kea.ActiveLease) {
 // touching leases) use this so the render always runs; per-region hashing still
 // suppresses an identical fragment. The ticker uses tickDashboard instead.
 func (s *Server) publishDashboard() {
-	leases, err := s.kea.GetLeases(1000)
+	ctx, cancel := opCtx()
+	defer cancel()
+	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
 		return // return on error to prevent caching / broadcasting a lie
 	}
-	s.publishDashboardWithLeases(leases)
+	s.publishDashboardWithLeases(ctx, leases)
 }
 
 // liveFragment is a rendered live-region fragment paired with the hub region key
@@ -322,9 +326,9 @@ type liveFragment struct {
 // suppresses the broadcast for any unchanged region, so an idle operator pays the
 // render but never the wire - acceptable at single-operator scale, so the
 // regions are deliberately not gated on which page each client is viewing.
-func (s *Server) dashboardFragments(leases []kea.ActiveLease) []liveFragment {
+func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
 	ns := s.collectNetSnapshot() // one SnapshotAll shared by the view + lease table
-	v := s.buildDashboardViewWith(views.PageData{}, leases, ns, true)
+	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true)
 
 	// Periodic-cheap regions (also refreshed on a metrics-only tick).
 	frags := s.periodicFragments(v)
@@ -341,7 +345,7 @@ func (s *Server) dashboardFragments(leases []kea.ActiveLease) []liveFragment {
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames), "", s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames), "", s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 
@@ -392,9 +396,9 @@ func (s *Server) periodicFragments(v views.DashboardView) []liveFragment {
 // periodicDashboardFragments renders only the periodic-cheap regions from a lighter
 // view build that skips the MariaDB pinning fetch and the lease table - used by a
 // metrics-only tick so an idle connected client costs no MariaDB round-trips.
-func (s *Server) periodicDashboardFragments(leases []kea.ActiveLease) []liveFragment {
+func (s *Server) periodicDashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
 	ns := s.collectNetSnapshot()
-	v := s.buildDashboardViewWith(views.PageData{}, leases, ns, false)
+	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, false)
 	return s.periodicFragments(v)
 }
 
@@ -409,8 +413,8 @@ func (s *Server) publishFragments(frags []liveFragment) {
 // publishDashboardWithLeases renders the full live-region set from an already-fetched
 // lease set and broadcasts any that changed. The fragments morph by element id into
 // whichever page is open; on a page lacking an id the patch is a harmless no-op.
-func (s *Server) publishDashboardWithLeases(leases []kea.ActiveLease) {
-	s.publishFragments(s.dashboardFragments(leases))
+func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.ActiveLease) {
+	s.publishFragments(s.dashboardFragments(ctx, leases))
 }
 
 // leasesSignature is an order-independent fingerprint of the lease set's identity
@@ -499,11 +503,11 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 	snap := make(chan string, 8)
 	go func() {
 		defer close(snap)
-		leases, err := s.kea.GetLeases(1000)
+		leases, err := s.kea.GetLeases(ctx, 1000)
 		if err != nil {
 			return
 		}
-		for _, f := range s.dashboardFragments(leases) {
+		for _, f := range s.dashboardFragments(ctx, leases) {
 			if !regionOnPage(f.region, page) {
 				continue
 			}

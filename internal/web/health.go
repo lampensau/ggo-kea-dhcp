@@ -191,7 +191,9 @@ func (s *Server) probeMariaDB() {
 		return
 	}
 	ok, detail := false, ""
-	if err := s.mariadb.Ping(); err != nil {
+	ctx, cancel := opCtx()
+	defer cancel()
+	if err := s.mariadb.PingContext(ctx); err != nil {
 		detail = err.Error()
 	} else {
 		ok, detail = true, "connected"
