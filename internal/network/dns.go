@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 type DNSRedirector struct {
@@ -83,7 +84,11 @@ func (d *DNSRedirector) serve() {
 			case <-d.quit:
 				return
 			default:
+				// Brief backoff: a persistent read error (e.g. ENETDOWN on a flapping
+				// interface) would otherwise spin this loop at full CPU, one log line
+				// per iteration, until the socket is closed.
 				log.Printf("DNS read error: %v", err)
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 		}

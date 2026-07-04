@@ -261,10 +261,15 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	_ = s.sqlite.LogAudit(s.getActor(r), "LEASE_RELEASE", ip, "", "", "SUCCESS")
 
 	// Re-render the lease table and confirm. The live channel also refreshes the
-	// list, but patching here makes the release feel immediate.
+	// list, but patching here makes the release feel immediate. On a re-fetch
+	// error leave the table untouched: repainting from a failed query would show
+	// an empty table under the green toast, indistinguishable from a real wipe.
 	_, csrf, _ := s.sessionInfo(r)
-	leases, _ := s.kea.GetLeases(r.Context(), 1000)
-	_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), csrf, s.mariadb != nil))
+	if leases, err := s.kea.GetLeases(r.Context(), 1000); err != nil {
+		log.Printf("[Leases] post-release refresh failed (table left as-is): %v", err)
+	} else {
+		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), csrf, s.mariadb != nil))
+	}
 	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
 		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
 }
