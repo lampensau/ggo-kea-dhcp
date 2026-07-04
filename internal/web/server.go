@@ -9,6 +9,7 @@ import (
 	"log"
 	"maps"
 	"net/http"
+	"net/url"
 	"os/signal"
 	"strings"
 	"sync"
@@ -492,6 +493,37 @@ func isUnsafeMethod(m string) bool {
 	}
 }
 
+// sameOriginRequest is the pre-session CSRF defense for the FACTORY-state bootstrap
+// POSTs (/factory/setup, /factory/restore), which run before any session or CSRF
+// token exists. For an unsafe method it requires the Origin (else Referer) header,
+// when present, to match the request Host. A cross-origin browser POST always carries
+// a mismatched Origin and is rejected; a legitimate same-origin submit matches. When
+// both headers are absent (some non-browser clients) it allows the request rather than
+// break onboarding - the header check is defense-in-depth, not the sole gate. It does
+// not stop an attacker who forges a matching Origin; that needs an out-of-band recovery
+// secret, deliberately out of scope to keep zero-touch onboarding usable.
+func sameOriginRequest(r *http.Request) bool {
+	if !isUnsafeMethod(r.Method) {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		if ref := r.Header.Get("Referer"); ref != "" {
+			if u, err := url.Parse(ref); err == nil {
+				origin = u.Scheme + "://" + u.Host
+			}
+		}
+	}
+	if origin == "" {
+		return true // no Origin/Referer to check - allow (don't break onboarding)
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Host == r.Host
+}
+
 // handleAPIState returns the current lifecycle state as plain text. Public and
 // cache-busted: the CONFIGURING page polls it to reload once the apply reaches ACTIVE.
 //
@@ -530,6 +562,14 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 		if state == db.StateFactory {
 			if path != "/factory" && path != "/factory/setup" && path != "/factory/restore" {
 				http.Redirect(w, r, "/factory", http.StatusFound)
+				return
+			}
+			// These POSTs run with no session/CSRF token (no admin exists yet), so a
+			// same-origin check is the only CSRF defense available - reject a
+			// cross-origin bootstrap/recovery POST before it can create an admin or
+			// restore a crafted bundle.
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r)

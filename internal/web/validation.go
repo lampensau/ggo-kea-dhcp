@@ -1,5 +1,7 @@
 package web
 
+import "strings"
+
 // Input validators shared by the setup wizard and the settings page. These are
 // defense-in-depth: privileged commands run via an args array (never a shell
 // string), so these values are not injectable - but rejecting out-of-range VLAN
@@ -37,13 +39,32 @@ func validateUplink(ssid, password string) string {
 	if hasControlChar(ssid) {
 		return "WiFi network name (SSID) contains invalid control characters."
 	}
+	// Reject a leading '-': SetWifiUplink passes the SSID as a positional nmcli
+	// argument, so "-h"/"--foo" would be parsed as an option, not a network name.
+	if strings.HasPrefix(ssid, "-") {
+		return "WiFi network name (SSID) must not start with a dash."
+	}
 	if password != "" {
 		if l := len(password); l < 8 || l > 63 {
 			return "WiFi password must be 8-63 characters (WPA2), or empty for an open network."
 		}
-		if hasControlChar(password) {
-			return "WiFi password contains invalid control characters."
+		// A WPA2 passphrase is printable ASCII (0x20-0x7e). hasControlChar catches the
+		// low/DEL bytes; also reject anything above 0x7e so a non-ASCII paste can't
+		// produce a passphrase the AP will not accept.
+		if !isPrintableASCII(password) {
+			return "WiFi password must use printable ASCII characters only (WPA2)."
 		}
 	}
 	return ""
+}
+
+// isPrintableASCII reports whether every byte of s is in the printable ASCII range
+// 0x20..0x7e (space through '~').
+func isPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
