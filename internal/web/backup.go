@@ -485,6 +485,14 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Re-auth before overwriting the appliance: restore can replace the admin set,
+	// profiles, and reservations, so require the current password (parseUploadedBackup
+	// already parsed the multipart form, so current_password is available).
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "BACKUP_RESTORE", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	lifecycle, rerr := s.restore(b, selectedSections(r))
 	if lifecycle == "" {
 		// Hard failure: the SQLite restore itself did not happen (nothing changed).

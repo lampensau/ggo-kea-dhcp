@@ -48,13 +48,16 @@ templ ResetDangerZone(csrf string) {
 	@confirmDialog(confirmDialogOpts{
 		ID: "dlg-factory", Title: "Factory Reset this appliance?", Action: "/reset/factory", CSRF: csrf,
 		Body: "This permanently wipes all profiles, the admin account, saved profiles, and port labels, returning the box to factory state. This cannot be undone.",
-		Confirm: "Factory Reset", Danger: true,
+		Confirm: "Factory Reset", Danger: true, RequirePassword: true,
 	})
 }
 
 type confirmDialogOpts struct {
 	ID, Title, Action, CSRF, Body, Confirm string
 	Danger                                 bool
+	// RequirePassword adds a current-password re-auth field to the form, for the most
+	// destructive actions (factory reset) where a click-through confirm is not enough.
+	RequirePassword bool
 }
 
 // confirmDialog is a reusable native-<dialog> confirmation wrapping a POST form.
@@ -63,7 +66,15 @@ templ confirmDialog(o confirmDialogOpts) {
 		<form method="post" action={ templ.SafeURL(o.Action) } data-busy>
 			<input type="hidden" name="csrf_token" value={ o.CSRF }/>
 			<div class="dialog-head" id={ o.ID + "-title" }>{ o.Title }</div>
-			<div class="dialog-body"><p>{ o.Body }</p></div>
+			<div class="dialog-body">
+				<p>{ o.Body }</p>
+				if o.RequirePassword {
+					<div class="form-group">
+						<label class="form-label" for={ o.ID + "-pw" }>Confirm your password</label>
+						<input class="form-control" id={ o.ID + "-pw" } name="current_password" type="password" autocomplete="current-password" required/>
+					</div>
+				}
+			</div>
 			<div class="dialog-foot">
 				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
 				if o.Danger {

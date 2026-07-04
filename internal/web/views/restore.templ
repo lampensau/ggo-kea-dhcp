@@ -12,8 +12,10 @@ package views
 // / Port labels / Host reservations - gated by sections), and Cancel / Restore actions.
 // On the factory picker the handler force-enables Admins regardless of the checkbox, so a
 // recovery can never leave the box admin-less. Restore stays disabled until a file is
-// chosen and confirms on submit (it overwrites the selected sections).
-templ RestoreDialog(id, action, csrf string, sections bool) {
+// chosen and confirms on submit (it overwrites the selected sections). password gates the
+// authenticated restore (Settings/Setup) with a current-password re-auth field; the
+// factory recovery picker passes false (no admin exists yet to authenticate against).
+templ RestoreDialog(id, action, csrf string, sections, password bool) {
 	<dialog id={ id } class="restore-dialog" aria-labelledby={ id + "-title" }>
 		<form method="post" action={ templ.SafeURL(action) } enctype="multipart/form-data" data-busy>
 			<input type="hidden" name="csrf_token" value={ csrf }/>
@@ -25,6 +27,12 @@ templ RestoreDialog(id, action, csrf string, sections bool) {
 					<button type="button" class="btn btn-secondary" onclick="document.getElementById('restore_file').click()">@Icon("box") Choose Backup File…</button>
 					<span id="restore_file_name" class="file-name" aria-live="polite">No file selected</span>
 				</div>
+				if password {
+					<div class="form-group">
+						<label class="form-label" for="restore_current_password">Confirm your password</label>
+						<input class="form-control" id="restore_current_password" name="current_password" type="password" autocomplete="current-password" required/>
+					</div>
+				}
 				if sections {
 					<fieldset class="restore-sections">
 						<legend class="form-label">Restore which sections</legend>

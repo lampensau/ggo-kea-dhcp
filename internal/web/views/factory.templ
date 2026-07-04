@@ -66,7 +66,7 @@ templ Factory(v FactoryView) {
 				<button type="button" class="btn btn-secondary btn-block" onclick="document.getElementById('factory-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
 			</div>
 		</div>
-		@RestoreDialog("factory-restore-dlg", "/factory/restore", v.Page.CSRFToken, true)
+		@RestoreDialog("factory-restore-dlg", "/factory/restore", v.Page.CSRFToken, true, false)
 		@pwStrengthScript()
 		@restoreScript()
 	}

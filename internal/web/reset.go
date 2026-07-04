@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -80,15 +82,24 @@ func (s *Server) routineResetDB() error {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}
-	_, _ = s.sqlite.Exec("UPDATE profiles SET active = 0")
+	_, e1 := s.sqlite.Exec("UPDATE profiles SET active = 0")
 	// Clear the box-level WiFi uplink: in ONBOARDING wlan0 hosts the SoftAP, not a
 	// client uplink, so these credentials can't apply and must not prefill the setup
 	// wizard. Saved profiles keep their own uplink, so re-applying one restores it.
-	_, _ = s.sqlite.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
-	return s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding)
+	_, e2 := s.sqlite.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
+	// Surface a partial reset instead of reporting success when only SetState fails:
+	// a silently-failed deactivate would leave the old profile live after "reset".
+	return errors.Join(e1, e2, s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding))
 }
 
 func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
+	// Re-auth before anything irreversible: a factory reset wipes the admin and
+	// opens the pre-auth FACTORY window, so a click-through confirm is not enough.
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "RESET_FACTORY", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	if !s.beginReconcile() {
 		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
 		return
@@ -119,6 +130,11 @@ func (s *Server) factoryWipeDB() error {
 			log.Printf("[Reset] clearing Kea host reservations failed: %v", err)
 		}
 	}
+	// A silently-failed wipe is security-relevant: a "factory reset" that left the
+	// admin/sessions rows while reporting success would hand the box to whoever held
+	// the old credentials. Aggregate every DELETE's error and return it so the caller
+	// reports a real failure instead of unqualified success.
+	var wipeErr error
 	for _, q := range []string{
 		"DELETE FROM scopes",
 		"DELETE FROM profiles",
@@ -130,7 +146,9 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM users",
 		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass')",
 	} {
-		_, _ = s.sqlite.Exec(q)
+		if _, err := s.sqlite.Exec(q); err != nil {
+			wipeErr = errors.Join(wipeErr, fmt.Errorf("%s: %w", q, err))
+		}
 	}
 	// Drop the in-memory last-seen tracker too, so it doesn't repopulate the wiped
 	// table from stale memory on the next sample.
@@ -138,5 +156,5 @@ func (s *Server) factoryWipeDB() error {
 	s.lastSeen = map[string]int64{}
 	s.lastSeenWritten = map[string]int64{}
 	s.lastSeenMu.Unlock()
-	return s.sqlite.SetState(db.LifecycleStateKey, db.StateFactory)
+	return errors.Join(wipeErr, s.sqlite.SetState(db.LifecycleStateKey, db.StateFactory))
 }

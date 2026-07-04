@@ -165,7 +165,7 @@ templ settingsBackupCard(v SettingsView) {
 			<button type="button" class="btn btn-secondary" onclick="document.getElementById('settings-restore-dlg').showModal()">@Icon("upload") Restore from Backup</button>
 		</div>
 	</div>
-	@RestoreDialog("settings-restore-dlg", "/settings/restore", v.Page.CSRFToken, true)
+	@RestoreDialog("settings-restore-dlg", "/settings/restore", v.Page.CSRFToken, true, true)
 }
 
 // settingsWifiScript scans for WiFi networks (GET /wifi/scan) into the uplink SSID

@@ -88,7 +88,7 @@ templ Setup(v SetupView) {
 			// The restore <dialog> lives here, OUTSIDE the apply form above - a dialog owns
 			// its own form in the top layer, so the trigger button inside the apply form
 			// just opens it (no nested forms).
-			@RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true)
+			@RestoreDialog("setup-restore-dlg", "/settings/restore", v.Page.CSRFToken, true, true)
 			@restoreScript()
 		}
 	}
