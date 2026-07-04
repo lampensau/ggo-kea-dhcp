@@ -1,11 +1,15 @@
 package web
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"ggo-kea-dhcp/internal/db"
 )
 
 // seedAdmin inserts an admin user with a known password so the re-auth helper (which
@@ -83,6 +87,77 @@ func TestValidateUplinkRejectsInjectionAndBadPassphrase(t *testing.T) {
 		if (msg == "") != c.wantOK {
 			t.Errorf("%s: validateUplink(%q,%q)=%q, wantOK=%v", c.name, c.ssid, c.pass, msg, c.wantOK)
 		}
+	}
+}
+
+// TestMiddlewareBoundsRequestBody proves the CSRF middleware's form-parse fallback
+// cannot be abused to spill an unbounded upload: an over-cap multipart POST is
+// rejected with 413 before any handler runs, a within-cap form with the session's
+// token still passes, and an empty stored CSRF token never matches an empty
+// submission.
+func TestMiddlewareBoundsRequestBody(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedAdmin(t, s, "pw")
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	sid, err := s.createSession("admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+	_, csrf, ok := s.sessionUser(sid)
+	if !ok || csrf == "" {
+		t.Fatal("sessionUser should return the fresh session with a csrf token")
+	}
+
+	var reached bool
+	h := s.lifecycleMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }))
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		reached = false
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// Over-cap multipart upload: the middleware bounds the body before the CSRF
+	// form-parse, so the handler never runs and the rejection surfaces as an in-app
+	// error (flash + 303 redirect via handleError), not a bare 413 page.
+	var big bytes.Buffer
+	mw := multipart.NewWriter(&big)
+	fw, _ := mw.CreateFormFile("backup", "huge.json")
+	_, _ = fw.Write(bytes.Repeat([]byte("x"), maxRequestBody+1024))
+	_ = mw.Close()
+	req := httptest.NewRequest("POST", "/settings/restore", &big)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rr := serve(req)
+	if rr.Code != http.StatusSeeOther {
+		t.Errorf("over-cap upload: status=%d want 303 (in-app error flash + redirect)", rr.Code)
+	}
+	if reached {
+		t.Error("over-cap upload reached the handler")
+	}
+	if flashCookie(rr) == nil {
+		t.Error("over-cap upload should set an error flash (in-app notification)")
+	}
+
+	// Within-cap form carrying the right token: passes through to the handler.
+	req = postForm(url.Values{"csrf_token": {csrf}})
+	if rr := serve(req); !reached {
+		t.Errorf("valid within-cap form did not reach the handler (status=%d)", rr.Code)
+	}
+
+	// An empty stored token must not match an empty submission (the sessions read
+	// COALESCEs NULL to "" - an equal-empty compare would be a CSRF bypass).
+	if _, err := s.sqlite.Exec("UPDATE sessions SET csrf_token = '' WHERE session_id = ?", sid); err != nil {
+		t.Fatalf("blank csrf token: %v", err)
+	}
+	req = postForm(url.Values{})
+	if rr := serve(req); rr.Code != http.StatusForbidden {
+		t.Errorf("empty-token request with empty stored token: status=%d want 403", rr.Code)
+	}
+	if reached {
+		t.Error("empty-vs-empty CSRF compare reached the handler")
 	}
 }
 
