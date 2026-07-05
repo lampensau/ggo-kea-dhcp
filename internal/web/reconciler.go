@@ -250,9 +250,8 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if _, err := net.InterfaceByName("wlan0"); err == nil {
 		wlanIP = softAPWlanIP
 	}
-	// Leaving ACTIVE (or re-entering onboarding): the port-53 owner goes quiet. Its
-	// captive-redirect mode exists (dns.StartRedirect) but stays off here, per the
-	// no-DNS-during-onboarding intent above.
+	// Leaving ACTIVE (or re-entering onboarding): the port-53 owner goes quiet, per
+	// the no-DNS-during-onboarding intent above.
 	if s.dns != nil {
 		s.dns.Stop()
 	}
@@ -392,14 +391,25 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// segment can reach. Best-effort like the monitors; the zone primes in the
 	// background and then follows the dashboard cadence (rebuildDNSZone).
 	if s.dns != nil {
-		var bindIPs []string
+		var bindIPs, cidrs []string
 		for _, sc := range scopes {
 			if _, ipnet, e := net.ParseCIDR(sc.CIDR); e == nil {
 				bindIPs = append(bindIPs, kea.IncIP(ipnet.IP, 1).String())
+				cidrs = append(cidrs, sc.CIDR)
 			}
 		}
-		s.dns.StartZone(bindIPs)
-		go s.primeDNSZone()
+		// Served subnets first, so a PTR that arrives the instant a listener binds
+		// is already answered authoritatively rather than forwarded.
+		s.dns.SetServedSubnets(cidrs)
+		// StartZone (with its bounded EADDRNOTAVAIL retry) and the prime run in the
+		// background so a lagging post-re-IP bind never stalls the reconcile; a bind
+		// that still fails is audited so it shows on Diagnostics.
+		go func() {
+			for _, ip := range s.dns.StartZone(bindIPs) {
+				_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed after retry", "WARNING")
+			}
+			s.primeDNSZone()
+		}()
 	}
 
 	return errors.Join(errs...)

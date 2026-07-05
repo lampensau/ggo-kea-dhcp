@@ -22,12 +22,12 @@ func testZone() *Zone {
 	})
 }
 
-// respondVia runs one query through a fake listener in the given mode.
-func respondVia(t *testing.T, mode Mode, z *Zone, query []byte) (resp, forward []byte) {
+// respondVia runs one query through a fake listener bound at 10.0.0.1.
+func respondVia(t *testing.T, z *Zone, query []byte) (resp, forward []byte) {
 	t.Helper()
 	srv := New("")
 	srv.SetZone(z)
-	l := &listener{srv: srv, mode: mode, bindIP: [4]byte{10, 0, 0, 1}}
+	l := &listener{srv: srv, bindIP: [4]byte{10, 0, 0, 1}}
 	return l.handle(query)
 }
 
@@ -40,7 +40,7 @@ func lastIPv4(resp []byte) net.IP { return net.IP(resp[len(resp)-4:]) }
 func TestZoneAnswersBothSuffixes(t *testing.T) {
 	z := testZone()
 	for _, name := range []string{"bpx-19." + SuffixInv, "bpx-19." + SuffixDHCP} {
-		resp, fwd := respondVia(t, ModeZone, z, buildQuery(0x1234, name, typeA))
+		resp, fwd := respondVia(t, z, buildQuery(0x1234, name, typeA))
 		if fwd != nil {
 			t.Fatalf("%s: forwarded instead of answered", name)
 		}
@@ -57,7 +57,7 @@ func TestZoneAnswersBothSuffixes(t *testing.T) {
 }
 
 func TestZoneApexAnswersPerSocket(t *testing.T) {
-	resp, fwd := respondVia(t, ModeZone, testZone(), buildQuery(1, SuffixDHCP, typeA))
+	resp, fwd := respondVia(t, testZone(), buildQuery(1, SuffixDHCP, typeA))
 	if fwd != nil {
 		t.Fatal("apex query forwarded")
 	}
@@ -69,24 +69,24 @@ func TestZoneApexAnswersPerSocket(t *testing.T) {
 func TestZoneNXDomainAndNoData(t *testing.T) {
 	z := testZone()
 	// Unknown name under an authoritative suffix: NXDOMAIN, never forwarded.
-	resp, fwd := respondVia(t, ModeZone, z, buildQuery(2, "nope."+SuffixInv, typeA))
+	resp, fwd := respondVia(t, z, buildQuery(2, "nope."+SuffixInv, typeA))
 	if fwd != nil || rcodeOf(resp) != rcodeNXDomain {
 		t.Fatalf("unknown zone name: fwd=%v rcode=%d", fwd != nil, rcodeOf(resp))
 	}
 	// Known name, AAAA: NOERROR with zero answers (NODATA) so clients fall back to A.
-	resp, _ = respondVia(t, ModeZone, z, buildQuery(3, "bpx-19."+SuffixDHCP, 28))
+	resp, _ = respondVia(t, z, buildQuery(3, "bpx-19."+SuffixDHCP, 28))
 	if rcodeOf(resp) != rcodeNoError || ancountOf(resp) != 0 {
 		t.Fatalf("AAAA on known name: rcode=%d ancount=%d", rcodeOf(resp), ancountOf(resp))
 	}
 	// inv apex: exists, carries no records.
-	resp, _ = respondVia(t, ModeZone, z, buildQuery(4, SuffixInv, typeA))
+	resp, _ = respondVia(t, z, buildQuery(4, SuffixInv, typeA))
 	if rcodeOf(resp) != rcodeNoError || ancountOf(resp) != 0 {
 		t.Fatalf("inv apex: rcode=%d ancount=%d", rcodeOf(resp), ancountOf(resp))
 	}
 }
 
 func TestZonePTRCanonical(t *testing.T) {
-	resp, fwd := respondVia(t, ModeZone, testZone(), buildQuery(5, "42.0.0.10.in-addr.arpa", typePTR))
+	resp, fwd := respondVia(t, testZone(), buildQuery(5, "42.0.0.10.in-addr.arpa", typePTR))
 	if fwd != nil {
 		t.Fatal("known PTR forwarded")
 	}
@@ -101,24 +101,53 @@ func TestZonePTRCanonical(t *testing.T) {
 }
 
 func TestDoHCanaryNXDomain(t *testing.T) {
-	resp, fwd := respondVia(t, ModeZone, testZone(), buildQuery(6, dohCanary, typeA))
+	resp, fwd := respondVia(t, testZone(), buildQuery(6, dohCanary, typeA))
 	if fwd != nil || rcodeOf(resp) != rcodeNXDomain {
 		t.Fatalf("DoH canary: fwd=%v rcode=%d", fwd != nil, rcodeOf(resp))
 	}
 }
 
-func TestRedirectModeAnswersEverything(t *testing.T) {
-	resp, fwd := respondVia(t, ModeRedirect, nil, buildQuery(7, "captive.example.com", typeA))
+func TestNonQueryOpcodeNotImplemented(t *testing.T) {
+	q := buildQuery(7, "example.com", typeA)
+	q[2] = q[2]&^0x78 | (2 << 3) // opcode 2 = STATUS
+	resp, fwd := respondVia(t, testZone(), q)
 	if fwd != nil {
-		t.Fatal("redirect mode forwarded")
+		t.Fatal("a non-QUERY opcode was forwarded instead of answered NOTIMP")
 	}
-	if got := lastIPv4(resp).String(); got != "10.0.0.1" {
-		t.Fatalf("redirect answered %s, want the bind IP", got)
+	if rcodeOf(resp) != rcodeNotImp {
+		t.Fatalf("opcode STATUS rcode = %d, want NOTIMP (%d)", rcodeOf(resp), rcodeNotImp)
+	}
+}
+
+func TestPTRMissInServedSubnetIsAuthoritativeNXDomain(t *testing.T) {
+	srv := New("")
+	srv.SetZone(testZone())
+	srv.SetServedSubnets([]string{"10.0.0.0/24"})
+	l := &listener{srv: srv, bindIP: [4]byte{10, 0, 0, 1}}
+
+	// A reverse query for an address in the served subnet with no PTR entry:
+	// answered NXDOMAIN authoritatively, never forwarded (no upstream leak).
+	resp, fwd := l.handle(buildQuery(20, "99.0.0.10.in-addr.arpa", typePTR))
+	if fwd != nil {
+		t.Fatal("PTR miss inside a served subnet was forwarded upstream")
+	}
+	if rcodeOf(resp) != rcodeNXDomain {
+		t.Fatalf("PTR miss rcode = %d, want NXDOMAIN", rcodeOf(resp))
+	}
+	if resp[2]&0x04 == 0 {
+		t.Fatal("authoritative PTR miss should set the AA bit")
+	}
+
+	// A reverse query outside every served subnet still forwards - we are not
+	// authoritative for it.
+	_, fwd = l.handle(buildQuery(21, "5.4.3.192.in-addr.arpa", typePTR))
+	if fwd == nil {
+		t.Fatal("PTR outside served subnets should forward, not be answered locally")
 	}
 }
 
 func TestOutsideZoneIsForwarded(t *testing.T) {
-	resp, fwd := respondVia(t, ModeZone, testZone(), buildQuery(8, "example.com", typeA))
+	resp, fwd := respondVia(t, testZone(), buildQuery(8, "example.com", typeA))
 	if resp != nil || fwd == nil {
 		t.Fatal("outside-zone query was not handed to the forward path")
 	}
@@ -127,7 +156,7 @@ func TestOutsideZoneIsForwarded(t *testing.T) {
 func TestResponsesAreDropped(t *testing.T) {
 	q := buildQuery(9, "example.com", typeA)
 	q[2] |= 0x80 // QR: this is a response
-	resp, fwd := respondVia(t, ModeZone, testZone(), q)
+	resp, fwd := respondVia(t, testZone(), q)
 	if resp != nil || fwd != nil {
 		t.Fatal("a QR=1 packet must be dropped, not answered or forwarded")
 	}
@@ -184,16 +213,67 @@ func TestForwardGateCapsGloballyAndResets(t *testing.T) {
 	}
 }
 
-func TestArCountDetectsEDNS0(t *testing.T) {
-	plain := buildQuery(1, "example.com", typeA) // ARCOUNT 0: no EDNS0
+func TestArCountCountsAdditionalRecords(t *testing.T) {
+	plain := buildQuery(1, "example.com", typeA) // ARCOUNT 0: no additional records
 	if got := arCount(plain); got != 0 {
 		t.Fatalf("plain query arCount = %d, want 0", got)
 	}
-	// An OPT pseudo-record bumps ARCOUNT; such a client may accept >512.
+	// An additional record (an EDNS0 OPT in practice) bumps ARCOUNT; such a client
+	// may accept >512.
 	edns := append([]byte(nil), plain...)
 	edns[11] = 1
 	if got := arCount(edns); got != 1 {
-		t.Fatalf("edns query arCount = %d, want 1", got)
+		t.Fatalf("query with an additional record arCount = %d, want 1", got)
+	}
+}
+
+func TestForwardRejectsQuestionMismatch(t *testing.T) {
+	up, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	go func() {
+		buf := make([]byte, 1500)
+		_, remote, err := up.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		// Correct txid (0xabcd), but a reply whose question name differs: a stale
+		// or spoofed answer that must be rejected despite the matching txid.
+		reply := buildQuery(0xabcd, "evil.example.net", typeA)
+		reply[2] |= 0x80 // QR
+		_, _ = up.WriteToUDP(reply, remote)
+	}()
+
+	query := buildQuery(0xabcd, "example.com", typeA)
+	q, _ := parseQuestion(query)
+	if resp := forwardOne(query, q, up.LocalAddr().String()); resp != nil {
+		t.Fatal("a reply whose question did not match the query was accepted")
+	}
+}
+
+func TestParseQuestionFollowsCompressionPointer(t *testing.T) {
+	// A question whose name is the label "bpx" followed by a compression pointer to
+	// "example.com" placed later in the packet. The decoder must resolve the pointer
+	// and resume the section fields right after it.
+	msg := []byte{0, 1, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0} // header, QDCOUNT 1
+	msg = append(msg, 0x03, 'b', 'p', 'x', 0xc0, 22)        // "bpx" + pointer -> offset 22
+	msg = append(msg, byte(typeA>>8), byte(typeA), 0, classIN)
+	msg = append(msg, encodeName("example.com")...) // the pointed-to name at offset 22
+
+	q, ok := parseQuestion(msg)
+	if !ok {
+		t.Fatal("compressed question failed to parse")
+	}
+	if q.Name != "bpx.example.com" {
+		t.Fatalf("compressed name decoded as %q, want bpx.example.com", q.Name)
+	}
+	if q.Type != typeA || q.Class != classIN {
+		t.Fatalf("type/class after pointer = %d/%d, want %d/%d", q.Type, q.Class, typeA, classIN)
+	}
+	if q.end != 22 { // resume just past the pointer (offset 18) + qtype/qclass (4)
+		t.Fatalf("question end = %d, want 22", q.end)
 	}
 }
 

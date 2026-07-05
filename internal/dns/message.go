@@ -13,8 +13,9 @@ const (
 	classIN = 1
 
 	rcodeNoError  = 0
-	rcodeNXDomain = 3
 	rcodeServFail = 2
+	rcodeNXDomain = 3
+	rcodeNotImp   = 4
 	rcodeRefused  = 5
 )
 

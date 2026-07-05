@@ -1,9 +1,8 @@
-// Package dns is the appliance's single owner of UDP port 53, with one explicit
-// mode per lifecycle era: a captive redirector (every A query answered with the
-// listener's own address, the FACTORY/ONBOARDING behavior) and the ACTIVE
+// Package dns is the appliance's single owner of UDP port 53 in ACTIVE: the
 // authoritative server for the device zones inv.greengo.digital and
 // dhcp.greengo.digital plus a deliberately dumb forwarder to the uplink's
-// resolver. One component, never two servers racing for the socket.
+// resolver. One component, never two servers racing for the socket. Outside
+// ACTIVE the listeners are simply stopped (no DNS during FACTORY/ONBOARDING).
 //
 // Transport stance, decided and deliberate: UDP only. Answers are minimal
 // single-record responses for a fleet of at most hundreds of names, so they
@@ -21,27 +20,14 @@
 package dns
 
 import (
+	"errors"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
-
-// Mode selects how a running listener set answers.
-type Mode int
-
-const (
-	// ModeRedirect answers every A query with the listener's own bind address -
-	// the captive-portal behavior for FACTORY/ONBOARDING.
-	ModeRedirect Mode = iota
-	// ModeZone serves the device zones authoritatively and forwards everything
-	// else upstream (SERVFAIL when isolated).
-	ModeZone
-)
-
-// redirectTTL matches the old onboarding redirector's 60s answers.
-const redirectTTL = 60
 
 // forwardTimeout bounds one upstream exchange; queryLimitPerSec is the
 // per-source response rate limit; maxInflightForwards bounds the forward
@@ -59,6 +45,15 @@ const (
 	maxForwardsPerSec = 200
 )
 
+// bindMaxRetries/bindRetryDelay give the interface a moment to finish taking its
+// new address after a re-IP: nmcli's assignment is synchronous but can lag the
+// bind, so a listener that fails with EADDRNOTAVAIL is retried a few times before
+// being given up on. Only the failure path sleeps; a normal bind is instant.
+const (
+	bindMaxRetries = 3
+	bindRetryDelay = 200 * time.Millisecond
+)
+
 // dohCanary is Firefox's use-application-dns.net probe: answering NXDOMAIN
 // tells the browser to keep using local DNS instead of switching to DoH.
 const dohCanary = "use-application-dns.net"
@@ -67,7 +62,8 @@ const dohCanary = "use-application-dns.net"
 // listener set first); the zone is swapped atomically and independently of the
 // listener lifecycle.
 type Server struct {
-	zone atomic.Pointer[Zone]
+	zone       atomic.Pointer[Zone]
+	servedNets atomic.Pointer[[]*net.IPNet] // subnets we answer PTR for authoritatively
 
 	resolv     *resolvCache
 	forwardSem chan struct{}
@@ -89,39 +85,87 @@ func New(resolvPath string) *Server {
 	}
 }
 
-// SetZone atomically swaps the zone the ModeZone listeners answer from. Safe
-// at any time, including while stopped or in redirect mode.
+// SetZone atomically swaps the zone the listeners answer from. Safe at any time,
+// including while stopped.
 func (s *Server) SetZone(z *Zone) { s.zone.Store(z) }
 
-// StartRedirect (re)starts captive-redirect listeners on the given addresses.
-func (s *Server) StartRedirect(bindIPs []string) { s.start(ModeRedirect, bindIPs) }
+// SetServedSubnets records the subnets the box is authoritative for in reverse,
+// so a PTR query for an address inside one is answered here (NXDOMAIN on a miss)
+// instead of leaking upstream. Unparseable CIDRs are skipped. Safe at any time.
+func (s *Server) SetServedSubnets(cidrs []string) {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			nets = append(nets, n)
+		}
+	}
+	s.servedNets.Store(&nets)
+}
 
-// StartZone (re)starts authoritative+forwarder listeners on the given
-// addresses - one socket per served-interface IP, so each apex answer names
-// the address reachable from that listener's own segment.
-func (s *Server) StartZone(bindIPs []string) { s.start(ModeZone, bindIPs) }
+// servesReverse reports whether ip falls in a subnet the box serves.
+func (s *Server) servesReverse(ip [4]byte) bool {
+	nets := s.servedNets.Load()
+	if nets == nil {
+		return false
+	}
+	addr := net.IP(ip[:])
+	for _, n := range *nets {
+		if n.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// StartZone (re)starts authoritative+forwarder listeners on the given addresses -
+// one socket per served-interface IP, so each apex answer names the address
+// reachable from that listener's own segment. It returns the addresses whose bind
+// ultimately failed (after the EADDRNOTAVAIL retry) so the caller can surface
+// them; an empty return means every listener came up.
+func (s *Server) StartZone(bindIPs []string) []string { return s.start(bindIPs) }
 
 // start replaces the listener set. Each bind is best-effort: a failed bind
 // (missing capability, interface not up yet) is logged and skipped rather than
 // taking the others down - DNS is a feature, never a reason to fail an apply.
-func (s *Server) start(mode Mode, bindIPs []string) {
+// The failed addresses are returned for the caller to audit.
+func (s *Server) start(bindIPs []string) []string {
 	s.Stop()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bindSet = make(map[string]bool, len(bindIPs))
+	var failed []string
 	for _, ip := range bindIPs {
 		if ip == "" {
 			continue
 		}
-		l, err := newListener(s, mode, ip)
+		l, err := bindListener(s, ip)
 		if err != nil {
 			log.Printf("[dns] listener on %s:53 not started: %v", ip, err)
+			failed = append(failed, ip)
 			continue
 		}
 		s.listeners = append(s.listeners, l)
 		s.bindSet[ip] = true
 		l.wg.Add(1) // before the goroutine, so a fast stop() cannot Wait() past it
 		go l.serve()
+	}
+	return failed
+}
+
+// bindListener binds one address, retrying briefly on EADDRNOTAVAIL - the address
+// not yet present after a re-IP. Any other error (or a persistent one) is returned
+// on the first/last try; the caller skips that address.
+func bindListener(srv *Server, ip string) (*listener, error) {
+	var err error
+	for attempt := 0; ; attempt++ {
+		var l *listener
+		if l, err = newListener(srv, ip); err == nil {
+			return l, nil
+		}
+		if attempt >= bindMaxRetries || !errors.Is(err, syscall.EADDRNOTAVAIL) {
+			return nil, err
+		}
+		time.Sleep(bindRetryDelay)
 	}
 }
 
@@ -143,18 +187,17 @@ func (s *Server) bindSetSnapshot() map[string]bool {
 	return s.bindSet
 }
 
-// listener is one bound socket. Its mode and own address are fixed at start;
-// per-socket state is what makes the apex answer segment-correct.
+// listener is one bound socket. Its own address is fixed at start; per-socket
+// state is what makes the apex answer segment-correct.
 type listener struct {
 	srv    *Server
-	mode   Mode
 	conn   *net.UDPConn
 	bindIP [4]byte
 	quit   chan struct{}
 	wg     sync.WaitGroup
 }
 
-func newListener(srv *Server, mode Mode, bindIP string) (*listener, error) {
+func newListener(srv *Server, bindIP string) (*listener, error) {
 	ip4 := net.ParseIP(bindIP).To4()
 	if ip4 == nil {
 		return nil, &net.AddrError{Err: "not an IPv4 address", Addr: bindIP}
@@ -163,9 +206,9 @@ func newListener(srv *Server, mode Mode, bindIP string) (*listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &listener{srv: srv, mode: mode, conn: conn, quit: make(chan struct{})}
+	l := &listener{srv: srv, conn: conn, quit: make(chan struct{})}
 	copy(l.bindIP[:], ip4)
-	log.Printf("[dns] listening on %s:53 (mode %d)", bindIP, mode)
+	log.Printf("[dns] listening on %s:53", bindIP)
 	return l, nil
 }
 
@@ -219,15 +262,13 @@ func (l *listener) handle(req []byte) (resp, forward []byte) {
 	if !ok {
 		return nil, nil
 	}
+	// Only standard QUERY (opcode 0) is implemented; IQUERY/STATUS/NOTIFY/UPDATE
+	// get NOTIMP rather than being mishandled as a query.
+	if opcode := (req[2] >> 3) & 0x0f; opcode != 0 {
+		return respond(req, q, rcodeNotImp, false), nil
+	}
 	if q.Class != classIN {
 		return respond(req, q, rcodeRefused, false), nil
-	}
-
-	if l.mode == ModeRedirect {
-		if q.Type == typeA || q.Type == typeANY {
-			return respond(req, q, rcodeNoError, false, rrA(l.bindIP, redirectTTL)), nil
-		}
-		return respond(req, q, rcodeNoError, false), nil
 	}
 
 	// Firefox DoH canary: NXDOMAIN keeps the browser on local DNS, so device
@@ -261,10 +302,19 @@ func (l *listener) handle(req []byte) (resp, forward []byte) {
 		return respond(req, q, rcodeNXDomain, true), nil
 	}
 
-	if q.Type == typePTR && zone != nil {
+	if q.Type == typePTR {
 		if ip, rev := reverseName(q.Name); rev {
-			if target, hit := zone.ptr[ip]; hit {
-				return respond(req, q, rcodeNoError, true, rrPTR(target, answerTTL)), nil
+			if zone != nil {
+				if target, hit := zone.ptr[ip]; hit {
+					return respond(req, q, rcodeNoError, true, rrPTR(target, answerTTL)), nil
+				}
+			}
+			// A reverse query for an address in a subnet the box serves is ours to
+			// answer: NXDOMAIN on a miss, never forwarded. This keeps RFC1918 PTRs
+			// (e.g. 10.in-addr.arpa) from leaking upstream and from burning the
+			// forward timeout per miss when the box is isolated.
+			if l.srv.servesReverse(ip) {
+				return respond(req, q, rcodeNXDomain, true), nil
 			}
 		}
 	}
@@ -299,10 +349,12 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 		case resp == nil:
 			resp = respond(req, q, rcodeServFail, false)
 		case len(resp) > maxUDPResponse && arCount(req) == 0:
-			// A client that did not signal EDNS0 must not get more than 512
-			// bytes; relaying a large upstream answer verbatim would make the
-			// box an amplifier. Truncate to the question with TC set - the same
-			// UDP-only stance as our own answers.
+			// The request carried no additional records (a cheap proxy for "no
+			// EDNS0", see arCount), so the client is bound to 512 bytes; relaying
+			// a large upstream answer verbatim would make the box an amplifier.
+			// Truncate to the question with TC set - the same UDP-only stance as
+			// our own answers. The global forward ceiling is the real defense;
+			// this just avoids reflecting an oversized reply to a classic client.
 			resp = respond(req, q, rcodeNoError, false)
 			resp[2] |= 0x02 // TC
 		}
@@ -354,9 +406,12 @@ func forwardOne(req []byte, q question, upstream string) []byte {
 	return nil
 }
 
-// arCount reads the ARCOUNT header field. A request with no additional records
-// carried no EDNS0 OPT pseudo-record, so the client is bound to the 512-byte
-// pre-EDNS0 limit. req is always at least a full header here (parseQuestion ran).
+// arCount reads the ARCOUNT header field. arCount==0 means the request carried no
+// additional records at all - a cheap proxy for "no EDNS0 OPT record", not a true
+// OPT-record parse (a request could in principle carry a non-OPT additional
+// record). It only gates whether an oversized upstream reply is truncated to 512
+// bytes; the global forward ceiling is the actual anti-amplification defense. req
+// is always at least a full header here (parseQuestion ran).
 func arCount(req []byte) int {
 	return int(req[10])<<8 | int(req[11])
 }
