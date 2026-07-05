@@ -140,7 +140,9 @@ func (m *metricsStore) signature() uint64 {
 // ticker it runs regardless of connected clients, so the trend series are warm
 // when an operator opens the dashboard.
 func (s *Server) startMetricsSampler() {
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
 		// Prime immediately so a dashboard opened right after start already has a
 		// data point (no empty-sparkline window), then warm up quickly before the
 		// steady cadence so the trend line fills in ~15s rather than ~2 min.

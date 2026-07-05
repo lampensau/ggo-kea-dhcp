@@ -151,11 +151,15 @@ type Server struct {
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
-	// done is closed on shutdown to end the background ticker loops (live ticker,
-	// metrics sampler, MariaDB probe, update check) before main's deferred
-	// sqlite.Close runs - otherwise they keep querying a closing database on
-	// every service restart and self-update.
+	// done is closed on shutdown to end the background loops (live ticker,
+	// metrics sampler, MariaDB probe, update check + kicked checks + result
+	// watcher, clock watch) before main's deferred sqlite.Close runs - otherwise
+	// they keep querying a closing database on every service restart and
+	// self-update. bgWG counts those goroutines so stopBackground can JOIN them:
+	// signalling alone leaves a loop already past its select free to issue
+	// multi-statement work into the closing database.
 	done chan struct{}
+	bgWG sync.WaitGroup
 	// preflight holds the latest prerequisite-probe result for the diagnostics UI.
 	// Set once at boot and refreshed by the live ticker so a fixed prerequisite
 	// clears without a restart.
@@ -478,13 +482,14 @@ func (s *Server) Start() error {
 
 // stopBackground halts every background service and ticker loop before Start
 // returns, so main's deferred sqlite.Close never races goroutines still issuing
-// queries. Closing done ends the ticker loops at their next select; a loop
-// already mid-work finishes its in-flight queries (database/sql.Close waits for
-// those) - only that narrow window remains, versus loops running forever after
-// Close today. The service Stops are idempotent, matching the reconciler's own
-// teardown paths.
+// queries. Closing done ends the loops at their next select, and the Wait joins
+// them - a loop already mid-body finishes it first (each body is bounded: opCtx
+// on the Kea/DB calls, the Commander timeout on shell-outs), so the join is
+// bounded too, well inside systemd's stop timeout. The service Stops are
+// idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
 	close(s.done)
+	s.bgWG.Wait()
 	if s.netmon != nil {
 		s.netmon.Stop()
 	}

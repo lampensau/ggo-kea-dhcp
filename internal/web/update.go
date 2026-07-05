@@ -148,7 +148,9 @@ type releaseManifest struct {
 // startBackendHealthProbe). No immediate check on start: the boot-time uplink
 // connect kicks one via kickUpdateCheck when there is an uplink at all.
 func (s *Server) startUpdateCheckLoop() {
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
 		t := time.NewTicker(updateCheckInterval)
 		defer t.Stop()
 		for {
@@ -165,8 +167,14 @@ func (s *Server) startUpdateCheckLoop() {
 // kickUpdateCheck schedules one near-immediate check; called from the uplink
 // connect success path (the only moment the box knowably just gained internet).
 func (s *Server) kickUpdateCheck() {
+	s.bgWG.Add(1)
 	go func() {
-		time.Sleep(updateKickDelay)
+		defer s.bgWG.Done()
+		select {
+		case <-time.After(updateKickDelay):
+		case <-s.done:
+			return // shutting down: the check would race sqlite.Close
+		}
 		s.updateCheckSafe(false)
 	}()
 }

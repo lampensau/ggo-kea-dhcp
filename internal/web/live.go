@@ -221,7 +221,9 @@ func fnv64(s string) uint64 {
 // Kea-derived regions live. It runs only while a client is connected and pushes
 // only changed regions, so an idle appliance costs nothing.
 func (s *Server) startLiveTicker() {
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
 		t := time.NewTicker(liveTickInterval)
 		defer t.Stop()
 		for {

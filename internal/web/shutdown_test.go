@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
-// stopBackground must end the background ticker loops so main's deferred
+// stopBackground must end AND JOIN the background loops so main's deferred
 // sqlite.Close never races goroutines still issuing queries (every service
-// restart and self-update hits this path).
-func TestStopBackgroundEndsTickerLoops(t *testing.T) {
+// restart and self-update hits this path). The join is the load-bearing part:
+// signalling alone leaves a loop already past its select free to issue
+// multi-statement work into the closing database.
+func TestStopBackgroundJoinsLoops(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.done = make(chan struct{})
 	s.live = newLiveHub()
@@ -20,7 +22,9 @@ func TestStopBackgroundEndsTickerLoops(t *testing.T) {
 	s.startLiveTicker()
 	s.startBackendHealthProbe()
 	s.startUpdateCheckLoop()
-	// (startMetricsSampler is covered by the same select pattern; its 15s boot
+	s.startClockWatch()
+	s.kickUpdateCheck()
+	// (startMetricsSampler shares the same wg+select pattern; its 15s boot
 	// warmup makes it impractical to spin up here.)
 
 	s.stopBackground()
@@ -31,12 +35,14 @@ func TestStopBackgroundEndsTickerLoops(t *testing.T) {
 		t.Fatal("stopBackground did not close the done channel")
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
+	// stopBackground WAITED, so the loops must already be gone - no polling
+	// grace beyond scheduler noise.
+	deadline := time.Now().Add(500 * time.Millisecond)
 	for runtime.NumGoroutine() > before {
 		if time.Now().After(deadline) {
-			t.Fatalf("ticker goroutines still running after stopBackground: %d > %d",
+			t.Fatalf("goroutines still running after stopBackground returned: %d > %d",
 				runtime.NumGoroutine(), before)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 }

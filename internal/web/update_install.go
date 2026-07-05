@@ -259,7 +259,11 @@ func (s *Server) watchUpdateResult(scope string) {
 	}
 	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
-		time.Sleep(updateResultPollInterval)
+		select {
+		case <-time.After(updateResultPollInterval):
+		case <-s.done:
+			return // shutting down (usually the update restarting us) - no audit, no DB writes
+		}
 		if res := s.readUpdateResult(); res != nil {
 			s.processUpdateResult(*res)
 			s.releaseUpdateGuards()
