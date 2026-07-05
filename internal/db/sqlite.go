@@ -217,6 +217,9 @@ func (db *SQLiteDB) runMigrations() error {
 
 		parts := strings.SplitN(entry.Name(), "_", 2)
 		if len(parts) < 2 {
+			// Warn like the bad-version case below: a silently dropped migration
+			// leaves its schema step missing while user_version advances past it.
+			log.Printf("Warning: skipping invalid migration filename format: %s", entry.Name())
 			continue
 		}
 
