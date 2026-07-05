@@ -20,12 +20,10 @@
 package dns
 
 import (
-	"errors"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -43,15 +41,6 @@ const (
 	// relay out its uplink under a reflection flood. A real show LAN stays well
 	// below it.
 	maxForwardsPerSec = 200
-)
-
-// bindMaxRetries/bindRetryDelay give the interface a moment to finish taking its
-// new address after a re-IP: nmcli's assignment is synchronous but can lag the
-// bind, so a listener that fails with EADDRNOTAVAIL is retried a few times before
-// being given up on. Only the failure path sleeps; a normal bind is instant.
-const (
-	bindMaxRetries = 3
-	bindRetryDelay = 200 * time.Millisecond
 )
 
 // dohCanary is Firefox's use-application-dns.net probe: answering NXDOMAIN
@@ -125,8 +114,10 @@ func (s *Server) servesReverse(ip [4]byte) bool {
 // StartZone (re)starts authoritative+forwarder listeners on the given addresses -
 // one socket per served-interface IP, so each apex answer names the address
 // reachable from that listener's own segment. It returns the addresses whose bind
-// ultimately failed (after the EADDRNOTAVAIL retry) so the caller can surface
-// them; an empty return means every listener came up.
+// failed so the caller can surface them; an empty return means every listener came
+// up. Each bind is a single attempt (no sleep): an address that is not yet present
+// after a re-IP is left to RebindMissing, the caller's sampler-driven self-heal,
+// so StartZone is fast enough to run inline in the reconcile.
 func (s *Server) StartZone(bindIPs []string) []string { return s.start(bindIPs) }
 
 // start replaces the listener set. Each bind is best-effort: a failed bind
@@ -145,7 +136,7 @@ func (s *Server) start(bindIPs []string) []string {
 			continue
 		}
 		s.desired = append(s.desired, ip)
-		l, err := bindListener(s, ip)
+		l, err := newListener(s, ip)
 		if err != nil {
 			log.Printf("[dns] listener on %s:53 not started: %v", ip, err)
 			failed = append(failed, ip)
@@ -161,12 +152,12 @@ func (s *Server) start(bindIPs []string) []string {
 
 // RebindMissing re-attempts a bind for every desired address that is not currently
 // listening - the self-heal for an address that was not yet present when StartZone
-// ran (its EADDRNOTAVAIL retry exhausted) but has since appeared on the interface.
+// ran (its single bind attempt failed) but has since appeared on the interface.
 // Without this a scope whose bind lost the post-re-IP race stays dark until the next
 // full reconcile, even though the address is now up and the zone content refreshes
-// every sampler tick. One attempt per address (the caller's cadence is the retry
-// interval, so no inner sleep); a still-absent address just fails ListenUDP and is
-// left for the next call. Returns the addresses that newly bound, so the caller can
+// every sampler tick. One attempt per address (the caller's sampler cadence is the
+// retry interval, so no inner sleep); a still-absent address just fails ListenUDP and
+// is left for the next call. Returns the addresses that newly bound, so the caller can
 // audit the recovery. Inert when the server is stopped (no desired set).
 func (s *Server) RebindMissing() []string {
 	s.mu.Lock()
@@ -192,23 +183,6 @@ func (s *Server) RebindMissing() []string {
 	return healed
 }
 
-// bindListener binds one address, retrying briefly on EADDRNOTAVAIL - the address
-// not yet present after a re-IP. Any other error (or a persistent one) is returned
-// on the first/last try; the caller skips that address.
-func bindListener(srv *Server, ip string) (*listener, error) {
-	var err error
-	for attempt := 0; ; attempt++ {
-		var l *listener
-		if l, err = newListener(srv, ip); err == nil {
-			return l, nil
-		}
-		if attempt >= bindMaxRetries || !errors.Is(err, syscall.EADDRNOTAVAIL) {
-			return nil, err
-		}
-		time.Sleep(bindRetryDelay)
-	}
-}
-
 // Stop tears down all listeners. Idempotent.
 func (s *Server) Stop() {
 	s.mu.Lock()
@@ -220,11 +194,21 @@ func (s *Server) Stop() {
 	}
 }
 
-// bindSetSnapshot returns the current bind-IP set for upstream exclusion.
+// bindSetSnapshot returns a copy of the current bind-IP set for upstream
+// exclusion. It must be a copy: the caller reads it unlocked on the forward path
+// while RebindMissing/start mutate the live map under s.mu, and a shared reference
+// would be a concurrent map read+write (a fatal runtime throw).
 func (s *Server) bindSetSnapshot() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.bindSet
+	if s.bindSet == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(s.bindSet))
+	for ip := range s.bindSet {
+		out[ip] = true
+	}
+	return out
 }
 
 // listener is one bound socket. Its own address is fixed at start; per-socket

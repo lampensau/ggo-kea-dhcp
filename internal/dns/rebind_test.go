@@ -51,3 +51,31 @@ func TestRebindMissingHealsAfterAddressAppears(t *testing.T) {
 		t.Fatalf("RebindMissing resurrected a stopped server: %v", healed)
 	}
 }
+
+// TestBindSetSnapshotIsACopy guards the forward-path concurrency fix: the forward
+// path reads the snapshot unlocked while RebindMissing mutates the live bind set in
+// place under the lock. If the snapshot shared that map, the two would be a
+// concurrent map read+write (a fatal runtime throw). This proves the snapshot is an
+// independent copy: an in-place rebind after the snapshot is taken must not leak
+// into it.
+func TestBindSetSnapshotIsACopy(t *testing.T) {
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("probe bind: %v", err)
+	}
+	port := probe.LocalAddr().(*net.UDPAddr).Port
+
+	srv := New("")
+	srv.port = port
+	srv.StartZone([]string{"127.0.0.1"}) // port held: bind fails, bindSet stays empty
+	snap := srv.bindSetSnapshot()
+
+	probe.Close()
+	if healed := srv.RebindMissing(); len(healed) != 1 { // mutates the live bindSet in place
+		t.Fatalf("expected the freed address to heal, got %v", healed)
+	}
+	if snap["127.0.0.1"] {
+		t.Fatal("snapshot is not a copy: a later in-place RebindMissing leaked into it")
+	}
+	srv.Stop()
+}

@@ -405,15 +405,16 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 		// Served subnets first, so a PTR that arrives the instant a listener binds
 		// is already answered authoritatively rather than forwarded.
 		s.dns.SetServedSubnets(cidrs)
-		// StartZone (with its bounded EADDRNOTAVAIL retry) and the prime run in the
-		// background so a lagging post-re-IP bind never stalls the reconcile; a bind
-		// that still fails is audited so it shows on Diagnostics.
-		go func() {
-			for _, ip := range s.dns.StartZone(bindIPs) {
-				_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed after retry", "WARNING")
-			}
-			s.primeDNSZone()
-		}()
+		// StartZone runs inline (single-attempt binds, no sleeps), so it is ordered
+		// with respect to this and every other reconcile - a stale background start
+		// can never clobber a newer listener set. A bind that fails because its
+		// address is not up yet is audited and left to healDNSBinds (the sampler's
+		// self-heal). Only the zone prime, which hits Kea for leases, is backgrounded
+		// so it never stalls the reconcile; it just swaps zone content atomically.
+		for _, ip := range s.dns.StartZone(bindIPs) {
+			_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed, retrying on the sampler tick", "WARNING")
+		}
+		go s.primeDNSZone()
 	}
 
 	return errors.Join(errs...)
