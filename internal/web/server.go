@@ -151,6 +151,9 @@ type Server struct {
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
+	// lastMaint is when the storage-maintenance pass (snapshot/audit/session
+	// pruning) last ran. Touched only by the metrics sampler goroutine.
+	lastMaint time.Time
 	// preflight holds the latest prerequisite-probe result for the diagnostics UI.
 	// Set once at boot and refreshed by the live ticker so a fixed prerequisite
 	// clears without a restart.
