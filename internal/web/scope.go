@@ -140,9 +140,13 @@ type ScopeConfig struct {
 // scopes.services_json. Gateway/DNS override the uplink-derived defaults; Options
 // are free-form extra DHCP options (NTP, domain-name, ...) gated only by kea -t;
 // LeaseLifetime overrides the global lease lifetime for this scope (0 = inherit).
+// LocalDNS opts the scope into the appliance's own name service: clients get the
+// box's per-scope address as domain-name-servers (an explicit DNS override still
+// wins, like the gateway) plus a domain-search covering both device suffixes.
 type ScopeServices struct {
 	Gateway       string        `json:"gateway,omitempty"`
 	DNS           string        `json:"dns,omitempty"`
+	LocalDNS      bool          `json:"local_dns,omitempty"`
 	LeaseLifetime int           `json:"lease_lifetime,omitempty"`
 	Options       []ScopeOption `json:"options,omitempty"`
 }
@@ -177,9 +181,11 @@ func (g GlobalDHCPOptions) keaOptions() []kea.OptionKV {
 // It is the SINGLE parse path shared by the setup wizard and the /pools editor so
 // the two surfaces can't drift. gateway/DNS are the only IP-validated fields; each
 // option row is free-form (kea -t is the gate) and blank rows are dropped. optNames
-// and optData are positional - row i pairs optNames[i] with optData[i].
-func parseScopeServices(gateway, dns, lease string, optNames, optData []string) (ScopeServices, error) {
+// and optData are positional - row i pairs optNames[i] with optData[i]. localDNS is
+// the checkbox value ("true" when checked) of the local-DNS handout toggle.
+func parseScopeServices(gateway, dns, lease, localDNS string, optNames, optData []string) (ScopeServices, error) {
 	var svc ScopeServices
+	svc.LocalDNS = localDNS == "true"
 	// IPv4-only (To4) is intentional: this is a DHCPv4 server (routers / domain-name-
 	// servers are v4 options), so an IPv6 literal is correctly rejected, not a gap.
 	if gateway = strings.TrimSpace(gateway); gateway != "" {
@@ -340,6 +346,7 @@ func (sc ScopeConfig) ToRenderInput() kea.ScopeInput {
 		Uplink:        sc.Uplink.Enabled,
 		Gateway:       sc.Services.Gateway,
 		DNS:           sc.Services.DNS,
+		LocalDNS:      sc.Services.LocalDNS,
 		LeaseLifetime: sc.Services.LeaseLifetime,
 		Options:       opts,
 	}
@@ -380,7 +387,7 @@ func (sc ScopeConfig) uplinkJSON() (string, error) {
 // servicesJSON marshals the per-scope network services for scopes.services_json.
 // An all-zero ScopeServices renders as "" (NULL) so untouched scopes stay clean.
 func (sc ScopeConfig) servicesJSON() (string, error) {
-	if sc.Services.Gateway == "" && sc.Services.DNS == "" &&
+	if sc.Services.Gateway == "" && sc.Services.DNS == "" && !sc.Services.LocalDNS &&
 		sc.Services.LeaseLifetime == 0 && len(sc.Services.Options) == 0 {
 		return "", nil
 	}

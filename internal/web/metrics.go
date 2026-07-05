@@ -175,6 +175,11 @@ func (s *Server) sampleMetrics() {
 		s.sysHealth.sample()
 	}
 
+	// Self-heal any DNS listener whose bind lost the post-re-IP race at apply time.
+	// Independent of Kea (like sysHealth above), so a scope's local DNS recovers even
+	// while Kea is down; inert outside ACTIVE, where the server is stopped.
+	s.healDNSBinds()
+
 	ctx, cancel := opCtx()
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)
@@ -196,6 +201,10 @@ func (s *Server) sampleMetrics() {
 	// recordLastSeen still gets the full set so last-seen tracking is unaffected.
 	s.metrics.push(len(dedupeStaleLeases(active)), s.samplePoolUtil(leases), rttMs, s.uplinkProbe(), s.samplePTPClass())
 	s.recordLastSeen(active)
+	// Keep the local-DNS zone fresh on a headless box (no dashboard viewers means
+	// the live ticker's rebuild never runs). Signature-gated, so an idle box pays
+	// no reservation query.
+	s.maybeRebuildDNSZone(ctx, leases)
 }
 
 // lastSeenAdvance is the minimum cltt advance (seconds) before a last_seen row is

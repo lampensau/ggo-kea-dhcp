@@ -8,6 +8,7 @@ import (
 
 	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
+	"ggo-kea-dhcp/internal/dns"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/network"
 )
@@ -61,7 +62,7 @@ func newTestServer(t *testing.T) (*Server, *network.RecordingCommander) {
 		},
 		sqlite: sqlite,
 		kea:    kea.NewClient("http://127.0.0.1:1/", "gui", "x"),
-		dns:    network.NewDNSManager(),
+		dns:    dns.New(""),
 		net:    network.NewManagerWithCommander(rec),
 	}
 	return s, rec

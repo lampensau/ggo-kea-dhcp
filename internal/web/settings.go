@@ -116,7 +116,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// unless it overrides per-scope on /pools). Reuse the per-scope parser for the
 	// shared DNS/option validation, ignoring its gateway/lease fields. A global option
 	// change is a soft change applied on the next reconcile (config-reload, no re-IP).
-	gsvc, gerr := parseScopeServices("", r.FormValue("global_dns"), "", r.Form["opt_name[]"], r.Form["opt_data[]"])
+	gsvc, gerr := parseScopeServices("", r.FormValue("global_dns"), "", "", r.Form["opt_name[]"], r.Form["opt_data[]"])
 	if gerr != nil {
 		s.handleError(w, r, gerr.Error(), http.StatusBadRequest)
 		return

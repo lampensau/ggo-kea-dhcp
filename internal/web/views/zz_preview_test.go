@@ -426,3 +426,57 @@ func TestZZPreviewShieldBadge(t *testing.T) {
 		}
 	}
 }
+
+// TestZZPreviewDNSToggle renders the two surfaces carrying the per-scope Local
+// DNS toggle: the /pools scope card (server-rendered checked state, DHCP Options
+// forced open for the screenshot) and the wizard in edit mode with a local_dns
+// prefill (the page JS restores the toggle when opened in a browser).
+// Preview-only; cleaned up before make pi.
+func TestZZPreviewDNSToggle(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	pv := PoolsView{
+		Page: PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", CurrentPath: "/pools"},
+		Scopes: []PoolScopeView{{
+			Title: "Green-GO Intercom · 10.0.0.0/24",
+			Plan: PoolPlanView{
+				Mode: "simple", Subnet: "10.0.0.0/24", Gateway: "10.0.0.1", ShowUtil: true,
+				Heading: "Address Pools", RegionID: "poolplan-0", FieldPrefix: "scopes[0][pool]",
+				EditAction: "/pools/edit", SaveAction: "/pools/save?s=0&mode=simple",
+				Rows: []PoolPlanRow{
+					{Name: "Beltpacks", Key: "GGO-BPX", Icon: "bpx", Elastic: true, Weight: 1, Size: 235, Range: "10.0.0.20 - 10.0.0.254"},
+				},
+			},
+			Services: ScopeServicesView{RegionID: "svc-0", DerivedGateway: "10.0.0.1", GlobalLease: 1800, LocalDNS: true},
+		}},
+	}
+	var b strings.Builder
+	if err := Pools(pv).Render(context.Background(), &b); err != nil {
+		t.Fatal(err)
+	}
+	html := strings.ReplaceAll(b.String(), "/static/", "")
+	html = strings.ReplaceAll(html, `<details class="scope-services"`, `<details open class="scope-services"`)
+	if err := os.WriteFile("../static/_preview_dnstoggle_pools.html", []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prefill := `{"name":"Tour A","scopes":[{"preset":"greengo","vlan_id":0,"cidr":"10.0.0.0/24","uplink":{"enabled":false},` +
+		`"services":{"local_dns":true},` +
+		`"pool_plan":[{"kind":"reserve","name":"Static reserve","count":18},` +
+		`{"kind":"elastic","class":"GGO-BPX","name":"Beltpacks","weight":2,"icon":"bpx"}]}]}`
+	sv := SetupView{
+		Page:        PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Title: "Edit configuration"},
+		Editing:     true,
+		PrefillJSON: prefill,
+		ShieldState: "Active", LinkState: "Untagged", Interface: "eth0",
+	}
+	b.Reset()
+	if err := Setup(sv).Render(context.Background(), &b); err != nil {
+		t.Fatal(err)
+	}
+	html = strings.ReplaceAll(b.String(), "/static/", "")
+	if err := os.WriteFile("../static/_preview_dnstoggle_wizard.html", []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

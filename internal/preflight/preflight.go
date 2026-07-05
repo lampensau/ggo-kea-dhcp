@@ -8,7 +8,9 @@ package preflight
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -66,9 +68,9 @@ func (r Result) Worst() Status {
 // Run executes every probe and returns the results grouped by subsystem, in a
 // stable order: the Kea DHCP engine first (its binary, hooks, writable config, then
 // live control socket), then the privileged tools, the reservation database, the
-// Linux capabilities, and finally the host clock. Grouping keeps related checks
-// adjacent (the config-dir check belongs with the other Kea checks, not stranded
-// after the database).
+// Linux capabilities, port 53 for the local DNS server, and finally the host
+// clock. Grouping keeps related checks adjacent (the config-dir check belongs
+// with the other Kea checks, not stranded after the database).
 func Run(cfg *config.Config) Result {
 	r := Result{
 		checkKeaBinary(),
@@ -79,6 +81,7 @@ func Run(cfg *config.Config) Result {
 	r = append(r, checkTools()...)
 	r = append(r, checkMariaDB(cfg))
 	r = append(r, checkCaps()...)
+	r = append(r, checkPort53())
 	r = append(r, checkClock())
 	return r
 }
@@ -192,12 +195,12 @@ func checkKeaConfDir(cfg *config.Config) Check {
 
 // Linux capability bit numbers (see capabilities(7)).
 const (
-	capNetBindService = 10 // bind to ports < 1024 (onboarding DNS on :53)
+	capNetBindService = 10 // bind to ports < 1024 (the local DNS server on :53)
 	capNetRaw         = 13 // AF_PACKET raw sockets (passive network monitor)
 )
 
 // checkCaps reports whether the process holds the capabilities needed for the
-// onboarding DNS bind and the passive monitor. Warn (not Fail): both are degraded
+// port-53 DNS bind and the passive monitor. Warn (not Fail): both are degraded
 // features, not core DHCP - and a process running as root holds them implicitly.
 func checkCaps() []Check {
 	eff, err := readCapEff()
@@ -206,7 +209,7 @@ func checkCaps() []Check {
 	}
 	return []Check{
 		capCheck("CAP_NET_RAW (network monitor)", eff, capNetRaw),
-		capCheck("CAP_NET_BIND_SERVICE (onboarding DNS)", eff, capNetBindService),
+		capCheck("CAP_NET_BIND_SERVICE (local DNS)", eff, capNetBindService),
 	}
 }
 
@@ -215,6 +218,26 @@ func capCheck(name string, eff uint64, bit uint) Check {
 		return Check{name, OK, "held"}
 	}
 	return Check{name, Warn, "not held - feature disabled (granted via systemd AmbientCapabilities)"}
+}
+
+// checkPort53 probes whether UDP port 53 is available for the local DNS server.
+// The appliance's own listeners bind per-scope addresses, never loopback, so a
+// loopback bind succeeding means no wildcard binder (systemd-resolved, dnsmasq)
+// is squatting the port; failing means one is, and device-name resolution will
+// not come up. Warn (not Fail): DNS is a feature, DHCP serves without it. A
+// permission error is folded into the CAP_NET_BIND_SERVICE story instead of
+// blamed on a conflicting service.
+func checkPort53() Check {
+	const name = "UDP port 53 (local DNS)"
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 53})
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return Check{name, Warn, "bind denied - CAP_NET_BIND_SERVICE missing (granted via systemd AmbientCapabilities)"}
+		}
+		return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind: %v", err)}
+	}
+	_ = conn.Close()
+	return Check{name, OK, "available"}
 }
 
 // checkClock reports the reliability of the time source, which lease expiry

@@ -24,7 +24,7 @@ Per scope you set:
 - **Subnet CIDR** - the scope's address space; the wizard auto-sizes it to fit the pool plan and widens it if the plan outgrows it
 - **Multicast inspect** - off by default; enables a low-rate multicast sample on this scope so the dashboard can show PTP grandmaster and sACN health (see [Network health](network-health.md))
 
-Each scope also has a DHCP options section for the less common knobs: gateway and DNS overrides, a lease-time override, and arbitrary extra DHCP options.
+Each scope also has a DHCP options section for the less common knobs: gateway and DNS overrides, a lease-time override, arbitrary extra DHCP options, and the Local DNS switch that hands the appliance out as the scope's DNS server so device names resolve on the network (see [Local DNS](dns.md)).
 
 ## Preset roles
 

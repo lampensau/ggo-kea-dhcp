@@ -332,10 +332,18 @@ type liveFragment struct {
 // render but never the wire - acceptable at single-operator scale, so the
 // regions are deliberately not gated on which page each client is viewing.
 func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
+	return s.dashboardFragmentsWith(ctx, leases, s.fetchHWReservationMap(ctx))
+}
+
+// dashboardFragmentsWith is dashboardFragments with the hw-address reservation map
+// supplied by the caller. publishDashboardWithLeases fetches the map once and hands
+// it to both the DNS zone rebuild and this render, so a lease-changed broadcast makes
+// one reservation round-trip instead of two. The connect snapshot and the split test
+// go through dashboardFragments, which fetches its own map.
+func (s *Server) dashboardFragmentsWith(ctx context.Context, leases []kea.ActiveLease, res map[string]db.HostReservation) []liveFragment {
 	ns := s.collectNetSnapshot() // one SnapshotAll shared by the view + lease table
-	// One HWReservations fetch shared by the card's awaiting suppression and the
-	// leases-body merge below (same single-fetch rationale as pinnedKeys).
-	res := s.fetchHWReservationMap(ctx)
+	// res is shared by the card's awaiting suppression and the leases-body merge below
+	// (same single-fetch rationale as pinnedKeys).
 	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true, res)
 
 	// Periodic-cheap regions (also refreshed on a metrics-only tick).
@@ -428,21 +436,38 @@ func (s *Server) publishFragments(frags []liveFragment) {
 // lease set and broadcasts any that changed. The fragments morph by element id into
 // whichever page is open; on a page lacking an id the patch is a harmless no-op.
 func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.ActiveLease) {
-	s.publishFragments(s.dashboardFragments(ctx, leases))
+	// The local-DNS zone follows the same cadence as the dashboard: this covers
+	// the ticker's leasesChanged branch AND every post-mutation publishDashboard
+	// (reservation add/delete, pin/unpin, apply/switch), from the leases already
+	// in hand. The headless path (no viewers, no mutations) rides the metrics
+	// sampler via maybeRebuildDNSZone.
+	//
+	// Fetch the hw-address reservation map ONCE and share it: the zone rebuild and
+	// the fragment render both need it, and issuing the same query twice per broadcast
+	// was pure waste. Both paths previously read it from fetchHWReservationMap, so one
+	// shared snapshot is byte-identical - it only removes the second round-trip (and
+	// the two now see one consistent set rather than two reads a moment apart).
+	res := s.fetchHWReservationMap(ctx)
+	s.rebuildDNSZoneWith(leases, res)
+	s.publishFragments(s.dashboardFragmentsWith(ctx, leases, res))
 }
 
 // leasesSignature is an order-independent fingerprint of the lease set's identity
-// (IP + MAC + client-id + count). XOR makes it independent of GetLeases' result
-// ordering; lease expiry is deliberately excluded (a renewal must not force a
+// (IP + MAC + client-id + hostname + count). XOR makes it independent of GetLeases'
+// result ordering; lease expiry is deliberately excluded (a renewal must not force a
 // re-render). The client-id IS included because a learnable switch port is defined
 // entirely by its Option-82 flex-id (the lease client-id): a device gaining/changing
 // its Option-82 identity on a STABLE IP+MAC (observed on the Pi: same IP+MAC carrying
 // both a normal client-id and an "AV-Edge-3<0x1f>etherN" flex-id) must re-render the
-// /pinning learnable list, which it otherwise wouldn't until a full reload.
+// /pinning learnable list, which it otherwise wouldn't until a full reload. The
+// hostname is included so a renewal that changes only the client-announced hostname
+// still re-renders the lease table AND (via maybeRebuildDNSZone, which gates on this)
+// rebuilds the local-DNS zone on a headless box; hostnames are stable per device, so
+// this does not add churn.
 func leasesSignature(leases []kea.ActiveLease) uint64 {
 	var x uint64
 	for _, l := range leases {
-		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID)
+		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID + "|" + l.Hostname)
 	}
 	return x ^ uint64(len(leases))
 }

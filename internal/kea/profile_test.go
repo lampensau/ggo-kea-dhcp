@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 	"testing"
+
+	localdns "ggo-kea-dhcp/internal/dns"
 )
 
 // harness_kea_profile_test.go: verification tests for onboardingSubnet (the new
@@ -232,5 +234,72 @@ func TestRenderProfileGatewayInPoolBoundary(t *testing.T) {
 	base.Scopes[0].Gateway = "10.0.0.5"
 	if _, _, err := RenderProfile(base); err != nil {
 		t.Errorf("gateway inside the static reserve must be accepted, got: %v", err)
+	}
+}
+
+// TestRenderProfileLocalDNSHandout pins the per-scope local-DNS opt-in: the scope
+// hands out the box's own per-scope address as domain-name-servers (the same
+// derived .1 as the uplink gateway self-reference) plus a domain-search listing
+// both device suffixes; an explicit DNS override or an operator domain-search
+// still wins.
+func TestRenderProfileLocalDNSHandout(t *testing.T) {
+	render := func(sc ScopeInput) map[string]string {
+		t.Helper()
+		cfg, _, err := RenderProfile(ProfileRenderInput{
+			KeaSecretPath: "/etc/kea/gui-secret",
+			LeaseLifetime: 1800,
+			GlobalDNS:     "9.9.9.9",
+			Scopes:        []ScopeInput{sc},
+		})
+		if err != nil {
+			t.Fatalf("RenderProfile: %v", err)
+		}
+		var js struct {
+			Dhcp4 struct {
+				Subnet4 []struct {
+					OptionData []struct{ Name, Data string } `json:"option-data"`
+				} `json:"subnet4"`
+			}
+		}
+		if err := json.Unmarshal([]byte(cfg), &js); err != nil {
+			t.Fatalf("rendered config not JSON: %v", err)
+		}
+		opts := map[string]string{}
+		for _, o := range js.Dhcp4.Subnet4[0].OptionData {
+			opts[o.Name] = o.Data
+		}
+		return opts
+	}
+	plan := []PoolSpec{{Kind: PoolElastic, Weight: 1}}
+
+	opts := render(ScopeInput{CIDR: "10.20.0.0/24", VlanID: 20, PoolPlan: plan, LocalDNS: true})
+	if opts["domain-name-servers"] != "10.20.0.1" {
+		t.Errorf("local-DNS scope hands out %q, want the box's own 10.20.0.1", opts["domain-name-servers"])
+	}
+	if want := localdns.SuffixInv + ", " + localdns.SuffixDHCP; opts["domain-search"] != want {
+		t.Errorf("domain-search = %q, want %q", opts["domain-search"], want)
+	}
+
+	// An explicit per-scope DNS override wins over the self-reference (the same
+	// precedence as the gateway); the domain-search still rides the opt-in.
+	opts = render(ScopeInput{CIDR: "10.20.0.0/24", PoolPlan: plan, LocalDNS: true, DNS: "1.1.1.1"})
+	if opts["domain-name-servers"] != "1.1.1.1" {
+		t.Errorf("explicit DNS override lost to the self-reference: %q", opts["domain-name-servers"])
+	}
+
+	// An operator-set domain-search is left untouched.
+	opts = render(ScopeInput{CIDR: "10.20.0.0/24", PoolPlan: plan, LocalDNS: true,
+		Options: []OptionKV{{Name: "domain-search", Data: "venue.example"}}})
+	if opts["domain-search"] != "venue.example" {
+		t.Errorf("operator domain-search overwritten: %q", opts["domain-search"])
+	}
+
+	// Opt-out: the global DNS default flows through and no domain-search appears.
+	opts = render(ScopeInput{CIDR: "10.20.0.0/24", PoolPlan: plan})
+	if opts["domain-name-servers"] != "9.9.9.9" {
+		t.Errorf("opt-out scope hands out %q, want the global 9.9.9.9", opts["domain-name-servers"])
+	}
+	if _, has := opts["domain-search"]; has {
+		t.Error("opt-out scope must not hand out a domain-search")
 	}
 }

@@ -255,7 +255,7 @@ func parseSetupScopes(r *http.Request) ([]ScopeConfig, error) {
 		// options). Shared with the /pools editor via parseScopeServices. Option rows
 		// arrive as repeated scopes[i][opt_name][]/[opt_data][] fields.
 		svc, serr := parseScopeServices(
-			field("gateway", i), field("dns", i), field("lease", i),
+			field("gateway", i), field("dns", i), field("lease", i), field("local_dns", i),
 			r.Form[fmt.Sprintf("scopes[%d][opt_name][]", i)],
 			r.Form[fmt.Sprintf("scopes[%d][opt_data][]", i)],
 		)

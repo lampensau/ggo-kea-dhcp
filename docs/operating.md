@@ -54,7 +54,7 @@ Use reservations when the device matters ("this beltpack"), pins when the positi
 
 ## Diagnostics and the audit log
 
-The Diagnostics page has two halves. The prerequisite checks re-run on every load and probe everything the appliance depends on: the DHCP server, its hook libraries, the databases, the privileged tools and the capture permissions. Green across the board is the expected state; see [Troubleshooting](troubleshooting.md) for what to do when it is not.
+The Diagnostics page has two halves. The prerequisite checks re-run on every load and probe everything the appliance depends on: the DHCP server, its hook libraries, the databases, the privileged tools, the capture permissions, and port 53 for [local DNS](dns.md). Green across the board is the expected state; see [Troubleshooting](troubleshooting.md) for what to do when it is not.
 
 Below the checks sits the audit log, the appliance's flight recorder: every configuration change, login, system event and monitor finding, with actor, timestamp and result. Failed actions are recorded alongside successful ones, with the reason. When someone asks "what changed at 20:14", this is where you look.
 

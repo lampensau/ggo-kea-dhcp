@@ -800,11 +800,11 @@ func scopeTemplate() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<span class=\"info-tip-text\">Adds a low-rate promiscuous sample on this scope so the dashboard can show PTP grandmaster and sACN health. Off by default - the monitor sheds it first under load.</span></span></label> <label class=\"switch scope-mcast-toggle\"><input type=\"checkbox\" name=\"scopes[__ID__][multicast_sniff]\" value=\"true\"> <span class=\"track\"></span> <span class=\"thumb\"></span> <span class=\"scope-mcast-text mc-on\">Enabled</span> <span class=\"scope-mcast-text mc-off\">Disabled</span></label></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<span class=\"info-tip-text\">Adds a low-rate promiscuous sample on this scope so the dashboard can show PTP grandmaster and sACN health. Off by default - the monitor sheds it first under load.</span></span></label> <label class=\"switch scope-mcast-toggle\"><input type=\"checkbox\" aria-label=\"Multicast inspect\" name=\"scopes[__ID__][multicast_sniff]\" value=\"true\"> <span class=\"track\"></span> <span class=\"thumb\"></span> <span class=\"scope-mcast-text mc-on\">Enabled</span> <span class=\"scope-mcast-text mc-off\">Disabled</span></label></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]"}).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]", RegionID: "svc-__ID__"}).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
