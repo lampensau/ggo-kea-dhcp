@@ -93,6 +93,17 @@ esac
 # header comment - this is the only rollback story there is).
 dpkg --configure -a || true
 
+# Copy the staged .deb into a root-only tempdir and verify+install THAT copy, not
+# the app-writable original. The digest gate below and apt-get install are two
+# separate opens of the file; a compromised app user could pass the digest then
+# swap in a hostile .deb before apt reads it (TOCTOU). A swap mid-copy yields a
+# Frankenstein file that fails the digest (fail-closed); anything passing it is
+# byte-identical to what apt installs.
+WORK="$(mktemp -d)" || fail "cannot create a private staging directory"
+trap 'rm -rf "$WORK"; write_result' EXIT
+cp "$DEB" "$WORK/pkg.deb" || fail "cannot stage a private copy of the package"
+DEB="$WORK/pkg.deb"
+
 # Integrity check against the app-written sha first: cheap defense in depth
 # against a corrupted or swapped staging file. This is NOT an authenticity
 # check - the app user wrote both the .deb and this sha, so a compromised app
