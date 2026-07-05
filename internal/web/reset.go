@@ -94,8 +94,11 @@ func (s *Server) routineResetDB() error {
 	// client uplink, so these credentials can't apply and must not prefill the setup
 	// wizard. Saved profiles keep their own uplink, so re-applying one restores it.
 	_, e2 := tx.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
-	_, e3 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
-	if err := errors.Join(e1, e2, e3); err != nil {
+	// Clear any DHCP stand-down: it's per-job serving state. Inheriting it into the next
+	// job's apply would render the holdoff config - ACTIVE but serving no leases.
+	_, e3 := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey)
+	_, e4 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
+	if err := errors.Join(e1, e2, e3, e4); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -167,7 +170,7 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM config_snapshots",
 		"DELETE FROM sessions",
 		"DELETE FROM users",
-		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass')",
+		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass','dhcp_standdown')",
 	} {
 		if _, err := tx.Exec(q); err != nil {
 			wipeErr = errors.Join(wipeErr, fmt.Errorf("%s: %w", q, err))
