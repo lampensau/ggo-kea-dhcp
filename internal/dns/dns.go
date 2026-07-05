@@ -459,12 +459,30 @@ func (g *forwardGate) allow(now time.Time) bool {
 	return g.count <= maxForwardsPerSec
 }
 
+// maxTrackedSources bounds the limiter's per-window source map (the same cap
+// shape as the netmon presence maps): a spoofed-source flood otherwise grows
+// it O(pps) within the second - and Go maps never release their buckets, so a
+// single flood would inflate the map's footprint for the process lifetime.
+// Sized generously above any real client population on a served LAN segment.
+const maxTrackedSources = 512
+
 // rateLimiter is a per-source fixed-window counter: cheap, deterministic, and
-// self-cleaning (the map resets every window, so it cannot grow unbounded).
+// bounded - the map resets every window and is capped within one. When the cap
+// is hit, sources not already tracked are refused for the remainder of that
+// window. Fail-closed is deliberate (fail-open would make the authoritative
+// path a reflector), and honestly: under a SUSTAINED spoofed flood the slots
+// refill with fakes at every window rollover, so legitimate clients that lose
+// the race - device-name resolution included - are starved for the flood's
+// whole duration, not one second. That is the accepted cost; the flood itself
+// is already an outage condition on the segment. The cap budget is global
+// across all listeners/VLANs, not per segment. capLogged edge-triggers ONE log
+// line per capped stretch so the starvation is diagnosable without per-packet
+// spam.
 type rateLimiter struct {
-	mu     sync.Mutex
-	window int64
-	counts map[string]int
+	mu        sync.Mutex
+	window    int64
+	counts    map[string]int
+	capLogged bool
 }
 
 func (r *rateLimiter) allow(source string, now time.Time) bool {
@@ -472,10 +490,20 @@ func (r *rateLimiter) allow(source string, now time.Time) bool {
 	defer r.mu.Unlock()
 	if w := now.Unix(); w != r.window {
 		r.window = w
+		r.capLogged = false
 		clear(r.counts)
 	}
-	r.counts[source]++
-	return r.counts[source] <= queryLimitPerSec
+	n, tracked := r.counts[source]
+	if !tracked && len(r.counts) >= maxTrackedSources {
+		if !r.capLogged {
+			r.capLogged = true
+			log.Printf("[dns] per-source limiter at cap (%d sources this second) - refusing untracked sources; likely a spoofed flood", maxTrackedSources)
+		}
+		return false
+	}
+	n++
+	r.counts[source] = n
+	return n <= queryLimitPerSec
 }
 
 // hasParent reports whether name is a subdomain of parent.

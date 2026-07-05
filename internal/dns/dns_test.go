@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -411,4 +412,30 @@ func TestStartStopLifecycle(t *testing.T) {
 	srv.StartZone([]string{"203.0.113.250"}) // TEST-NET address: bind fails, logged, skipped
 	srv.Stop()
 	srv.Stop()
+}
+
+// A spoofed-source flood must not grow the limiter map past its cap within a
+// window; tracked sources keep their allowance, untracked ones are refused for
+// the rest of the window, and the next window starts fresh.
+func TestRateLimiterCapsTrackedSources(t *testing.T) {
+	rl := rateLimiter{counts: map[string]int{}}
+	base := time.Unix(2000, 0)
+
+	rl.allow("10.0.0.9", base) // a legitimate client, tracked before the flood
+
+	for i := 0; i < maxTrackedSources*4; i++ {
+		rl.allow(fmt.Sprintf("198.51.%d.%d", i/256, i%256), base)
+	}
+	if len(rl.counts) > maxTrackedSources {
+		t.Fatalf("limiter map grew to %d entries, cap is %d", len(rl.counts), maxTrackedSources)
+	}
+	if !rl.allow("10.0.0.9", base) {
+		t.Fatal("a tracked source was refused while the map is at cap")
+	}
+	if rl.allow("203.0.113.7", base) {
+		t.Fatal("an untracked source was admitted past the cap")
+	}
+	if !rl.allow("203.0.113.7", base.Add(time.Second)) {
+		t.Fatal("the cap did not reset on the next window")
+	}
 }
