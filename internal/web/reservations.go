@@ -79,27 +79,12 @@ func (s *Server) subnetIDForIP(ip net.IP) (int, bool) {
 // as "not in any configured subnet"), matching subnetIDForIP's fail-closed shape.
 func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
 	var profileID int
-	nets := []*net.IPNet{}
 	if err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err == nil {
 		if scopes, err := s.loadScopeConfigs(profileID); err == nil {
-			for _, sc := range scopes {
-				_, ipnet, err := net.ParseCIDR(sc.CIDR)
-				if err != nil {
-					// A bad stored CIDR silently changes import subnet-matching; log it.
-					log.Printf("[import] scope CIDR %q unparseable, skipping in subnet matcher: %v", sc.CIDR, err)
-				}
-				nets = append(nets, ipnet) // nil for an unparseable CIDR; skipped below
-			}
+			return subnetMatcherForScopes(scopes)
 		}
 	}
-	return func(ip net.IP) (int, bool) {
-		for i, n := range nets {
-			if n != nil && n.Contains(ip) {
-				return i + 1, true
-			}
-		}
-		return 0, false
-	}
+	return func(net.IP) (int, bool) { return 0, false }
 }
 
 // evictForReservation frees the addresses involved in a freshly-created reservation
