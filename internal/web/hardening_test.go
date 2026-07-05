@@ -69,6 +69,39 @@ func TestHandleResetFactoryRejectsWrongPassword(t *testing.T) {
 	}
 }
 
+// TestSystemPowerControlsRequireReauth proves reboot and poweroff re-auth like the
+// other danger-zone actions: a wrong or absent current password is refused before the
+// privileged command is scheduled (the handler returns an error, not the interstitial).
+func TestSystemPowerControlsRequireReauth(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler func(*Server) func(http.ResponseWriter, *http.Request)
+	}{
+		{"reboot", func(s *Server) func(http.ResponseWriter, *http.Request) { return s.handleSystemReboot }},
+		{"poweroff", func(s *Server) func(http.ResponseWriter, *http.Request) { return s.handleSystemPowerOff }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			seedAdmin(t, s, "the-real-password")
+			h := c.handler(s)
+
+			// Wrong password: refused, not the reconnect interstitial (200).
+			rr := httptest.NewRecorder()
+			h(rr, postForm(url.Values{"current_password": {"nope"}}))
+			if rr.Code == http.StatusOK {
+				t.Errorf("wrong-password %s returned 200 - it should have been refused before the command", c.name)
+			}
+			// Absent password: also refused.
+			rr = httptest.NewRecorder()
+			h(rr, postForm(url.Values{}))
+			if rr.Code == http.StatusOK {
+				t.Errorf("no-password %s returned 200 - it should have been refused", c.name)
+			}
+		})
+	}
+}
+
 func TestValidateUplinkRejectsInjectionAndBadPassphrase(t *testing.T) {
 	cases := []struct {
 		name, ssid, pass string
@@ -181,7 +214,7 @@ func TestSameOriginRequest(t *testing.T) {
 		{"GET always ok", mk("GET", "https://evil.example", ""), true},
 		{"same-origin POST", mk("POST", "http://box.local", ""), true},
 		{"cross-origin POST", mk("POST", "https://evil.example", ""), false},
-		{"no origin, no referer - allowed", mk("POST", "", ""), true},
+		{"no origin, no referer - rejected (fail closed)", mk("POST", "", ""), false},
 		{"cross-origin via referer", mk("POST", "", "https://evil.example/x"), false},
 		{"same-origin via referer", mk("POST", "", "http://box.local/factory"), true},
 	}
