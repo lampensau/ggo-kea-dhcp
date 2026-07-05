@@ -116,6 +116,9 @@ func TestRegionOnPage(t *testing.T) {
 		{"link-status", "/setup", true},
 		{"shield-status", "/setup", true},
 		{"dash-tiles", "/setup", false},
+		// Diagnostics page: the live audit list.
+		{"diag-audit", "/diagnostics", true},
+		{"dash-tiles", "/diagnostics", false},
 		// A page with no live regions of its own gets nothing but shell regions.
 		{"dash-tiles", "/audit", false},
 		{"pool-table", "/settings", false},

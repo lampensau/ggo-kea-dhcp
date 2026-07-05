@@ -190,6 +190,10 @@ func regionOnPage(region, page string) bool {
 	case "/setup":
 		// The cable/link and rogue-DHCP shield badges only exist in the wizard.
 		return region == "link-status" || region == "shield-status"
+	case "/diagnostics":
+		// The live audit list; without this the diag-audit fragment the hub renders
+		// every tick is filtered out for the very page it targets.
+		return region == "diag-audit"
 	}
 	return false
 }
