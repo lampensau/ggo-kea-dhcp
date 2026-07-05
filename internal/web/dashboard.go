@@ -43,7 +43,7 @@ func (s *Server) buildDashboardViewWithLeases(ctx context.Context, pd views.Page
 
 // buildDashboardViewWith builds the dashboard view from an already-fetched lease
 // set AND an already-collected netmon snapshot, so a live broadcast can share one
-// SnapshotAll across this view and the lease table (unifiedLeaseRowsWith).
+// SnapshotAll across this view and the lease table (unifiedLeaseRowsFrom).
 // withPinning gates the MariaDB pinning fetch: a metrics-only live tick passes
 // false so it refreshes the periodic-cheap regions (tiles, net-health, activity)
 // without the pinning/reservation round-trips - those regions change only on a

@@ -267,6 +267,16 @@ type PoolPlanEntry struct {
 // resolve their size (explicit Count, or kea.SizeForClass = max(count, floor) for
 // "auto"); Elastic carries its weight; Reserve carries its Count as carved space.
 // The result feeds kea.LayoutPools, which assigns ranges in order.
+// StripRangePins clears every Advanced range pin. Simple mode is size-driven:
+// a leftover pin (posted as a hidden field) would make the size inputs a silent
+// no-op while LayoutPools keeps honoring it, and a persisted pin would reopen
+// the scope as Advanced. The one implementation all three editors share.
+func (p PoolPlan) StripRangePins() {
+	for i := range p {
+		p[i].Range = ""
+	}
+}
+
 func (p PoolPlan) ToSpecs() []kea.PoolSpec {
 	specs := make([]kea.PoolSpec, 0, len(p))
 	for _, e := range p {

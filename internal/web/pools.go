@@ -135,13 +135,9 @@ func (s *Server) handlePoolsPlanOp(w http.ResponseWriter, r *http.Request) {
 		sc.Plan = applyPoolOp(parsePoolFields(r, poolPrefix, sc.CIDR), op, i, val, mode)
 	}
 
-	// Simple mode is size-driven: strip Advanced range pins so the size inputs drive
-	// the layout (a leftover pin, posted as a hidden field, makes the size a silent
-	// no-op). Mirrors the same invariant in the wizard editor (pool_plan_edit.go).
+	// Simple mode is size-driven (see StripRangePins; same invariant as the wizard editor).
 	if mode == "simple" {
-		for j := range sc.Plan {
-			sc.Plan[j].Range = ""
-		}
+		sc.Plan.StripRangePins()
 	}
 
 	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
@@ -175,13 +171,10 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	}
 	sc.Plan = plan
 
-	// Simple mode is size-driven: strip Advanced range pins (mirrors handlePoolsPlanOp
-	// and the wizard) so a Simple save persists a size-driven plan and planMode() does
-	// not reopen the scope as Advanced.
+	// Simple mode is size-driven (see StripRangePins) - a Simple save must persist a
+	// size-driven plan so planMode() does not reopen the scope as Advanced.
 	if mode == "simple" {
-		for j := range sc.Plan {
-			sc.Plan[j].Range = ""
-		}
+		sc.Plan.StripRangePins()
 	}
 
 	// One Save per scope: the pool plan AND the Network services panel live in the

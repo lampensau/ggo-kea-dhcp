@@ -408,7 +408,7 @@ func (s *Server) dashboardFragmentsWith(ctx context.Context, leases []kea.Active
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsFrom(ctx, leases, leaseRowSources{Reachable: ns.Live, Available: ns.Available, PinnedKeys: pinnedKeys, GgoNames: ns.GgoNames, Awaiting: ns.Awaiting, Res: res}), s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 
