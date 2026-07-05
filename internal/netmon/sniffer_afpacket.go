@@ -152,7 +152,8 @@ func parseAuxVLAN(oob []byte) (vid int, known bool) {
 // Commander's toolPresent path - so the appliance runs in the dev sandbox. The
 // promisc argument is always false from the monitor: the monitor is the sole
 // writer of the promiscuous bit (via setPromiscuous), so capture opens dark and
-// the governor/duty-cycler turn it on.
+// the monitor turns it on at full fidelity (steady-state in ACTIVE, shed by the
+// governor under load).
 func openCapture(iface string, promisc bool, filter []bpf.RawInstruction) (Sniffer, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {

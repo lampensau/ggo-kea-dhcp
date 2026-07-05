@@ -292,11 +292,9 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 			iface = fmt.Sprintf("eth0.%d", sc.VlanID)
 		}
 		// Source the served address from the live interface - the operator can
-		// configure it, so we must not assume .1. The same value drives rogue-DHCP
-		// self-suppression (our Kea server-identifier) and static-in-pool infra
-		// exclusion; getting it wrong would flag our own server as rogue. Fall back
-		// to the conventional .1 (what the reconciler assigns by default) only when
-		// the address isn't up yet.
+		// configure it, so we must not assume .1. It drives static-in-pool infra
+		// exclusion. Fall back to the conventional .1 (what the reconciler assigns by
+		// default) only when the address isn't up yet.
 		ifaceIPs := interfaceIPv4s(iface)
 		if len(ifaceIPs) == 0 {
 			var dot1 [4]byte
@@ -305,6 +303,11 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 				ifaceIPs = [][4]byte{dot1}
 			}
 		}
+		// The box's own MAC on this NIC drives rogue-DHCP self-suppression: our OFFERs
+		// on every served scope egress this one physical MAC (a VLAN sub-interface
+		// inherits eth0's), so matching it never flags the appliance, and a rogue that
+		// forges our server-id still stands out by its different source MAC.
+		selfMAC, macKnown := interfaceMAC(iface)
 		// Dynamic pool ranges for this scope (the static-in-pool detector's "inside
 		// a pool" test). poolDataForScope yields only DHCP pools, not the static
 		// reserve - so a static device legitimately in the reserve is never flagged.
@@ -315,14 +318,16 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 			}
 		}
 		specs = append(specs, netmon.Spec{
-			Iface:          iface,
-			MulticastSniff: sc.MulticastSniff,
-			Greengo:        sc.Preset == "greengo",
-			InterfaceIPs:   ifaceIPs,
-			Pools:          pools,
-			ConfiguredVIDs: configuredVIDs,
-			Leases:         leaseFn,
-			LeaseLifetime:  s.leaseLifetime(),
+			Iface:           iface,
+			MulticastSniff:  sc.MulticastSniff,
+			Greengo:         sc.Preset == "greengo",
+			InterfaceIPs:    ifaceIPs,
+			InterfaceMAC:    selfMAC,
+			InterfaceMACSet: macKnown,
+			Pools:           pools,
+			ConfiguredVIDs:  configuredVIDs,
+			Leases:          leaseFn,
+			LeaseLifetime:   s.leaseLifetime(),
 			// VLAN-reality runs only on the raw eth0 monitor (the untagged scope) -
 			// an eth0.<vid> socket sees tag-stripped frames. A pure-trunk profile has
 			// no untagged scope, so a dedicated raw-eth0 monitor is synthesized below.
@@ -372,6 +377,18 @@ func hasUntaggedScope(scopes []ScopeConfig) bool {
 		}
 	}
 	return false
+}
+
+// interfaceMAC returns the box's 6-byte hardware address on iface (macKnown=false
+// when the interface is absent or has no 48-bit MAC, e.g. the dev sandbox before
+// bring-up). A VLAN sub-interface (eth0.<vid>) inherits eth0's MAC.
+func interfaceMAC(iface string) (mac [6]byte, macKnown bool) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil || len(ifi.HardwareAddr) != 6 {
+		return mac, false
+	}
+	copy(mac[:], ifi.HardwareAddr)
+	return mac, true
 }
 
 // interfaceIPv4s returns the live IPv4 addresses bound to iface (empty if the

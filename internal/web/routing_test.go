@@ -101,8 +101,9 @@ func TestRegionOnPage(t *testing.T) {
 		{"pinned-body", "/pinning", true},
 		{"learnable-head", "/pinning", true},
 		{"leases-body", "/pinning", false},
-		// Setup wizard: only the link-status badge.
+		// Setup wizard: only the link-status and shield-status badges.
 		{"link-status", "/setup", true},
+		{"shield-status", "/setup", true},
 		{"dash-tiles", "/setup", false},
 		// A page with no live regions of its own gets nothing but shell regions.
 		{"dash-tiles", "/audit", false},
