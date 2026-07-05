@@ -311,8 +311,9 @@ func TestZZPreviewStatTiles(t *testing.T) {
 }
 
 // TestZZPreviewShieldBadge renders the setup wizard once per shield state
-// (Active / Detected with a named rogue server / Suspended) so the badge can be
-// screenshotted in page context. Preview-only; cleaned up before make pi.
+// (Active / Detected with a named rogue server / Unverified when the probe is
+// blind-or-stopped / Suspended) so the badge can be screenshotted in page
+// context. Preview-only; cleaned up before make pi.
 func TestZZPreviewShieldBadge(t *testing.T) {
 	if os.Getenv("GGO_PREVIEW") != "1" {
 		t.Skip("preview-only")
@@ -322,6 +323,7 @@ func TestZZPreviewShieldBadge(t *testing.T) {
 	}{
 		{"active", "Active", "", "Flat"},
 		{"detected", "Detected", "10.0.0.250", "Flat"},
+		{"unverified", "Unverified", "", "Flat"},
 		{"suspended", "Suspended", "", "Disconnected"},
 	}
 	for _, c := range cases {

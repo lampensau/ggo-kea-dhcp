@@ -52,7 +52,7 @@ func TestRogueOfferFilter(t *testing.T) {
 func TestRogueProbe_DetectsForeignOffer(t *testing.T) {
 	p := NewRogueProbe()
 	fs := NewFakeSniffer()
-	p.begin("eth0", fs)
+	p.begin("eth0", fs, nil)
 	defer p.Stop()
 
 	if ip, _, ok := p.Server(); ok {
@@ -79,6 +79,52 @@ func TestRogueProbe_DetectsForeignOffer(t *testing.T) {
 	}
 }
 
+func TestRogueProbe_SuppressesOwnOffers(t *testing.T) {
+	// The box serves its own onboarding pool on eth0, so its OFFERs are on the
+	// wire; passing its IP as a self-IP must keep the badge from flagging itself.
+	p := NewRogueProbe()
+	fs := NewFakeSniffer()
+	p.begin("eth0", fs, [][4]byte{{10, 0, 0, 1}})
+	defer p.Stop()
+
+	fs.Push(dhcpFrame(67, [4]byte{10, 0, 0, 1}, 2))
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if ip, _, ok := p.Server(); ok {
+			t.Fatalf("own OFFER from %s flagged as a rogue server", ip)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestRogueProbe_WatchingReflectsRealCapture(t *testing.T) {
+	p := NewRogueProbe()
+	// Inert (never started): not watching, so the shield stays honestly unverified.
+	if p.Watching() {
+		t.Fatal("inert probe reports Watching")
+	}
+
+	// A real (non-nop) capture is watching.
+	p.begin("eth0", NewFakeSniffer(), nil)
+	if !p.Watching() {
+		t.Fatal("live capture does not report Watching")
+	}
+	p.Stop()
+
+	// A nop sniffer (no CAP_NET_RAW / dev sandbox) is blind - not watching even
+	// though the read loop runs, because it can never see a frame.
+	p.begin("eth0", newNopSniffer(), nil)
+	if p.Watching() {
+		t.Fatal("blind nop sniffer reports Watching")
+	}
+
+	// Stopped: not watching (the ACTIVE edit-page case).
+	p.Stop()
+	if p.Watching() {
+		t.Fatal("stopped probe reports Watching")
+	}
+}
+
 func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	p := NewRogueProbe()
 	// Never started: quiet, and Stop is safe.
@@ -89,7 +135,7 @@ func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	p.Stop()
 
 	fs := NewFakeSniffer()
-	p.begin("eth0", fs)
+	p.begin("eth0", fs, nil)
 	fs.Push(dhcpFrame(67, [4]byte{10, 0, 0, 250}, 2))
 	p.Stop()
 	if ip, _, ok := p.Server(); ok {
@@ -97,7 +143,7 @@ func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	}
 	// A restart begins with a fresh detector (no latched sighting).
 	fs2 := NewFakeSniffer()
-	p.begin("eth0", fs2)
+	p.begin("eth0", fs2, nil)
 	defer p.Stop()
 	if ip, _, ok := p.Server(); ok {
 		t.Fatalf("restarted probe inherited server %s", ip)

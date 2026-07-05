@@ -992,9 +992,9 @@ func pinButton(p PortRow) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var47 string
-		templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Hostname)
+		templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.RawHostname)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pinning.templ`, Line: 189, Col: 28}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pinning.templ`, Line: 189, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var47)
 		if templ_7745c5c3_Err != nil {

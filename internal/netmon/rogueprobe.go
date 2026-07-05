@@ -59,10 +59,12 @@ var rogueOfferFilter = func() []bpf.RawInstruction {
 // RogueProbe passively watches an interface during ONBOARDING for a DHCP server
 // already answering on the segment the appliance is about to serve (the common
 // case: the venue's managed switch still runs its own DHCP). It feeds captured
-// frames to the same rogueDHCPDetector the ACTIVE monitor uses, with no self IPs -
-// safe by construction, because the box does not serve DHCP on eth0 during
-// onboarding, so there is no self-OFFER to suppress. Purely passive: it sends
-// nothing. The capture opens promiscuous so a server's unicast OFFER/ACK to
+// frames to the same rogueDHCPDetector the ACTIVE monitor uses. The box already
+// serves its own onboarding pool on eth0, so its own OFFERs are on the wire and
+// promiscuously captured; Start is given the box's own IPs as selfIPs so the
+// detector suppresses them and the badge never flags the appliance itself.
+// Purely passive: it sends nothing. The capture opens promiscuous so a server's
+// unicast OFFER/ACK to
 // another client (renewals - the usual traffic on an established segment) is
 // visible, not just broadcast answers; nothing else owns the promiscuous bit
 // outside ACTIVE, and closing the socket drops the membership. Best-effort like
@@ -80,24 +82,26 @@ type RogueProbe struct {
 func NewRogueProbe() *RogueProbe { return &RogueProbe{} }
 
 // Start (re)starts the probe on iface. Safe to call repeatedly - it stops any
-// prior capture first and resets the detector. A capture that can't open (no
-// CAP_NET_RAW / dev sandbox) leaves the probe inert rather than erroring.
-func (p *RogueProbe) Start(iface string) {
+// prior capture first and resets the detector. selfIPs are the box's own
+// addresses on iface, suppressed so the box's onboarding OFFERs are not flagged.
+// A capture that can't open (no CAP_NET_RAW / dev sandbox) leaves the probe inert
+// rather than erroring.
+func (p *RogueProbe) Start(iface string, selfIPs [][4]byte) {
 	p.Stop()
 	sn, err := openCapture(iface, true, rogueOfferFilter)
 	if err != nil {
 		log.Printf("[RogueProbe] capture on %s unavailable: %v", iface, err)
 		return
 	}
-	p.begin(iface, sn)
+	p.begin(iface, sn, selfIPs)
 }
 
 // begin wires a fresh detector to sn and starts the read loop (the test seam:
 // tests inject a FakeSniffer here).
-func (p *RogueProbe) begin(iface string, sn Sniffer) {
+func (p *RogueProbe) begin(iface string, sn Sniffer, selfIPs [][4]byte) {
 	quit := make(chan struct{})
 	p.mu.Lock()
-	p.det = newRogueDHCPDetector(iface, nil, 0)
+	p.det = newRogueDHCPDetector(iface, selfIPs, 0)
 	p.sniffer = sn
 	p.quit = quit
 	p.mu.Unlock()
@@ -149,6 +153,19 @@ func (p *RogueProbe) Stop() {
 	p.mu.Lock()
 	p.det = nil
 	p.mu.Unlock()
+}
+
+// Watching reports whether the probe is actually capturing frames: a real
+// AF_PACKET socket is open and its read loop is live. It is false when the probe
+// is stopped (not running - e.g. the ACTIVE edit page) OR when the capture fell
+// back to a nop sniffer (no CAP_NET_RAW / dev sandbox), in which case Server()
+// will always answer "none" not because the link is clear but because nothing is
+// being observed. Callers use this to render an honest "unverified" shield rather
+// than a confident all-clear when the probe is blind.
+func (p *RogueProbe) Watching() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sniffer != nil && !isNop(p.sniffer)
 }
 
 // Server reports the foreign DHCP server currently seen answering on the link
