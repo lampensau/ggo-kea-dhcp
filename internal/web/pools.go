@@ -378,7 +378,7 @@ func buildPoolPlanView(sc ScopeConfig, leases []parsedLease, showUtil bool, mode
 	v := views.PoolPlanView{Mode: mode, ShowUtil: showUtil, Subnet: sc.CIDR, Greengo: sc.Preset == "greengo"}
 
 	_, ipnet, err := net.ParseCIDR(sc.CIDR)
-	if err != nil || ipnet.IP.To4() == nil {
+	if err != nil {
 		return v
 	}
 	v.Gateway = kea.IncIP(ipnet.IP, 1).String()
@@ -391,9 +391,15 @@ func buildPoolPlanView(sc ScopeConfig, leases []parsedLease, showUtil bool, mode
 	}
 
 	// Filter leases that belong to this scope's subnet (integer compare against the
-	// subnet bounds - the leases were parsed once by parseLeases).
-	subLo := kea.IPToUint32(ipnet.IP)
-	subHi := subLo | ^kea.IPToUint32(net.IP(ipnet.Mask))
+	// subnet bounds - the leases were parsed once by parseLeases). A CIDR that is
+	// not plain IPv4 (both the base and the mask must convert) gets the empty
+	// range lo=1,hi=0 so no lease matches - the rows still render and LayoutPools'
+	// error surfaces in the foot alert, same as before the pre-parse.
+	subLo, subHi := uint32(1), uint32(0)
+	if ip4, m4 := ipnet.IP.To4(), net.IP(ipnet.Mask).To4(); ip4 != nil && m4 != nil {
+		subLo = kea.IPToUint32(ip4)
+		subHi = subLo | ^kea.IPToUint32(m4)
+	}
 	var scopeLeases []parsedLease
 	for _, l := range leases {
 		if l.ip >= subLo && l.ip <= subHi {

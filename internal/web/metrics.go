@@ -293,6 +293,9 @@ func (s *Server) samplePoolUtil(leases []kea.ActiveLease) int {
 	if err != nil {
 		return 0
 	}
+	if len(scopes) == 0 {
+		return 0 // nothing to sample - skip the lease digest on an unconfigured box
+	}
 	parsed := parseLeases(leases) // once per sample - poolDataForScope runs per scope
 	var pools []views.PoolRow
 	for _, sc := range scopes {
