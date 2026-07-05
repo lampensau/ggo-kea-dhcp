@@ -35,6 +35,7 @@ type ScopeServicesView struct {
 	RegionID       string // morph target on /pools, e.g. "svc-0"; "" in the wizard
 	Gateway        string
 	DNS            string
+	LocalDNS       bool   // hand this appliance out as the scope's DNS server
 	Lease          string // lease override as text; "" = inherit global
 	DerivedGateway string // the .1 hint shown as the gateway placeholder
 	GlobalLease    int    // global default, shown as the lease placeholder

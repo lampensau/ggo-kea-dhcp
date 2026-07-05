@@ -5,6 +5,8 @@ import (
 	"net"
 	"sort"
 	"strings"
+
+	localdns "ggo-kea-dhcp/internal/dns"
 )
 
 // ScopeInput is the DB-agnostic description of one served subnet. The web layer
@@ -25,6 +27,12 @@ type ScopeInput struct {
 	// the Uplink-driven defaults (derived gateway, global DNS fallback).
 	Gateway string
 	DNS     string
+	// LocalDNS opts the scope into the appliance's own name service: clients get
+	// the box's per-scope address as domain-name-servers (the same derived .1
+	// self-reference as the uplink gateway; an explicit DNS override still wins)
+	// plus a domain-search listing both device suffixes, so a bare `ping <name>`
+	// resolves via either.
+	LocalDNS bool
 	// LeaseLifetime overrides the profile-global lease lifetime for this scope (0 =
 	// inherit). Options are extra DHCP options (NTP, domain-name, ...) for this scope.
 	LeaseLifetime int
@@ -112,6 +120,16 @@ func mergeOptions(global, scope []OptionKV) []OptionKV {
 		}
 	}
 	return out
+}
+
+// hasOption reports whether the merged option list already carries name.
+func hasOption(opts []OptionKV, name string) bool {
+	for _, o := range opts {
+		if strings.EqualFold(o.Name, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // RenderProfile is the SINGLE render path for an active profile, used by both the
@@ -227,13 +245,25 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 			pools = append(pools, r.pc)
 		}
 
-		// DNS + extra options: a per-scope explicit value wins, else the site-wide
-		// global default (applied to every scope). Gateway has no global default - an
-		// explicit per-scope override, else the uplink-derived .1, else nothing (the
-		// PRD-D5/D8 isolation rule: never advertise a dead default route).
+		// DNS + extra options: a per-scope explicit value wins, then the local-DNS
+		// self-reference (the box's own per-scope address, mirroring the uplink
+		// gateway's derived .1), then the site-wide global default. Gateway has no
+		// global default - an explicit per-scope override, else the uplink-derived
+		// .1, else nothing (the PRD-D5/D8 isolation rule: never advertise a dead
+		// default route).
 		dns := sc.DNS
-		if dns == "" {
+		switch {
+		case dns != "":
+		case sc.LocalDNS:
+			dns = gatewayIP.String()
+		default:
 			dns = in.GlobalDNS
+		}
+		opts := mergeOptions(in.GlobalOptions, sc.Options)
+		// The local-DNS handout also carries a domain-search over both device
+		// suffixes; an explicit per-scope or global domain-search wins untouched.
+		if sc.LocalDNS && !hasOption(opts, "domain-search") {
+			opts = append(opts, OptionKV{Name: "domain-search", Data: localdns.SuffixInv + ", " + localdns.SuffixDHCP})
 		}
 		sub := SubnetConfig{
 			// Emit the canonical masked form (ipnet.String()), not the raw operator
@@ -243,7 +273,7 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 			ID: idx + 1, Subnet: ipnet.String(), Pools: pools,
 			LeaseLifetime: sc.LeaseLifetime,
 			DNS:           dns,
-			Options:       mergeOptions(in.GlobalOptions, sc.Options),
+			Options:       opts,
 		}
 		switch {
 		case sc.Gateway != "":
