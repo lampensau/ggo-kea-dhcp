@@ -47,13 +47,6 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	if s.updating.Load() {
 		return applyPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
 	}
-	// Guard against concurrent applies first, so every irreversible side effect
-	// below (monitor teardown, uplink + profile persistence, conf snapshot) is
-	// serialized by one apply. A double-submit is rejected here before it can
-	// clobber state. Cleared by finishApply's defer, or endReconcile on early error.
-	if !s.beginReconcile() {
-		return applyPlan{}, fmt.Errorf("A profile apply is already in progress.")
-	}
 
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
 
@@ -75,14 +68,23 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 		IfaceWildcard: true,
 	})
 	if err != nil {
-		s.endReconcile()
 		return applyPlan{}, fmt.Errorf("Failed to generate Kea configuration: %w", err)
 	}
 
 	// Validate the candidate before anything irreversible touches disk/Kea.
 	if err := kea.TestConfig(configStr); err != nil {
-		s.endReconcile()
 		return applyPlan{}, fmt.Errorf("Generated configuration failed validation (kea-dhcp4 -t): %w", err)
+	}
+
+	// Claim the shared mutation guard only now that the candidate validated, and
+	// BEFORE any persistent artifact (uplink capture, conf snapshot, profile rows),
+	// so every irreversible step below is serialized by one apply. Claiming after
+	// the up-to-30s render+kea -t means a doomed candidate never locks the control
+	// plane, and a busy guard doesn't mask the real validation feedback (beginSwitch
+	// orders the same way). Cleared by finishApply's defer, or endReconcile on an
+	// early error.
+	if !s.beginReconcile() {
+		return applyPlan{}, fmt.Errorf("A profile apply is already in progress.")
 	}
 
 	// Capture the current box-level uplink for finishApply's failure restore. A
@@ -238,24 +240,12 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, uplink
 func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	defer s.endReconcile()
 
-	// Tear down the prior profile's monitors before the imminent re-IP. Done here
-	// (not in beginApply) so a beginApply that fails validation/snapshot leaves an
-	// ACTIVE box's monitoring untouched - finishApply runs only on a committed
-	// apply. reconcileActive restarts them once the new interfaces are up.
-	if s.netmon != nil {
-		s.netmon.Stop()
-	}
-	if s.arp != nil {
-		s.arp.Stop()
-	}
-	if s.ggoscan != nil {
-		s.ggoscan.Stop()
-	}
-	// The port-53 listeners are bound to the outgoing profile's scope addresses;
-	// drop them before the re-IP. reconcileActive rebinds on the new addresses.
-	if s.dns != nil {
-		s.dns.Stop()
-	}
+	// Tear down the prior profile's monitors and DNS before the imminent re-IP.
+	// Done here (not in beginApply) so a beginApply that fails validation/snapshot
+	// leaves an ACTIVE box's monitoring untouched - finishApply runs only on a
+	// committed apply. reconcileActive restarts everything once the new interfaces
+	// are up.
+	s.stopActiveMonitors()
 
 	time.Sleep(1 * time.Second) // let the flushed interstitial bytes drain to the client
 
@@ -285,43 +275,80 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	if revertState == "" || revertState == db.StateConfiguring {
 		revertState = db.StateOnboarding
 	}
-	if err := s.sqlite.SetState(db.LifecycleStateKey, revertState); err != nil {
-		log.Printf("[Apply] failed to revert to %s state: %v", revertState, err)
+	s.rollbackFailed(rollbackSpec{
+		tag:           "Apply",
+		action:        "APPLY_PROFILE",
+		profileName:   profileName,
+		actor:         actor,
+		revertState:   revertState,
+		prevProfileID: plan.prevProfileID,
+		snapPath:      plan.snapPath,
+		revertTables:  func() error { return s.rollbackProfileTables(plan, profileName) },
+		// Restore the pre-apply uplink credentials BEFORE the rollback reconcile,
+		// which reads them from app_state to reconnect wlan0.
+		preReconcile: func() { s.restoreUplinkState(plan.prevUplink) },
+	})
+}
+
+// rollbackSpec parameterizes rollbackFailed with the per-flavor pieces of a failed
+// apply/switch: what to call it, which state to revert to, which profile to
+// reconcile back to, and how to revert the profile tables.
+type rollbackSpec struct {
+	tag           string // log prefix: "Apply" / "Switch"
+	action        string // audit action: APPLY_PROFILE / SWITCH_PROFILE
+	profileName   string
+	actor         string
+	revertState   string // lifecycle state to persist before the rollback reconcile
+	prevProfileID int
+	snapPath      string
+	revertTables  func() error // SQL revert of the profiles/scopes tables
+	preReconcile  func()       // optional extra restore step before the reconcile
+}
+
+// rollbackFailed is the one failure tail shared by finishApply and finishSwitch:
+// revert the profile tables, restore the snapshot conf + reload Kea, persist the
+// revert lifecycle state, run any flavor-specific restore, reconcile back to the
+// previous profile, and audit. Every step is best-effort-but-logged - a rollback
+// must attempt all of them even when one fails, and a silent skip is how a box
+// boots with no active profile.
+func (s *Server) rollbackFailed(p rollbackSpec) {
+	if err := p.revertTables(); err != nil {
+		log.Printf("[%s] rollback: revert profile table: %v", p.tag, err)
 	}
 
-	// Restore the snapshot conf and reload Kea. Best-effort, but log a failure so a
-	// rollback that couldn't restore the prior config is diagnosable.
-	if plan.snapPath != "" {
-		if data, e := os.ReadFile(plan.snapPath); e == nil {
+	// Restore the snapshot conf and reload Kea.
+	if p.snapPath != "" {
+		if data, e := os.ReadFile(p.snapPath); e == nil {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
 			if e := writeFileSync(live, data, 0660); e != nil {
-				log.Printf("[Apply] rollback: restore snapshot conf: %v", e)
+				log.Printf("[%s] rollback: restore snapshot conf: %v", p.tag, e)
 			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
-				log.Printf("[Apply] rollback: Kea reload after restore: %v", e)
+				log.Printf("[%s] rollback: Kea reload after restore: %v", p.tag, e)
 			}
 		}
 	}
 
-	// Revert the active profile in SQLite. Best-effort, but a silent failure here is
-	// how a box boots with no active profile - so log it.
-	if err := s.rollbackProfileTables(plan, profileName); err != nil {
-		log.Printf("[Apply] rollback: revert profile table: %v", err)
+	// Persist the revert state before reconciling so the reconcile dispatches for
+	// that state (ACTIVE for a switch, the origin state for an apply).
+	if err := s.sqlite.SetState(db.LifecycleStateKey, p.revertState); err != nil {
+		log.Printf("[%s] failed to revert to %s state: %v", p.tag, p.revertState, err)
 	}
 
-	// Restore the pre-apply uplink credentials BEFORE the rollback reconcile, which
-	// reads them from app_state to reconnect wlan0.
-	s.restoreUplinkState(plan.prevUplink)
+	if p.preReconcile != nil {
+		p.preReconcile()
+	}
 
 	// ModeApply (not Converge) so the full NM teardown removes any connection the
-	// failed forward apply created for a scope the prior profile lacks - otherwise a
-	// stale interface lingers, re-IP'd onto the new profile while Kea serves the old.
-	if e := s.ReconcileApplianceState(ModeApply, plan.prevProfileID); e != nil {
-		// The apply failed AND the recovery failed: the box is genuinely
+	// failed forward apply/switch created for a scope the prior profile lacks -
+	// otherwise a stale interface lingers, its addressing diverging from the
+	// served subnets.
+	if e := s.ReconcileApplianceState(ModeApply, p.prevProfileID); e != nil {
+		// The apply/switch failed AND the recovery failed: the box is genuinely
 		// half-configured, which the plain FAILED row below doesn't convey.
-		log.Printf("[Apply] Rollback reconcile reported: %v", e)
-		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", profileName, "", e.Error(), "ERROR")
+		log.Printf("[%s] Rollback reconcile reported: %v", p.tag, e)
+		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", p.profileName, "", e.Error(), "ERROR")
 	}
-	_ = s.sqlite.LogAudit(actor, "APPLY_PROFILE", profileName, "", "", "FAILED")
+	_ = s.sqlite.LogAudit(p.actor, p.action, p.profileName, "", "", "FAILED")
 }
 
 // setActiveAudited persists the ACTIVE lifecycle after a successful apply/switch

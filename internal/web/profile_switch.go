@@ -1,14 +1,11 @@
 package web
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -181,9 +178,9 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
 	}
 	// Claim the shared mutation guard BEFORE writing any persistent artifact, so a
-	// guard-loser can't orphan a snapshot file + config_snapshots row (beginApply also
-	// claims first). snapshotKeaConf then runs under the guard, never racing an
-	// in-flight apply that is mid-writing the conf.
+	// guard-loser can't orphan a snapshot file + config_snapshots row (beginApply
+	// orders validate-then-claim the same way). snapshotKeaConf then runs under the
+	// guard, never racing an in-flight apply that is mid-writing the conf.
 	if !s.beginReconcile() {
 		return switchPlan{}, fmt.Errorf("A profile apply is already in progress.")
 	}
@@ -221,23 +218,10 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		s.endReconcile()
 		return switchPlan{}, fmt.Errorf("Failed to switch active profile: %w", err)
 	}
-	// Committed to the switch: tear down the old profile's monitors before the
-	// CONFIGURING re-IP window (finishSwitch reconciles next). reconcileActive
-	// restarts them once the new interfaces are up.
-	if s.netmon != nil {
-		s.netmon.Stop()
-	}
-	if s.arp != nil {
-		s.arp.Stop()
-	}
-	if s.ggoscan != nil {
-		s.ggoscan.Stop()
-	}
-	// The port-53 listeners are bound to the outgoing profile's scope addresses;
-	// drop them before the re-IP. reconcileActive rebinds on the new addresses.
-	if s.dns != nil {
-		s.dns.Stop()
-	}
+	// Committed to the switch: tear down the old profile's monitors and DNS before
+	// the CONFIGURING re-IP window (finishSwitch reconciles next). reconcileActive
+	// restarts everything once the new interfaces are up.
+	s.stopActiveMonitors()
 	return plan, nil
 }
 
@@ -260,46 +244,36 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 		log.Printf("[Switch] Switch to %q failed, rolling back: %v", plan.profileName, err)
 	}
 
-	// Failure: revert the active flag to the previous profile. Best-effort, but log
-	// a failed revert - a silent failure can leave the box with no active profile.
-	if rtx, e := s.sqlite.Begin(); e != nil {
-		log.Printf("[Switch] rollback: begin tx: %v", e)
-	} else {
-		_, e1 := rtx.Exec("UPDATE profiles SET active = 0")
-		var e2 error
-		if plan.prevProfileID != 0 {
-			_, e2 = rtx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", plan.prevProfileID)
-		}
-		if err := errors.Join(e1, e2, rtx.Commit()); err != nil {
-			log.Printf("[Switch] rollback: revert active profile: %v", err)
-		}
-	}
+	// Failure: revert the active flag, restore the snapshot, return to ACTIVE (a
+	// switch originates from ACTIVE, unlike the setup apply), and reconcile back -
+	// the failure tail shared with finishApply.
+	s.rollbackFailed(rollbackSpec{
+		tag:           "Switch",
+		action:        "SWITCH_PROFILE",
+		profileName:   plan.profileName,
+		actor:         actor,
+		revertState:   db.StateActive,
+		prevProfileID: plan.prevProfileID,
+		snapPath:      plan.snapPath,
+		revertTables:  func() error { return s.revertActiveFlag(plan.prevProfileID) },
+	})
+}
 
-	// Restore the snapshot conf and reload Kea.
-	if plan.snapPath != "" {
-		if data, e := os.ReadFile(plan.snapPath); e == nil {
-			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-			if e := writeFileSync(live, data, 0660); e != nil {
-				log.Printf("[Switch] rollback: restore snapshot conf: %v", e)
-			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
-				log.Printf("[Switch] rollback: Kea reload after restore: %v", e)
-			}
-		}
+// revertActiveFlag flips the active profile back to prevProfileID (or leaves no
+// profile active when it is 0) after a failed switch, in one transaction.
+func (s *Server) revertActiveFlag(prevProfileID int) error {
+	rtx, err := s.sqlite.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
 	}
-
-	// Restore ACTIVE before reconciling so the reconcile dispatches straight to
-	// reconcileActive (a switch originates from ACTIVE, not CONFIGURING/ONBOARDING).
-	if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); e != nil {
-		log.Printf("[Switch] failed to restore ACTIVE state: %v", e)
+	defer func() { _ = rtx.Rollback() }()
+	_, e1 := rtx.Exec("UPDATE profiles SET active = 0")
+	var e2 error
+	if prevProfileID != 0 {
+		_, e2 = rtx.Exec("UPDATE profiles SET active = 1 WHERE id = ?", prevProfileID)
 	}
-	// ModeApply (not Converge) so the full NM teardown removes any connection the
-	// failed forward switch created for a scope the previous profile lacks - else a
-	// stale interface lingers, addressing diverging from the served subnets.
-	if e := s.ReconcileApplianceState(ModeApply, plan.prevProfileID); e != nil {
-		// The switch failed AND the recovery failed: the box is genuinely
-		// half-configured, which the plain FAILED row below doesn't convey.
-		log.Printf("[Switch] Rollback reconcile reported: %v", e)
-		_ = s.sqlite.LogAudit("SYSTEM", "ROLLBACK_FAILED", plan.profileName, "", e.Error(), "ERROR")
+	if err := errors.Join(e1, e2); err != nil {
+		return err
 	}
-	_ = s.sqlite.LogAudit(actor, "SWITCH_PROFILE", plan.profileName, "", "", "FAILED")
+	return rtx.Commit()
 }

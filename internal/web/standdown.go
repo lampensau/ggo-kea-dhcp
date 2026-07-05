@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -299,7 +300,11 @@ func (s *Server) applyDHCPServingState() error {
 	if err != nil {
 		return err
 	}
-	return s.writeAndReloadKea(cfg)
+	// Same per-pass bound as the reconciler: writeAndReloadKea's dead-socket
+	// fallback (service restart + reachability probe) can take well over opCtx.
+	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+	defer cancel()
+	return s.writeAndReloadKea(ctx, cfg)
 }
 
 // scheduleServingReloadHeld applies the current serving state (holdoff or profile) to
