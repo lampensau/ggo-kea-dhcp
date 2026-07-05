@@ -192,6 +192,10 @@ func (s *Server) sampleMetrics() {
 	// while Kea is down; inert outside ACTIVE, where the server is stopped.
 	s.healDNSBinds()
 
+	// Bound the on-disk stores (snapshots, audit log, sessions). Also Kea-independent:
+	// a box with Kea down must still not fill its SD card.
+	s.maybeRunMaintenance()
+
 	ctx, cancel := opCtx()
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)
@@ -239,25 +243,24 @@ func (s *Server) recordLastSeen(leases []kea.ActiveLease) {
 		pending := make(map[string]db.LastSeen)
 		s.lastSeenMu.Lock()
 		defer s.lastSeenMu.Unlock()
+		record := func(identity, kind string, cltt int64) {
+			if cltt > s.lastSeen[identity] {
+				s.lastSeen[identity] = cltt
+			}
+			if cltt-s.lastSeenWritten[identity] >= lastSeenAdvance {
+				s.lastSeenWritten[identity] = cltt
+				pending[identity] = db.LastSeen{Identity: identity, Kind: kind, LastSeen: cltt}
+			}
+		}
 		for _, l := range leases {
 			if l.Cltt <= 0 {
 				continue
 			}
-			ids := make([]db.LastSeen, 0, 2)
 			if mac := normalizeMAC(l.HWAddress); mac != "" {
-				ids = append(ids, db.LastSeen{Identity: mac, Kind: "lease", LastSeen: l.Cltt})
+				record(mac, "lease", l.Cltt)
 			}
 			if id, ok := decodePortIdentity(l.ClientID); ok {
-				ids = append(ids, db.LastSeen{Identity: id.Key, Kind: "port", LastSeen: l.Cltt})
-			}
-			for _, e := range ids {
-				if l.Cltt > s.lastSeen[e.Identity] {
-					s.lastSeen[e.Identity] = l.Cltt
-				}
-				if l.Cltt-s.lastSeenWritten[e.Identity] >= lastSeenAdvance {
-					s.lastSeenWritten[e.Identity] = l.Cltt
-					pending[e.Identity] = e
-				}
+				record(id.Key, "port", l.Cltt)
 			}
 		}
 		return pending
@@ -305,9 +308,13 @@ func (s *Server) samplePoolUtil(leases []kea.ActiveLease) int {
 	if err != nil {
 		return 0
 	}
+	if len(scopes) == 0 {
+		return 0 // nothing to sample - skip the lease digest on an unconfigured box
+	}
+	parsed := parseLeases(leases) // once per sample - poolDataForScope runs per scope
 	var pools []views.PoolRow
 	for _, sc := range scopes {
-		pools = append(pools, poolDataForScope(sc, leases)...)
+		pools = append(pools, poolDataForScope(sc, parsed)...)
 	}
 	return overallPoolUtil(pools)
 }

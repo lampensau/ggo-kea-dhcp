@@ -55,8 +55,41 @@ templ Diagnostics(v DiagnosticsView) {
 			</div>
 			@DiagAuditLog(v.Logs)
 		</div>
+		@diagLogCard("Service Log", "The newest service journal entries, captured when this page loaded.", v.Journal, v.JournalErr)
+		if len(v.AptLog) > 0 {
+			@diagLogCard("Update Log", "Package-manager output from the last self-update install.", v.AptLog, "")
+		}
 		@auditJumpScript()
 	}
+}
+
+// diagLogCard is a collapsed read-only log tail: a mono <pre> in a capped scroll,
+// loaded with the page (no live follow - Diagnostics re-reads on reload). The
+// empty state names why the log is unavailable instead of showing a blank box.
+templ diagLogCard(title, hint string, lines []string, unavailable string) {
+	<details class="card collapse-card">
+		<summary class="collapse-head" aria-label={ "Toggle " + title }>
+			<span class="collapse-title">
+				<span class="collapse-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+				<h3 class="no-margin">{ title }</h3>
+			</span>
+			<span class="collapse-rollup"><span class="badge">{ itoa(len(lines)) } { pluralize(len(lines), "line", "lines") }</span></span>
+		</summary>
+		<div class="collapse-body">
+			<p class="text-muted no-margin">{ hint }</p>
+			if len(lines) == 0 {
+				<div class="empty">
+					@Icon("scroll-text")
+					<div class="empty-title">Log not available</div>
+					if unavailable != "" {
+						<div>{ unavailable }</div>
+					}
+				</div>
+			} else {
+				<pre class="log-tail" tabindex="0">{ joinLines(lines) }</pre>
+			}
+		</div>
+	</details>
 }
 
 // auditJumpScript opens + scrolls to a deep-linked audit row. With #latest-alert (the

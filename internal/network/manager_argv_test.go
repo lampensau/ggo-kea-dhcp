@@ -1,15 +1,28 @@
 package network
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestRestartService(t *testing.T) {
 	rec := &RecordingCommander{}
 	m := NewManagerWithCommander(rec)
-	if err := m.RestartService("kea-dhcp4"); err != nil {
+	if err := m.RestartService("isc-kea-dhcp4-server"); err != nil {
 		t.Fatalf("RestartService: %v", err)
 	}
-	if !callContaining(rec, "systemctl", "restart", "kea-dhcp4") {
+	if !callContaining(rec, "systemctl", "restart", "isc-kea-dhcp4-server") {
 		t.Errorf("calls=%v", rec.Calls)
+	}
+	// Any other unit is refused before reaching sudo (whose exact-argument rule
+	// would deny it on the Pi anyway).
+	if err := m.RestartService("caddy"); err == nil {
+		t.Error("RestartService(caddy) must be refused")
+	}
+	if callContaining(rec, "systemctl", "restart", "caddy") {
+		t.Errorf("refused unit still reached the Commander: %v", rec.Calls)
 	}
 }
 
@@ -77,5 +90,27 @@ func TestIsWifiUplinkActive(t *testing.T) {
 				t.Errorf("IsWifiUplinkActive()=%v want %v (out=%q)", got, c.want, c.out)
 			}
 		})
+	}
+}
+
+// ServiceLogTail must issue exactly the argv the sudoers drop-in whitelists -
+// and the drop-in must actually contain that line, so a drift between the two
+// fails here instead of only on the Pi.
+func TestServiceLogTailArgvMatchesSudoers(t *testing.T) {
+	rec := &RecordingCommander{}
+	m := NewManagerWithCommander(rec)
+	if _, err := m.ServiceLogTail(); err != nil {
+		t.Fatalf("ServiceLogTail: %v", err)
+	}
+	want := "journalctl -u ggo-kea-dhcp -n 200 --no-pager"
+	if !callContaining(rec, "journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager") {
+		t.Errorf("argv drifted from the sudoers rule %q; calls=%v", want, rec.Calls)
+	}
+	sudoers, err := os.ReadFile(filepath.Join("..", "..", "packaging", "sudoers", "ggo-kea-dhcp"))
+	if err != nil {
+		t.Fatalf("read sudoers drop-in: %v", err)
+	}
+	if !strings.Contains(string(sudoers), want) {
+		t.Errorf("packaging/sudoers/ggo-kea-dhcp lacks the exact-argument line %q", want)
 	}
 }

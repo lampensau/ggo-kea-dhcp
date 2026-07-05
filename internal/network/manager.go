@@ -32,10 +32,29 @@ func NewManagerWithCommander(c Commander) *Manager {
 // the Commander seam. Used to recover Kea when its HTTP control socket is
 // unreachable: a config-reload cannot bootstrap the :8004 listener, so only a
 // restart - which makes Kea re-read its on-disk config - brings it back. No-ops in
-// dev when systemctl is absent.
+// dev when systemctl is absent. Only the Kea unit is permitted: the sudoers rule
+// is exact-argument, so any other unit would be refused by sudo on the Pi anyway
+// - rejecting it here keeps the Run argv literal (verified against the sudoers
+// drop-in by sudoers_test.go) and closes the seam against arbitrary restarts.
 func (m *Manager) RestartService(name string) error {
-	_, err := m.cmd.Run("systemctl", "restart", name)
+	// keaUnit mirrors the web layer's keaServiceName; a single shared constant
+	// would couple the packages for one string, so the sudoers cross-check test
+	// is what actually keeps this literal and the drop-in rule aligned.
+	const keaUnit = "isc-kea-dhcp4-server"
+	if name != keaUnit {
+		return fmt.Errorf("refusing to restart %q: only %s is sudoers-permitted", name, keaUnit)
+	}
+	_, err := m.cmd.Run("systemctl", "restart", "isc-kea-dhcp4-server")
 	return err
+}
+
+// ServiceLogTail returns the newest journal lines for the appliance's own unit,
+// feeding the read-only log tail on the Diagnostics page. The argument list is
+// FIXED: journalctl has its own exact-argument line in the sudoers drop-in
+// (packaging/sudoers/ggo-kea-dhcp), so any change here needs the matching change
+// there or it fails only on the Pi.
+func (m *Manager) ServiceLogTail() (string, error) {
+	return m.cmd.Run("journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager")
 }
 
 // Reboot reboots the host (sudo systemctl reboot) through the Commander seam.

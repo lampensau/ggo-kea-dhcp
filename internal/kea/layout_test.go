@@ -238,3 +238,80 @@ func assertPools(t *testing.T, got, want []PoolConfig) {
 		}
 	}
 }
+
+// TestLayoutPools_ElasticCatchAllFloor locks the unmatched-device safety net: a
+// catch-all (GGO-OTHERS/OTHERS) landing as the ELASTIC remainder must be floored
+// at its documented catch-all minimum (10), not the bare elastic minimum (5). The
+// seed path (SizeForClass) already floors it; without the same floor here a
+// 6-9 address remainder silently violates the "can never shrink below it"
+// invariant instead of surfacing the subnet-too-small error.
+func TestLayoutPools_ElasticCatchAllFloor(t *testing.T) {
+	specs := []PoolSpec{
+		{Kind: PoolReserve, Size: 18}, // .2 - .19
+		{Class: "GGO-WAA", Kind: PoolFixed, Size: 5},
+		{Class: "GGO-OTHERS", Kind: PoolElastic, Weight: 1},
+	}
+	// /27: 30 usable minus the gateway leaves .2-.30; reserve 18 + fixed 5
+	// leaves a 6-address remainder - above the elastic minimum, below the
+	// catch-all floor.
+	if _, err := LayoutPools("10.0.0.0/27", specs); err == nil {
+		t.Fatal("a 6-address elastic catch-all must be rejected (floor 10), got success")
+	}
+
+	// The same remainder is fine for a non-catch-all elastic (floor 5).
+	specs[2].Class = "GGO-BPX"
+	if _, err := LayoutPools("10.0.0.0/27", specs); err != nil {
+		t.Fatalf("a 6-address GGO-BPX elastic remainder must still fit (floor 5): %v", err)
+	}
+
+	// Boundary: a remainder of exactly the catch-all floor (10) is accepted,
+	// one below (9) is rejected. /27 usable pool space is .2-.30 (29 addresses).
+	at := func(reserve int) error {
+		_, err := LayoutPools("10.0.0.0/27", []PoolSpec{
+			{Kind: PoolReserve, Size: reserve},
+			{Class: "GGO-WAA", Kind: PoolFixed, Size: 5},
+			{Class: "GGO-OTHERS", Kind: PoolElastic, Weight: 1},
+		})
+		return err
+	}
+	if err := at(14); err != nil { // remainder 29-14-5 = 10
+		t.Fatalf("a 10-address elastic catch-all must be accepted: %v", err)
+	}
+	if err := at(15); err == nil { // remainder 9
+		t.Fatal("a 9-address elastic catch-all must be rejected (floor 10)")
+	}
+}
+
+// TestLayoutPools_ElasticCatchAllFloorFragmented locks the SECOND path to a
+// sub-floor catch-all: pass 2 checks the floor against TOTAL free space, but a
+// pinned range can fragment the subnet so the elastic caps into a smaller gap
+// in pass 3. That re-check must use the same class floor - without it a
+// catch-all that passed pass 2 at 17 addresses was silently emitted at 9.
+func TestLayoutPools_ElasticCatchAllFloorFragmented(t *testing.T) {
+	specs := []PoolSpec{
+		{Kind: PoolReserve, Size: 18}, // .2 - .19
+		// Pinned mid-subnet, splitting the free space into .20-.28 (9) and
+		// .55-.62 (8). Total free = 17 passes pass 2; no single gap holds 10.
+		{Class: "GGO-WAA", Kind: PoolFixed, Range: "10.0.0.29 - 10.0.0.54"},
+		{Class: "GGO-OTHERS", Kind: PoolElastic, Weight: 1},
+	}
+	if _, err := LayoutPools("10.0.0.0/26", specs); err == nil {
+		t.Fatal("a catch-all capped into a 9-address gap must be rejected (floor 10)")
+	}
+
+	// A non-catch-all elastic caps into the same 9-address gap fine (floor 5).
+	specs[2].Class = "GGO-BPX"
+	placements, err := LayoutPools("10.0.0.0/26", specs)
+	if err != nil {
+		t.Fatalf("GGO-BPX capped into the 9-address gap must be accepted: %v", err)
+	}
+	got := ""
+	for _, p := range placements {
+		if p.Class == "GGO-BPX" {
+			got = p.Range
+		}
+	}
+	if got != "10.0.0.20 - 10.0.0.28" {
+		t.Fatalf("GGO-BPX capped range = %q, want 10.0.0.20 - 10.0.0.28", got)
+	}
+}

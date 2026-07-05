@@ -67,6 +67,33 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck -f gcc -S error install.sh packaging/scripts/*.sh
 
+  # Fail CI when a vendored dependency (or the stdlib we build with) has a known
+  # vulnerability that the code actually reaches. Dependabot only proposes
+  # upgrades and CodeQL only scans first-party code - neither fails a build over
+  # a vulnerable dependency already in vendor/. govulncheck is the Go team's
+  # scanner (golang.org/x/vuln); the version pin resolves through the module
+  # proxy + checksum database, so the tag cannot be silently rewritten.
+  #
+  # Hard-block by design: every PR fails while a reachable advisory is open.
+  # If an advisory has no fixed upstream release yet, the unblock path is a
+  # DELIBERATE edit here (temporarily gate the step or pin the module to a
+  # patched fork) in its own reviewed commit - never silently, and reverted the
+  # moment the fix ships.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck (pinned)
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+
+      - name: govulncheck
+        run: govulncheck ./...
+
   lint:
     runs-on: ubuntu-latest
     steps:

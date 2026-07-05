@@ -182,3 +182,19 @@ func readStoredPlan(t *testing.T, s *Server, sid int) PoolPlan {
 	}
 	return got
 }
+
+// TestBuildPoolPlanViewNonIPv4KeepsRows pins the invalid-input feedback loop: a
+// CIDR that parses but is not plain IPv4 must still render the plan rows with
+// the layout error in the foot alert (as main did), never an empty view - an
+// empty view morphs the operator's editor rows away with no explanation.
+func TestBuildPoolPlanViewNonIPv4KeepsRows(t *testing.T) {
+	sc := ScopeConfig{Preset: "greengo", CIDR: "2001:db8::/64"}
+	sc.Plan = seedDefaultPlan(ScopeConfig{Preset: "greengo", CIDR: "10.0.0.0/24"})
+	v := buildPoolPlanView(sc, nil, true, "simple")
+	if len(v.Rows) == 0 {
+		t.Fatal("non-IPv4 CIDR blanked the pool editor - rows must keep rendering")
+	}
+	if v.Issue == "" {
+		t.Fatal("non-IPv4 CIDR must surface a layout issue in the foot alert")
+	}
+}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"ggo-kea-dhcp/internal/db"
@@ -191,5 +192,36 @@ func TestSweepOrphanedStashes(t *testing.T) {
 		if !want[n] {
 			t.Errorf("profile %q should have been swept (or wrongly removed)", n)
 		}
+	}
+}
+
+// TestBeginApplyValidatesBeforeClaimingGuard proves beginApply orders
+// validate-then-claim like beginSwitch: an operator posting a candidate that
+// fails render/validation gets that real feedback even while another reconcile
+// holds the mutation guard - and a doomed candidate never claims (or worse,
+// releases) a guard it does not own.
+func TestBeginApplyValidatesBeforeClaimingGuard(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if !s.beginReconcile() {
+		t.Fatal("could not claim the guard")
+	}
+	defer s.endReconcile()
+
+	// A greengo scope without a pool plan fails the render.
+	_, err := s.beginApply("guarded", []ScopeConfig{{Preset: "greengo", CIDR: "10.0.0.0/24"}}, UplinkConfig{})
+	if err == nil {
+		t.Fatal("beginApply must fail on an invalid candidate")
+	}
+	if strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("busy guard masked the validation error: %v", err)
+	}
+	// The guard must still be exactly as we left it: held by this test, untouched
+	// by the failed beginApply.
+	if s.beginReconcile() {
+		s.endReconcile()
+		t.Fatal("beginApply released a guard it did not own")
 	}
 }
