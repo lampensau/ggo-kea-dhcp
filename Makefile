@@ -41,7 +41,7 @@ all: generate build vet test
 # sync, vet, test, native + arm64 build, golangci-lint, shellcheck.
 check: generate
 	@[ -z "$$(git status --porcelain -- '*_templ.go')" ] || { echo "stale or untracked templ output - run 'templ generate' and commit *_templ.go"; git status --porcelain -- '*_templ.go'; exit 1; }
-	@files=$$(git ls-files '*.go' | grep -vE '^vendor/|_templ\.go$$'); \
+	@files=$$(git ls-files --cached --others --exclude-standard '*.go' | grep -vE '^vendor/|_templ\.go$$'); \
 		unformatted=$$(gofmt -l $$files); \
 		[ -z "$$unformatted" ] || { echo "gofmt needed:"; echo "$$unformatted"; exit 1; }
 	go mod verify
