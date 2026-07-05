@@ -105,6 +105,29 @@ func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 }
 
 // fetchPortLabels reads the SQLite flex-id -> label map.
+// legacyLabelKey returns the pre-hex key form of a port identity (the printable
+// text of the same flex-id bytes) when one exists. Labels written before the
+// key became always-hex live under that form; fetchPortLabels translates them
+// on read, so any WRITE under the new key must also clear the legacy row - or a
+// rename is shadowed and a cleared label resurrects from the stale alias.
+func legacyLabelKey(portIdentity string) (string, bool) {
+	legacy := string(flexIDToBytes(portIdentity))
+	if legacy == "" || legacy == portIdentity || !isPrintableASCII(legacy) {
+		return "", false
+	}
+	return legacy, true
+}
+
+// clearLegacyLabelAlias best-effort deletes the legacy-form label row for
+// portIdentity (see legacyLabelKey).
+func (s *Server) clearLegacyLabelAlias(portIdentity string) {
+	if legacy, ok := legacyLabelKey(portIdentity); ok {
+		if _, err := s.sqlite.Exec("DELETE FROM port_labels WHERE flex_id_hex = ?", legacy); err != nil {
+			log.Printf("[Pinning] failed to clear legacy label row for %s: %v", logSafe(portIdentity), err)
+		}
+	}
+}
+
 func (s *Server) fetchPortLabels() (map[string]string, error) {
 	rows, err := s.sqlite.Query("SELECT flex_id_hex, label FROM port_labels")
 	if err != nil {
@@ -345,6 +368,7 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?) ON CONFLICT(flex_id_hex) DO UPDATE SET label=excluded.label", portIdentity, label); err != nil {
 			log.Printf("[Pinning] pin-time label save failed for %s: %v", logSafe(portIdentity), err)
 		}
+		s.clearLegacyLabelAlias(portIdentity)
 	}
 
 	// Update audit log
@@ -391,7 +415,13 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 	// re-attach a stale name to the next device learned on this port - so unpin must be
 	// able to clear it regardless.
 	var labelN int64
-	if res, e := s.sqlite.Exec("DELETE FROM port_labels WHERE flex_id_hex = ?", portIdentity); e != nil {
+	labelQ, labelArgs := "DELETE FROM port_labels WHERE flex_id_hex = ?", []any{portIdentity}
+	if legacy, ok := legacyLabelKey(portIdentity); ok {
+		// A pre-upgrade label lives under the printable key form; clear it too or
+		// it resurrects via fetchPortLabels' translate-on-read.
+		labelQ, labelArgs = "DELETE FROM port_labels WHERE flex_id_hex IN (?, ?)", []any{portIdentity, legacy}
+	}
+	if res, e := s.sqlite.Exec(labelQ, labelArgs...); e != nil {
 		log.Printf("[Pinning] failed to clear port label for %s: %v", logSafe(portIdentity), e)
 	} else {
 		labelN, _ = res.RowsAffected()
@@ -424,6 +454,7 @@ func (s *Server) handleLabel(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Failed to update label: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.clearLegacyLabelAlias(portIdentity)
 	_ = s.sqlite.LogAudit(s.getActor(r), "LABEL_PORT", portIdentity, "", "", "SUCCESS")
 
 	// A label change alters the pinned/learnable rows (and the dashboard pinnings
