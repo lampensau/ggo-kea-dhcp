@@ -119,7 +119,11 @@ func (m *Manager) SetVlanStatic(parent string, vlanID int, ipNet string) error {
 func (m *Manager) DeleteApplianceConnections() error {
 	log.Println("Tearing down all ggo-kea-dhcp created NM connections...")
 
-	output, err := m.cmd.Run("nmcli", "connection", "show", "--active")
+	// List all connections, not just --active: an inactive ggo- connection (carrier
+	// down, or not yet autoconnected) would otherwise survive the teardown and later
+	// autoconnect with stale addressing. Every caller runs this on a ModeApply
+	// "tear down then rebuild" pass, so evicting inactive ones too is the intent.
+	output, err := m.cmd.Run("nmcli", "connection", "show")
 	if err != nil {
 		return err
 	}
