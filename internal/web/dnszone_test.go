@@ -90,3 +90,18 @@ func TestGgoNamesSignatureOrderIndependent(t *testing.T) {
 		t.Fatal("signature missed a name change")
 	}
 }
+
+// A scan-observed IP change (a device that re-IPs without any name or lease change)
+// must move the zone signature so the sampler rebuilds the stale A/PTR record.
+func TestScanIdentitySignatureFollowsIP(t *testing.T) {
+	base := []ggoscan.Device{{MAC: "00:1f:80:aa:00:01", Name: "BPX Stage", IP: "10.0.0.30"}}
+	reIP := []ggoscan.Device{{MAC: "00:1f:80:aa:00:01", Name: "BPX Stage", IP: "10.0.0.99"}}
+
+	if ggoNamesSignature(scanIdentityByMAC(base)) == ggoNamesSignature(scanIdentityByMAC(reIP)) {
+		t.Fatal("signature ignored a scan-observed IP change")
+	}
+	// Stable inventory must hash identically (no spurious churn).
+	if ggoNamesSignature(scanIdentityByMAC(base)) != ggoNamesSignature(scanIdentityByMAC(base)) {
+		t.Fatal("signature not stable for an unchanged inventory")
+	}
+}

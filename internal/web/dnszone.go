@@ -114,14 +114,41 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 	if s.dns == nil {
 		return
 	}
-	sig := leasesSignature(leases) ^ ggoNamesSignature(s.ggoNamesByMAC())
+	sig := leasesSignature(leases) ^ ggoNamesSignature(s.ggoScanIdentityByMAC())
 	if s.dnsZoneSig.Swap(sig) == sig {
 		return
 	}
 	s.rebuildDNSZone(ctx, leases)
 }
 
-// ggoNamesSignature hashes the scanned name inventory (order-independent input,
+// ggoScanIdentityByMAC keys each scanned Green-GO device's zone identity - its name
+// AND its observed address - by normalized MAC, for the sampler's change gate. Both
+// fields matter: a device that re-IPs without any name or lease change still moves its
+// A/PTR record, so the scan address has to be in the signature or the zone goes stale.
+// Scan addresses are the device's real lease/static IP (stable per device), so folding
+// them in triggers a rebuild only on a genuine re-IP, not on churn.
+func (s *Server) ggoScanIdentityByMAC() map[string]string {
+	if s.ggoscan == nil {
+		return nil
+	}
+	return scanIdentityByMAC(s.ggoscan.Snapshot().Devices)
+}
+
+// scanIdentityByMAC is the pure body of ggoScanIdentityByMAC: name+address per
+// normalized MAC, skipping rows with no MAC or neither field.
+func scanIdentityByMAC(devs []ggoscan.Device) map[string]string {
+	m := make(map[string]string, len(devs))
+	for _, d := range devs {
+		mac := normalizeMAC(d.MAC)
+		if mac == "" || (d.Name == "" && d.IP == "") {
+			continue
+		}
+		m[mac] = d.Name + "\x00" + d.IP
+	}
+	return m
+}
+
+// ggoNamesSignature hashes a per-MAC identity inventory (order-independent input,
 // order-fixed hash) for the sampler's change gate.
 func ggoNamesSignature(names map[string]string) uint64 {
 	if len(names) == 0 {
