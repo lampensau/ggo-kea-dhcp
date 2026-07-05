@@ -65,10 +65,15 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // settingsDeferredMsg tells the operator a save persisted but did NOT converge
-// (another configuration change holds the box). There is no queue that re-applies
-// the values when it frees, so the message asks for an explicit re-save rather
-// than implying an automatic retry that never comes.
+// (the box is mid-apply in CONFIGURING, where no reconcile can run). There is no
+// queue that re-applies the values, so the message asks for an explicit re-save
+// rather than implying an automatic retry that never comes.
 const settingsDeferredMsg = "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them."
+
+// settingsBusyMsg tells the operator a save was refused outright because another
+// configuration change holds the mutation guard. Nothing was persisted - saving
+// mid-apply would let the apply's failure rollback silently clobber the values.
+const settingsBusyMsg = "Settings NOT saved - another configuration change is in progress. Save again once it finishes."
 
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -151,25 +156,40 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		curEn, curSSID, curPass := s.uplinkSettings()
 		// When the uplink is off its SSID/pass fields are disabled and don't submit, so
 		// keep the stored credentials (re-enabling restores them) instead of wiping them.
-		en := "0"
 		ssid, pass := curSSID, curPass
 		if cfg.Enabled {
-			en = "1"
 			ssid, pass = cfg.SSID, cfg.Password
 		}
 		upChanged = cfg.Enabled != curEn || ssid != curSSID || pass != curPass
-		updates["uplink_enabled"] = en
-		updates["uplink_ssid"] = ssid
-		updates["uplink_pass"] = pass
+		for k, v := range uplinkState(cfg.Enabled, ssid, pass) {
+			updates[k] = v
+		}
 		upTarget = cfg.SSID
 		if !cfg.Enabled {
 			upTarget = "disabled"
 		}
 	}
 
+	// Claim the shared mutation guard BEFORE persisting anything the apply rollback
+	// also owns: beginApply captures the uplink keys and finishApply's failure path
+	// restores them, all under this guard - a save persisted mid-apply would be
+	// silently clobbered by that restore. Refusing up front (values NOT saved, honest
+	// deferred flash) closes the window; the pre-ACTIVE and soft-change branches
+	// below need the guard for their reconcile anyway.
+	needGuard := state == db.StateOnboarding || state == db.StateFactory ||
+		(state == db.StateActive && (leaseChanged || globalOptsChanged || upChanged))
+	if needGuard && !s.beginReconcile() {
+		s.setFlash(w, r, settingsBusyMsg, "info")
+		s.redirectHTMX(w, r, "/settings")
+		return
+	}
+
 	// All validation passed - commit the settings atomically. (The admin-account
 	// rename/password flow moved to the header account dialog, POST /account/save.)
 	if err := s.sqlite.SetStates(updates); err != nil {
+		if needGuard {
+			s.endReconcile()
+		}
 		s.handleError(w, r, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -198,16 +218,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		if ipChanged {
 			delay = 1 * time.Second // let the interstitial reach the client first
 		}
-		// Serialize against an in-flight apply/switch: refuse to bounce links under
-		// another reconcile. The values are persisted, but there is no queue that
-		// re-applies them when the guard frees - so tell the operator the change is NOT
-		// yet live and to save again once the in-flight change completes (rather than
-		// implying an automatic retry that never comes).
-		if !s.beginReconcile() {
-			s.setFlash(w, r, settingsDeferredMsg, "info")
-			s.redirectHTMX(w, r, "/settings")
-			return
-		}
+		// The guard was claimed before the persist above (needGuard covers this state).
 		s.scheduleReconcileHeld("settings", delay, ModeConverge, 0)
 		// If the management IP changed, the current connection is about to drop -
 		// hand the operator the reconnect interstitial pointed at the new IP.
@@ -219,19 +230,9 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// A lease-time, global-DHCP-options, or WiFi-uplink change in ACTIVE is a soft
 		// change: a ModeConverge reconcile re-renders Kea (lease/options/gateway gating)
 		// and (re)connects or tears down wlan0 + NAT. No re-IP and no interface bounce,
-		// so this is safe mid-show
-		// (unlike a CIDR/uplink change) - no interstitial.
-		if s.beginReconcile() {
-			s.scheduleReconcileHeld("settings-soft", 0, ModeConverge, 0)
-		} else {
-			// Same no-queue situation as the pre-ACTIVE branch above: the values are
-			// persisted but the reconcile did NOT run - tell the operator, don't let
-			// the success flash imply the change is live.
-			log.Printf("[settings] soft reconcile deferred - a configuration change is in progress")
-			s.setFlash(w, r, settingsDeferredMsg, "info")
-			s.redirectHTMX(w, r, "/settings")
-			return
-		}
+		// so this is safe mid-show (unlike a CIDR/uplink change) - no interstitial. The
+		// guard was claimed before the persist above (needGuard covers this state).
+		s.scheduleReconcileHeld("settings-soft", 0, ModeConverge, 0)
 	}
 
 	s.setFlash(w, r, "Settings saved.", "success")
