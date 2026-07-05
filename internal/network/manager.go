@@ -38,6 +38,15 @@ func (m *Manager) RestartService(name string) error {
 	return err
 }
 
+// ServiceLogTail returns the newest journal lines for the appliance's own unit,
+// feeding the read-only log tail on the Diagnostics page. The argument list is
+// FIXED: journalctl has its own exact-argument line in the sudoers drop-in
+// (packaging/sudoers/ggo-kea-dhcp), so any change here needs the matching change
+// there or it fails only on the Pi.
+func (m *Manager) ServiceLogTail() (string, error) {
+	return m.cmd.Run("journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager")
+}
+
 // Reboot reboots the host (sudo systemctl reboot) through the Commander seam.
 // The box goes down shortly after the command is issued; callers flush their HTTP
 // response first. No-ops in dev when systemctl is absent. `systemctl reboot` and

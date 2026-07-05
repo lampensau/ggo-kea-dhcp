@@ -33,7 +33,17 @@ type DiagnosticsView struct {
 	Degraded bool
 	Recovery *DiagRecovery
 	Logs     []AuditRow
+	// Journal is the newest service-journal lines (read-only tail, rendered on
+	// page load); JournalErr is the honest reason when they cannot be read.
+	Journal    []string
+	JournalErr string
+	// AptLog is the staged self-update apt.log tail, present only after an
+	// update install has run.
+	AptLog []string
 }
+
+// joinLines renders a log tail as one preformatted block.
+func joinLines(lines []string) string { return strings.Join(lines, "\n") }
 
 // diagIssues counts the WARN and FAIL checks, for the collapsed checks-card summary.
 func diagIssues(checks []DiagRow) (warn, fail int) {

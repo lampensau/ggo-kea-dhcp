@@ -1,6 +1,11 @@
 package network
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestRestartService(t *testing.T) {
 	rec := &RecordingCommander{}
@@ -77,5 +82,27 @@ func TestIsWifiUplinkActive(t *testing.T) {
 				t.Errorf("IsWifiUplinkActive()=%v want %v (out=%q)", got, c.want, c.out)
 			}
 		})
+	}
+}
+
+// ServiceLogTail must issue exactly the argv the sudoers drop-in whitelists -
+// and the drop-in must actually contain that line, so a drift between the two
+// fails here instead of only on the Pi.
+func TestServiceLogTailArgvMatchesSudoers(t *testing.T) {
+	rec := &RecordingCommander{}
+	m := NewManagerWithCommander(rec)
+	if _, err := m.ServiceLogTail(); err != nil {
+		t.Fatalf("ServiceLogTail: %v", err)
+	}
+	want := "journalctl -u ggo-kea-dhcp -n 200 --no-pager"
+	if !callContaining(rec, "journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager") {
+		t.Errorf("argv drifted from the sudoers rule %q; calls=%v", want, rec.Calls)
+	}
+	sudoers, err := os.ReadFile(filepath.Join("..", "..", "packaging", "sudoers", "ggo-kea-dhcp"))
+	if err != nil {
+		t.Fatalf("read sudoers drop-in: %v", err)
+	}
+	if !strings.Contains(string(sudoers), want) {
+		t.Errorf("packaging/sudoers/ggo-kea-dhcp lacks the exact-argument line %q", want)
 	}
 }
