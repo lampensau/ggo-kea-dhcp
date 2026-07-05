@@ -34,11 +34,15 @@ func buildStatTiles(leaseCount int, pools []views.PoolRow, snap metricsSnapshot,
 		Tips: pointTips(snap.PoolPct, "%"),
 	}
 
+	// The two millisecond tiles (uplink + Kea RTT) share one sparkline scale so
+	// their trends are comparable: a 10 ms spike renders taller than a 1 ms wiggle.
+	ms := sharedMSScale(snap.Uplink, snap.KeaRTT)
+
 	// (c) Uplink - reachability/latency; offline is neutral, never red.
-	uplinkT := buildUplinkTile(snap.Uplink)
+	uplinkT := buildUplinkTile(snap.Uplink, ms)
 
 	// (d) Kea control-socket RTT ("lease processing").
-	rttT := views.StatTileView{Icon: "clock", Label: "Lease processing", Dot: "ok", Points: views.SparklinePoints(snap.KeaRTT), Area: views.SparklineArea(snap.KeaRTT), Tips: pointTips(snap.KeaRTT, "ms")}
+	rttT := views.StatTileView{Icon: "clock", Label: "Lease processing", Dot: "ok", Points: ms.points(snap.KeaRTT), Area: ms.area(snap.KeaRTT), Tips: pointTips(snap.KeaRTT, "ms")}
 	if rtt := lastSample(snap.KeaRTT, -1); rtt < 0 {
 		rttT.Value = "—"
 	} else {
@@ -79,18 +83,64 @@ func buildPTPTile(p views.PTPRow, series []int) views.StatTileView {
 
 // buildUplinkTile renders the uplink tile from the sampled latency series. A
 // negative latest sample (the -1 sentinel) = offline/no-probe -> neutral
-// "Offline" (never red; an isolated network is the expected state). Real latency
-// lands in a later phase; until then every sample is -1 and the tile is Offline.
-func buildUplinkTile(series []int) views.StatTileView {
+// "Offline" (never red; an isolated network is the expected state).
+func buildUplinkTile(series []int, ms msScale) views.StatTileView {
 	t := views.StatTileView{Icon: "globe", Label: "Uplink", EditHref: "/settings#wifi-uplink", EditLabel: "Configure WiFi uplink"}
 	if last := lastSample(series, -1); last >= 0 {
 		t.Value, t.Unit, t.Dot = strconv.Itoa(last), "ms", "ok"
-		t.Points, t.Area = views.SparklinePoints(series), views.SparklineArea(series)
+		t.Points, t.Area = ms.points(series), ms.area(series)
 		t.Tips = uplinkTips(series)
 	} else {
 		t.Value = "Offline"
 	}
 	return t
+}
+
+// msScale is the shared sparkline value range for the millisecond stat tiles.
+// ok is false when no series holds a real (non-negative) sample - callers then
+// fall back to the per-series normalization the tiles always had.
+type msScale struct {
+	lo, hi int
+	ok     bool
+}
+
+// sharedMSScale computes one lo/hi across the given series, ignoring negative
+// values (the -1 offline/no-probe sentinels are not latencies). ok is false for
+// the degenerate all-negative/empty case.
+func sharedMSScale(seriesList ...[]int) msScale {
+	var sc msScale
+	for _, series := range seriesList {
+		for _, v := range series {
+			if v < 0 {
+				continue
+			}
+			if !sc.ok {
+				sc.lo, sc.hi, sc.ok = v, v, true
+				continue
+			}
+			if v < sc.lo {
+				sc.lo = v
+			}
+			if v > sc.hi {
+				sc.hi = v
+			}
+		}
+	}
+	return sc
+}
+
+func (sc msScale) points(series []int) string {
+	if !sc.ok {
+		return views.SparklinePoints(series)
+	}
+	return views.SparklinePointsScaled(series, sc.lo, sc.hi)
+}
+
+func (sc msScale) area(series []int) string {
+	if !sc.ok {
+		return views.SparklineArea(series)
+	}
+	return views.SparklineAreaScaled(series, sc.lo, sc.hi)
 }
 
 // pointTips formats a value series into pipe-joined per-sample hover labels

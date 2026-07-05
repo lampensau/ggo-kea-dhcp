@@ -47,6 +47,17 @@ const sparkW, sparkH = 100, 32
 // Coordinates are always within the box (the value range is normalized), so a
 // series containing negatives still yields valid non-negative coordinates.
 func SparklinePoints(series []int) string {
+	lo, hi := seriesRange(series)
+	return SparklinePointsScaled(series, lo, hi)
+}
+
+// SparklinePointsScaled is SparklinePoints against a caller-supplied lo/hi value
+// range, so tiles sharing a unit (the two millisecond tiles) can render on one
+// vertical scale and stay visually comparable. Values outside the range clamp to
+// its edges (a shared range computed ignoring -1 sentinels must still place those
+// samples inside the box); a degenerate range (hi <= lo) renders the centered
+// flat line, same as a flat series.
+func SparklinePointsScaled(series []int, lo, hi int) string {
 	if len(series) == 0 {
 		return ""
 	}
@@ -55,21 +66,18 @@ func SparklinePoints(series []int) string {
 	if len(series) == 1 {
 		return "0," + strconv.Itoa(mid) + " " + strconv.Itoa(sparkW) + "," + strconv.Itoa(mid)
 	}
-	lo, hi := series[0], series[0]
-	for _, v := range series {
-		if v < lo {
-			lo = v
-		}
-		if v > hi {
-			hi = v
-		}
-	}
 	n := len(series)
 	var b strings.Builder
 	for i, v := range series {
 		x := i * sparkW / (n - 1)
 		y := mid
-		if hi != lo {
+		if hi > lo {
+			if v < lo {
+				v = lo
+			}
+			if v > hi {
+				v = hi
+			}
 			// invert: hi -> top (pad), lo -> bottom (h-pad)
 			y = (sparkH - pad) - (v-lo)*(sparkH-2*pad)/(hi-lo)
 		}
@@ -87,9 +95,34 @@ func SparklinePoints(series []int) string {
 // line: the line points plus the two baseline corners (bottom-right, bottom-left),
 // which the <polygon> auto-closes back to the first point. "" for an empty series.
 func SparklineArea(series []int) string {
-	line := SparklinePoints(series)
+	lo, hi := seriesRange(series)
+	return SparklineAreaScaled(series, lo, hi)
+}
+
+// SparklineAreaScaled is SparklineArea against a caller-supplied lo/hi range
+// (see SparklinePointsScaled).
+func SparklineAreaScaled(series []int, lo, hi int) string {
+	line := SparklinePointsScaled(series, lo, hi)
 	if line == "" {
 		return ""
 	}
 	return line + " " + strconv.Itoa(sparkW) + "," + strconv.Itoa(sparkH) + " 0," + strconv.Itoa(sparkH)
+}
+
+// seriesRange is the min/max of a series (0,0 when empty); the per-series
+// normalization the unscaled variants delegate with.
+func seriesRange(series []int) (lo, hi int) {
+	if len(series) == 0 {
+		return 0, 0
+	}
+	lo, hi = series[0], series[0]
+	for _, v := range series {
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+	}
+	return lo, hi
 }
