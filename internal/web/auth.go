@@ -82,13 +82,17 @@ func hashPassword(pw string) (string, error) {
 
 // verifyPassword checks a candidate against a stored pbkdf2 hash in constant
 // time. Non-pbkdf2 (e.g. legacy) hashes never verify - this is a hard cutover.
+// The stored string must not dictate unbounded derivation work (a restored
+// backup carries hashes verbatim): the iteration count is clamped and the hash
+// length pinned, since both multiply PBKDF2 cost. A hash outside these bounds
+// is corrupt or hostile and fails closed like any other malformed hash.
 func verifyPassword(stored, pw string) bool {
 	parts := strings.Split(stored, "$")
 	if len(parts) != 4 || parts[0] != "pbkdf2" {
 		return false
 	}
 	iter, err := strconv.Atoi(parts[1])
-	if err != nil {
+	if err != nil || iter <= 0 || iter > pbkdf2Iter*4 {
 		return false
 	}
 	salt, err := hex.DecodeString(parts[2])
@@ -96,7 +100,7 @@ func verifyPassword(stored, pw string) bool {
 		return false
 	}
 	want, err := hex.DecodeString(parts[3])
-	if err != nil {
+	if err != nil || len(want) != sha256.Size {
 		return false
 	}
 	got, err := pbkdf2.Key(sha256.New, pw, salt, iter, len(want))
