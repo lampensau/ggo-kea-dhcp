@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/a-h/templ"
 )
 
 func TestZZPreviewPoolPlan(t *testing.T) {
@@ -279,6 +281,55 @@ func TestZZPreviewNetSignals(t *testing.T) {
 	if err := os.WriteFile("../static/_preview_netsignals.html", []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestZZPreviewConfirmDialogs renders the three pages whose destructive actions
+// moved from native confirm() popups to the styled in-app dialogs (issue #9):
+// Leases (release + remove reservation), Pinning (unpin), and the dashboard
+// Manage menu (activate + delete profile). The dialogs open in a browser from
+// the real row buttons - no server needed. Preview-only; cleaned up before
+// make pi.
+func TestZZPreviewConfirmDialogs(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	active := PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Username: "operator"}
+
+	write := func(name string, c templ.Component) {
+		t.Helper()
+		var b strings.Builder
+		if err := c.Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/"+name, []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	leases := active
+	leases.CurrentPath = "/leases"
+	write("_preview_confirm_leases.html", Leases(LeasesView{Page: leases, CanReserve: true, Leases: []LeaseRow{
+		{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:aa:bb:cc", Hostname: "bpx-19666", Class: "GGO-BPX", ExpiresIn: "30m", ExpiresAt: 1893456000, Presence: "online"},
+		{IPAddress: "10.0.0.9", HWAddress: "00:1f:80:11:22:33", Hostname: "foh-panel", Class: "GGO-WP-X", Reserved: true, SubnetID: 1},
+	}}))
+
+	pinning := active
+	pinning.CurrentPath = "/pinning"
+	write("_preview_confirm_pinning.html", Pinning(PinningView{Page: pinning,
+		Pinned:    []PortRow{{PortIdentity: "1/2", RemoteID: "core-sw1", CircuitID: "Gi1/0/8", Label: "FOH rack", IPAddress: "10.0.0.9", HWAddress: "00:1f:80:20:aa:bb", SubnetID: 1, Pinned: true}},
+		Learnable: []PortRow{{PortIdentity: "1/3", RemoteID: "core-sw1", CircuitID: "Gi1/0/9", IPAddress: "10.0.0.12", HWAddress: "00:1f:80:44:55:66", LastSeenText: "3m ago"}},
+	}))
+
+	dash := active
+	dash.CurrentPath = "/dashboard"
+	write("_preview_confirm_dashboard.html", Dashboard(DashboardView{Page: dash,
+		ProfileName: "Show_Bootstrap", Preset: "Green-GO Intercom", Interface: "eth0", TotalScopes: 1,
+		Profiles: []ProfileOption{
+			{ID: 1, Name: "Show_Bootstrap", Active: true, ScopeCount: 1},
+			{ID: 2, Name: "Tour B", ScopeCount: 2},
+		},
+	}))
 }
 
 // TestZZPreviewStatTiles renders the four live stat tiles with example sparkline

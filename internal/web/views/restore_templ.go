@@ -229,7 +229,7 @@ func restoreSection(value, label string) templ.Component {
 // restoreScript wires the styled file picker (filename readout + enable Restore once a
 // file is chosen), framework-free. The destructive-action confirmation is the styled
 // <dialog> itself (its warning body + the red "Restore Backup" button), matching the
-// reset/factory-wipe dialogs - no native confirm() on top.
+// reset/factory-wipe dialogs - no native browser confirmation on top.
 func restoreScript() templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context

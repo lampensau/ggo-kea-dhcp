@@ -248,7 +248,6 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = datastar.ReadSignals(r, &sig)
 
-	_, csrf, _ := s.sessionInfo(r)
 	leases, err := s.kea.GetLeases(r.Context(), 1000)
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
@@ -261,7 +260,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 
 	filtered := filterLeases(s.unifiedLeaseRows(r.Context(), leases), sig.Search)
 	sse := datastar.NewSSE(w, r)
-	_ = sse.PatchElementTempl(views.LeasesBody(filtered, csrf, s.mariadb != nil))
+	_ = sse.PatchElementTempl(views.LeasesBody(filtered, s.mariadb != nil))
 }
 
 func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
@@ -280,11 +279,10 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	// list, but patching here makes the release feel immediate. On a re-fetch
 	// error leave the table untouched: repainting from a failed query would show
 	// an empty table under the green toast, indistinguishable from a real wipe.
-	_, csrf, _ := s.sessionInfo(r)
 	if leases, err := s.kea.GetLeases(r.Context(), 1000); err != nil {
 		log.Printf("[Leases] post-release refresh failed (table left as-is): %v", err)
 	} else {
-		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), csrf, s.mariadb != nil))
+		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), s.mariadb != nil))
 	}
 	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
 		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
