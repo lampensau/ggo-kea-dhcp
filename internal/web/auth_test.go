@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"crypto/pbkdf2"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -73,5 +76,30 @@ func TestVerifyPasswordBoundsWork(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Errorf("%s: verifyPassword did not return within 3s", name)
 		}
+	}
+}
+
+// TestVerifyPasswordClampBoundary pins the iteration-clamp policy edge: a hash
+// at exactly pbkdf2Iter*4 must verify (the headroom exists so a future
+// higher-iteration build's backup still restores onto this binary), one past it
+// must not. Both digests are genuinely derived, so the boundary - not a digest
+// mismatch - is what each assertion proves. The accept side costs one real
+// 2.4M-iteration derivation (~1s): the price of pinning policy, not
+// implementation.
+func TestVerifyPasswordClampBoundary(t *testing.T) {
+	const pw = "boundary probe"
+	salt := bytes.Repeat([]byte{0xa5}, pbkdf2SaltLen)
+	mk := func(iter int) string {
+		dk, err := pbkdf2.Key(sha256.New, pw, salt, iter, sha256.Size)
+		if err != nil {
+			t.Fatalf("derive at %d iterations: %v", iter, err)
+		}
+		return fmt.Sprintf("pbkdf2$%d$%x$%x", iter, salt, dk)
+	}
+	if !verifyPassword(mk(pbkdf2Iter*4), pw) {
+		t.Error("a hash at the clamp ceiling (pbkdf2Iter*4) must verify")
+	}
+	if verifyPassword(mk(pbkdf2Iter*4+1), pw) {
+		t.Error("a hash one past the clamp ceiling must be rejected")
 	}
 }
