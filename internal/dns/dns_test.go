@@ -215,6 +215,20 @@ func TestRateLimiterWindows(t *testing.T) {
 	}
 }
 
+func TestZoneSkipsEmptyLabelsAndBadAddresses(t *testing.T) {
+	z := NewZone(map[string]string{
+		"":       "10.0.0.5", // a name the sanitize funnel emptied out
+		"no-ip":  "not-an-ip",
+		"bpx-19": "10.0.0.42",
+	})
+	if len(z.a) != 2 { // one usable name, two suffixes
+		t.Fatalf("zone holds %d A records, want 2: %v", len(z.a), z.a)
+	}
+	if _, ok := z.a["."+SuffixInv]; ok {
+		t.Fatal("empty label produced a bare-suffix record")
+	}
+}
+
 func TestZoneCapAndDeterminism(t *testing.T) {
 	hosts := map[string]string{}
 	for i := 0; i < maxZoneNames+50; i++ {
