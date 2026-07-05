@@ -1,0 +1,66 @@
+package views
+
+// RebootMount is the shared reboot-to-apply offer, mounted once per page (Leases,
+// Port Pinning, Dashboard) outside every live region so an SSE morph can't wipe it.
+// It renders the reboot confirm dialog and its opener, and - when the page's flash
+// carries a target device (set after a reserve / re-pin / release that moved an
+// online Green-GO device) - auto-opens the dialog on load, prefilled with the
+// device. The dialog is a native POST form to /device/reboot; the server re-derives
+// eligibility from the IP and matches the posted MAC against the live occupant, so
+// the form carries both the IP and the target MAC.
+templ RebootMount(csrf string, flash *Flash) {
+	@rebootDialog(csrf)
+	@rebootScript()
+	if flash != nil && flash.Device != nil {
+		// data-init fires once on load (Datastar), opening the dialog for the device
+		// the just-completed change moved. The values ride data attributes rather than
+		// script interpolation so the opener reads them straight off the element.
+		<div data-init="window.ggoRebootOpen(el.dataset.ip, el.dataset.name, el.dataset.mac)" data-ip={ flash.Device.IP } data-name={ flash.Device.Name } data-mac={ flash.Device.MAC } hidden></div>
+	}
+}
+
+// rebootDialog is the single reboot-to-apply confirm dialog. A native POST form (like
+// unpinDialog) whose render-time CSRF token survives every SSE morph because it sits
+// outside the live regions. The opener fills the IP and the display fields; the return
+// field sends the operator back to the page they acted on.
+templ rebootDialog(csrf string) {
+	<dialog id="reboot-dialog" aria-labelledby="reboot-dialog-title">
+		<form method="post" action="/device/reboot" data-busy>
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="return"/>
+			<input type="hidden" name="ip"/>
+			<input type="hidden" name="mac"/>
+			<div class="dialog-head" id="reboot-dialog-title">Reboot this device to apply now?</div>
+			<div class="dialog-body">
+				<p>The device re-requests DHCP straight away and picks up its new address, instead of waiting for its next renewal. Its audio and comms drop for a few seconds while it restarts.</p>
+				<dl class="kv">
+					<dt>Device</dt><dd id="reboot-dialog-name"></dd>
+					<dt>IP</dt><dd class="mono" id="reboot-dialog-ip"></dd>
+				</dl>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Not Now</button>
+				<button type="submit" class="btn btn-primary">@Icon("refresh-cw") Reboot Device</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+// rebootScript defines the opener: it stashes the target IP and the current path (so
+// the server redirects back here), fills the display fields, and shows the dialog.
+templ rebootScript() {
+	<script>
+		window.ggoRebootOpen = function (ip, name, mac) {
+			var d = document.getElementById("reboot-dialog");
+			if (!d || !ip) return;
+			d.querySelector("[name=ip]").value = ip;
+			var m = d.querySelector("[name=mac]");
+			if (m) m.value = mac || "";
+			var ret = d.querySelector("[name=return]");
+			if (ret) ret.value = location.pathname;
+			document.getElementById("reboot-dialog-ip").textContent = ip;
+			document.getElementById("reboot-dialog-name").textContent = name || ip;
+			d.showModal();
+		};
+	</script>
+}

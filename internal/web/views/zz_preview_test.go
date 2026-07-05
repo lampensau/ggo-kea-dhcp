@@ -332,6 +332,39 @@ func TestZZPreviewConfirmDialogs(t *testing.T) {
 	}))
 }
 
+// TestZZPreviewReboot renders the reboot-to-apply offer (issue #10): the Leases page
+// with a flash device set, so the reboot dialog auto-opens on load via data-init, and
+// a second Leases page with no offer (dialog present but closed). Screenshot the first
+// to see the dialog prefilled with a named online Green-GO device. Preview-only;
+// cleaned up before make pi.
+func TestZZPreviewReboot(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	active := PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Username: "operator", CurrentPath: "/leases"}
+	leases := []LeaseRow{
+		{IPAddress: "10.0.0.20", HWAddress: "00:1f:80:aa:bb:cc", Hostname: "bpx-19666", Class: "GGO-BPX", ExpiresIn: "58m", ExpiresAt: 1893456000, Presence: "online"},
+		{IPAddress: "10.0.0.9", HWAddress: "00:1f:80:11:22:33", Hostname: "foh-panel", Class: "GGO-WP-X", Reserved: true, SubnetID: 1},
+	}
+
+	write := func(name string, c templ.Component) {
+		var b strings.Builder
+		if err := c.Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/"+name, []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	offered := active
+	offered.Flash = &Flash{Message: "Reserved 10.0.0.20 for 00:1f:80:aa:bb:cc - the device adopts it on its next DHCP renewal.", Type: "success",
+		Device: &FlashDevice{MAC: "00:1f:80:aa:bb:cc", IP: "10.0.0.20", Name: "bpx-19666"}}
+	write("_preview_reboot_offer.html", Leases(LeasesView{Page: offered, CanReserve: true, Leases: leases}))
+	write("_preview_reboot_plain.html", Leases(LeasesView{Page: active, CanReserve: true, Leases: leases}))
+}
+
 // TestZZPreviewStatTiles renders the four live stat tiles with example sparkline
 // series (rising ok, warn, offline-no-sparkline, flat) so they can be screenshotted
 // without running the appliance. Preview-only; cleaned up before make pi.

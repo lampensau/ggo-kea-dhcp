@@ -111,6 +111,82 @@ func (s *Server) ggoNamesByMAC() map[string]string {
 	return namesFromDevices(s.ggoscan.Snapshot().Devices)
 }
 
+// ggoDeviceByMAC returns the scanned Green-GO device with the given (any-form) MAC,
+// if the scanner currently knows one. The scan inventory is the appliance's proof
+// that an address belongs to a Green-GO client, and carries the device's current IP
+// and name - the basis for the reboot-to-apply offer.
+func (s *Server) ggoDeviceByMAC(mac string) (ggoscan.Device, bool) {
+	if s.ggoscan == nil {
+		return ggoscan.Device{}, false
+	}
+	want := normalizeMAC(mac)
+	if want == "" {
+		return ggoscan.Device{}, false
+	}
+	for _, d := range s.ggoscan.Snapshot().Devices {
+		if normalizeMAC(d.MAC) == want {
+			return d, true
+		}
+	}
+	return ggoscan.Device{}, false
+}
+
+// ggoDeviceByIP returns the scanned Green-GO device answering at ip, if known. Used
+// by the release-path reboot offer (rebootOfferForIP) to prefill the dialog; the
+// handler itself re-derives eligibility from the live MAC at the address, not this map.
+func (s *Server) ggoDeviceByIP(ip string) (ggoscan.Device, bool) {
+	if s.ggoscan == nil || ip == "" {
+		return ggoscan.Device{}, false
+	}
+	for _, d := range s.ggoscan.Snapshot().Devices {
+		if d.IP == ip {
+			return d, true
+		}
+	}
+	return ggoscan.Device{}, false
+}
+
+// rebootOfferForMAC returns the reboot-to-apply flash context for a device just moved
+// to a new address by a reserve or re-pin, or ok=false when no offer applies. It only
+// offers when the device is a known Green-GO client (in the scan inventory) AND is
+// answering ARP right now, so the reboot targets a device that is actually reachable.
+// The offered IP is the device's current address (where it answers), not the new one:
+// the reboot has to reach it where it is so it re-requests DHCP and adopts the change.
+func (s *Server) rebootOfferForMAC(mac string) (FlashDevice, bool) {
+	dev, ok := s.ggoDeviceByMAC(mac)
+	if !ok || dev.IP == "" {
+		return FlashDevice{}, false
+	}
+	if reachable, available := s.presenceByIP(); !available || !reachable[dev.IP] {
+		return FlashDevice{}, false
+	}
+	return FlashDevice{MAC: dev.MAC, IP: dev.IP, Name: rebootDeviceName(dev)}, true
+}
+
+// rebootOfferForIP is rebootOfferForMAC keyed by the current address instead of the
+// MAC (the lease-release path knows the IP the device is on). Same eligibility: a
+// known Green-GO client, answering ARP now.
+func (s *Server) rebootOfferForIP(ip string) (FlashDevice, bool) {
+	dev, ok := s.ggoDeviceByIP(ip)
+	if !ok {
+		return FlashDevice{}, false
+	}
+	if reachable, available := s.presenceByIP(); !available || !reachable[ip] {
+		return FlashDevice{}, false
+	}
+	return FlashDevice{MAC: dev.MAC, IP: ip, Name: rebootDeviceName(dev)}, true
+}
+
+// rebootDeviceName is the display label for a reboot offer: the device's scanned name
+// run through the shared hostname sanitizer (never a second, separate sanitize), or
+// its MAC when the scan carried no usable name.
+func rebootDeviceName(dev ggoscan.Device) string {
+	if n := slugifyHostname(dev.Name); n != "" {
+		return n
+	}
+	return dev.MAC
+}
+
 // overlayGgoNamesWith fills the Hostname of any lease row that lacks one with the
 // device's scanned Green-GO name from the given map. Read-only display fill (no
 // control-plane write): the device sends no DHCP hostname, so without this its lease

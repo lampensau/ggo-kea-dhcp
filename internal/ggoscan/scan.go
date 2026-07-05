@@ -4,9 +4,10 @@
 // into an inventory of {name, MAC, IP, firmware} - the source for the firmware
 // inventory, firmware-mismatch warning, and friendly-hostname assignment.
 //
-// SAFETY: this package transmits exactly ONE frame type - the read-only scan request
-// (type 0x10). The mutating G-G opcodes (reboot, memory-clear, firmware update,
-// save-default) are never constructed here. See scanFrame and TestOnlyEmitsScan.
+// SAFETY: this package transmits two frames only - the read-only scan request, and,
+// solely on an explicit operator action, a device-reboot request (SendReboot). No
+// other device-mutating operation is ever constructed here. See scanFrame,
+// rebootFrame, and TestOnlyEmitsScanAndReboot.
 //
 // Like arpscan it is best-effort and runs ACTIVE-only: a socket that won't open
 // (dev sandbox / no privilege) disables the scanner with a log line, never fatal.
@@ -14,6 +15,7 @@ package ggoscan
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net"
 	"sort"
@@ -33,11 +35,14 @@ const (
 	deviceTTL = 15 * time.Minute
 )
 
-// scanFrame is the ONLY frame this package ever sends: G-G magic "G-G\0" + type
-// 0x10 (device scan, read-only) + reserved. Never parameterized by opcode, so a
-// mutating command (reboot 0x90, memory-clear 0xa0, firmware 0x20/0x30/0x140/0x250,
-// save-default 0x310) cannot be emitted.
+// scanFrame is the read-only device-scan request. It is a fixed 8-byte constant,
+// never parameterized, so nothing device-mutating can be built from it.
 var scanFrame = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
+
+// rebootFrame is the device-reboot request SendReboot sends on an explicit operator
+// action. It shares scanFrame's fixed 8-byte shape, differs only in its request byte,
+// and is the only other frame this package emits (see TestOnlyEmitsScanAndReboot).
+var rebootFrame = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x90, 0x00, 0x00}
 
 // Spec is one Green-GO scope to scan: the subnet-directed broadcast address for its
 // periodic sweep, and a closure yielding the current lease IPs to unicast-scan. The
@@ -127,6 +132,35 @@ func (s *Scanner) Stop() {
 	close(quit)
 	_ = conn.Close() // unblocks recvLoop's ReadFromUDP
 	s.wg.Wait()
+}
+
+// SendReboot asks the device at ip to reboot, so a just-changed address takes effect
+// now instead of at the device's next DHCP renewal. It unicasts one request over the
+// same transport as the scan (UDP port ggoPort), reusing the live scan socket when the
+// scanner is running and otherwise opening a one-shot socket. Best-effort: it returns
+// any send error to the caller (which audits the outcome) but changes no local state.
+func (s *Scanner) SendReboot(ip string) error {
+	addr := net.ParseIP(ip)
+	if addr == nil || addr.To4() == nil {
+		return fmt.Errorf("ggoscan: invalid device address %q", ip)
+	}
+	dst := &net.UDPAddr{IP: addr.To4(), Port: ggoPort}
+
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn != nil {
+		_, err := conn.WriteToUDP(rebootFrame, dst)
+		return err
+	}
+	// Scanner idle (no served Green-GO scope, or dev sandbox): one-shot socket.
+	c, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	_, err = c.WriteToUDP(rebootFrame, dst)
+	return err
 }
 
 // Snapshot returns the current inventory (TTL-pruned) and availability.

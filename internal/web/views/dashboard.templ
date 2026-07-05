@@ -26,6 +26,7 @@ templ Dashboard(v DashboardView) {
 			@ReserveDialog(v.Page.CSRFToken, "/dashboard")
 			@ReserveScript()
 		}
+		@RebootMount(v.Page.CSRFToken, v.Page.Flash)
 		@dashScript()
 		@sparkTooltip()
 	}

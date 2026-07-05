@@ -343,7 +343,15 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// must propagate event-driven rather than waiting for the next lease change.
 	s.publishDashboard()
 
-	s.setFlash(w, r, fmt.Sprintf("Port %s pinned to %s - the device adopts it on its next DHCP renewal (within a few minutes).", portIdentity, ipStr), "success")
+	msg := fmt.Sprintf("Port %s pinned to %s - the device adopts it on its next DHCP renewal (within a few minutes).", portIdentity, ipStr)
+	// Offer a reboot-to-apply when the pinned device is a Green-GO client online now
+	// (its learned MAC ties the port to a scan-inventory device). The reboot reaches
+	// the device at its current address so it re-DHCPs onto the pinned IP immediately.
+	if dev, ok := s.rebootOfferForMAC(macStr); ok {
+		s.setFlashDevice(w, r, msg, "success", dev)
+	} else {
+		s.setFlash(w, r, msg, "success")
+	}
 
 	// Redirect back to pinning page
 	s.redirectHTMX(w, r, "/pinning")

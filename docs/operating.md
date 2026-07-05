@@ -35,6 +35,8 @@ From a lease row you can:
 - **Reserve** the device's current address, so this MAC always gets this IP
 - **Release** the lease, forcing the device to ask again (useful after moving a device between pools)
 
+Both changes normally take effect when the device next renews its lease, which can be minutes away. When the device is a Green-GO client that is online right now, the appliance follows the change with an offer to reboot it, so the released or reserved address takes effect immediately: the reboot makes the device re-request DHCP straight away, at the cost of a few seconds of dropped audio and comms while it restarts. The dialog names the device and its address; declining leaves the change to apply at the next renewal as before.
+
 Reserve a Client IP creates a reservation by hand for a device that is not on the network yet, and Import CSV adds reservations in bulk; imports are additive and never delete existing entries.
 
 > [!NOTE]
@@ -46,7 +48,7 @@ Port pinning fixes an address to a physical switch port rather than to a device.
 
 ![Port pinning](images/pinning.png)
 
-The Learnable Ports table fills up on its own as devices request addresses through Option-82-tagged ports. Pinning a port takes its current address and gives the port a label ("SM Desk", "Stage Left"); pinned ports then show live status in the table above. Port identities are raw switch data; the ASCII/hex toggle changes how they are displayed, not what is stored.
+The Learnable Ports table fills up on its own as devices request addresses through Option-82-tagged ports. Pinning a port takes its current address and gives the port a label ("SM Desk", "Stage Left"); pinned ports then show live status in the table above. When the device on the port is a Green-GO client that is online, pinning it offers the same reboot-to-apply step as the Leases page, so the port's address takes effect at once instead of at the device's next renewal; declining leaves it to apply on renewal. Port identities are raw switch data; the ASCII/hex toggle changes how they are displayed, not what is stored.
 
 Use reservations when the device matters ("this beltpack"), pins when the position matters ("whatever is at the SM desk").
 
