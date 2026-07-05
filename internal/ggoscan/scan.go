@@ -423,8 +423,50 @@ func (inv *inventory) snapshot(now time.Time) []Device {
 	return out
 }
 
-// asciiTrim returns the bytes up to the first NUL (device strings are NUL-padded).
+// asciiTrim returns the bytes up to the first NUL, run through the printable
+// funnel: the name and firmware fields are wire bytes that flow into audit rows,
+// the firmware census, and DNS naming, so control bytes must never pass and a
+// hostile value renders as bounded hex instead.
 func asciiTrim(b []byte) string {
 	before, _, _ := bytes.Cut(b, []byte{0})
-	return string(before)
+	return printableWireString(before)
+}
+
+// maxWireString caps how much of a wire-derived string survives into audit rows
+// and UI fields, mirroring the netmon decoders' funnel (printableID there; kept
+// local because ggoscan and netmon are deliberately isolated packages).
+const maxWireString = 96
+
+// printableWireString passes printable ASCII through and renders anything else
+// as lowercase colon-hex, truncating past maxWireString with a ".." marker.
+func printableWireString(v []byte) string {
+	truncated := false
+	if len(v) > maxWireString {
+		v, truncated = v[:maxWireString], true
+	}
+	printable := len(v) > 0
+	for _, c := range v {
+		if c < 0x20 || c > 0x7e {
+			printable = false
+			break
+		}
+	}
+	if printable {
+		if truncated {
+			return string(v) + ".."
+		}
+		return string(v)
+	}
+	const hex = "0123456789abcdef"
+	buf := make([]byte, 0, len(v)*3+2)
+	for i, c := range v {
+		if i > 0 {
+			buf = append(buf, ':')
+		}
+		buf = append(buf, hex[c>>4], hex[c&0x0f])
+	}
+	if truncated {
+		buf = append(buf, '.', '.')
+	}
+	return string(buf)
 }
