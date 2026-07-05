@@ -18,7 +18,7 @@ func TestRogueDHCP_ServerMapCapped(t *testing.T) {
 	for i := 0; i < maxRogueServers; i++ {
 		d.Consume(dhcpFrameFrom(mac, id(i), 2), at(time.Duration(i)*time.Second))
 	}
-	d.Consume(dhcpFrameFrom(mac, id(0), 2), at(500*time.Second))                // refresh the oldest
+	d.Consume(dhcpFrameFrom(mac, id(0), 2), at(500*time.Second))               // refresh the oldest
 	d.Consume(dhcpFrameFrom(mac, id(maxRogueServers), 2), at(501*time.Second)) // insert at cap
 
 	if len(d.servers) > maxRogueServers {
