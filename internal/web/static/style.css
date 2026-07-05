@@ -416,6 +416,7 @@ td.mono, td .mono { font-family:var(--font-mono); }
 .audit-summary > .badge { min-width:72px; justify-content:center; text-align:center; }
 .audit-head { padding:var(--sp-2) var(--sp-3); color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); }
 .audit-scroll { max-height:520px; overflow-y:auto; }
+.log-tail { max-height:420px; overflow:auto; margin:var(--sp-3) 0 0; padding:var(--sp-3); background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-sm); font-family:var(--font-mono); font-size:12px; line-height:1.5; color:var(--text-secondary); white-space:pre; }
 .audit-row { border-bottom:1px solid var(--border); }
 .audit-row:last-child { border-bottom:0; }
 .audit-summary { list-style:none; cursor:pointer; padding:var(--sp-3); font-size:13px; }
