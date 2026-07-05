@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -80,16 +81,26 @@ func (c *leaseCache) get(ctx context.Context, maxAge time.Duration) ([]kea.Activ
 	c.inflight = done
 	c.mu.Unlock()
 
+	// The store-and-release runs deferred so a PANICKING fetch cannot wedge the
+	// cache: this is the single chokepoint for all lease reads, and an in-flight
+	// marker left set would block every future read until its context expired.
+	// err is pre-set so the panic path publishes an honest failure to the
+	// waiters (never an empty success); the panic itself still unwinds to the
+	// leader's own recover wrapper, and the aged error retries after the TTL.
+	var leases []kea.ActiveLease
+	err := errors.New("lease fetch did not complete")
+	defer func() {
+		c.mu.Lock()
+		c.leases, c.err, c.at = leases, err, c.now()
+		c.inflight = nil
+		close(done)
+		c.mu.Unlock()
+	}()
+
 	// The fetch runs under its own bound (opCtx), detached from the caller: a
 	// canceled request must not poison the result every waiter shares.
 	fctx, cancel := opCtx()
-	leases, err := c.fetch(fctx)
-	cancel()
-
-	c.mu.Lock()
-	c.leases, c.err, c.at = leases, err, c.now()
-	c.inflight = nil
-	close(done)
-	c.mu.Unlock()
+	defer cancel()
+	leases, err = c.fetch(fctx)
 	return leases, err
 }
