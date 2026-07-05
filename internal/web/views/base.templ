@@ -50,6 +50,9 @@ templ Base(d PageData) {
 				// toast into on the Kea down-edge (the persistent state lives in the
 				// #backend-alert strip; this is just the "it just broke" nudge).
 				@KeaToastSlot(false)
+				// Stable morph target for the one-shot "stand down failed - still
+				// serving" toast the live hub pushes when a stand-down reload fails.
+				@StandDownFailToast(false)
 			</div>
 			if d.Authenticated {
 				<div id="live" hidden aria-hidden="true" data-init="@get('/sse/live?page=' + encodeURIComponent(location.pathname), {openWhenHidden: true})"></div>
@@ -91,7 +94,7 @@ templ BackendAlert(rows []AlertRow) {
 				</div>
 				switch a.Action {
 					case "standdown":
-						@standDownForm()
+						@standDownForm(a.LeaseHint)
 					case "resume":
 						@resumeForm()
 				}
@@ -108,14 +111,15 @@ templ BackendAlert(rows []AlertRow) {
 // token is read from the page <meta> at submit time because the live-broadcast strip
 // carries an empty token (same pattern as the pinning forms). The dialog rides inside
 // #backend-alert so it travels with the row when the strip is morphed in.
-templ standDownForm() {
+templ standDownForm(leaseHint string) {
 	<button class="btn btn-sm btn-danger alert-action" type="button" onclick="document.getElementById('dlg-standdown').showModal()">@Icon("power") Stand Down DHCP</button>
 	<dialog id="dlg-standdown" aria-labelledby="dlg-standdown-title">
 		<form method="post" action="/rogue/standdown" data-busy onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
 			<input type="hidden" name="csrf_token" value=""/>
 			<div class="dialog-head" id="dlg-standdown-title">Stand down DHCP?</div>
 			<div class="dialog-body">
-				<p>This stops serving DHCP on every scope. Devices keep their current leases but get no new ones until you resume.</p>
+				<p>This stops this appliance from handing out or renewing DHCP leases on every scope. It does <strong>not</strong> stop the rogue server - that segment is left to it.</p>
+				<p>Devices keep their current address until their lease expires{ leaseParen(leaseHint) }, then lose it: renewal fails around halfway through the lease and the address is dropped at expiry. Resume as soon as the rogue server is disconnected.</p>
 			</div>
 			<div class="dialog-foot">
 				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
@@ -145,6 +149,23 @@ templ KeaToastSlot(show bool) {
 			<div class="toast toast-error" role="alert" data-init__delay.8s="el.remove()">
 				@toastIcon("error")
 				<div class="toast-content">DHCP server just went offline - new leases are not being served.</div>
+				<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
+			</div>
+		}
+	</div>
+}
+
+// StandDownFailToast is the morph target (#standdown-toast) the live hub patches when a
+// stand-down background reload fails: Kea is still serving, so the operator must not be
+// left thinking the box stood down. show=true renders a self-dismissing error toast;
+// show=false leaves the slot empty. Edge-driven only (never in the connect snapshot),
+// mirroring KeaToastSlot - a client joining later doesn't get a stale failure toast.
+templ StandDownFailToast(show bool) {
+	<div id="standdown-toast">
+		if show {
+			<div class="toast toast-error" role="alert" data-init__delay.8s="el.remove()">
+				@toastIcon("error")
+				<div class="toast-content">Stand down failed - the appliance is still serving DHCP. Retry from the rogue-server banner.</div>
 				<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
 			</div>
 		}

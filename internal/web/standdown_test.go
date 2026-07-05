@@ -18,23 +18,36 @@ import (
 // error row with the stand-down control; a stood-down box shows the operator-hold warn
 // row with the resume control (winning over any live detection); nothing yields no row.
 func TestBuildRogueRows(t *testing.T) {
-	rogue := rogueSighting{Server: "192.0.2.7", MAC: "aa:bb:cc:dd:ee:ff", Iface: "eth0"}
+	rogue := rogueSighting{Server: "192.0.2.7", MAC: "aa:bb:cc:dd:ee:ff", Iface: "eth0", Sustained: true}
 
-	rows := buildRogueRows(false, []rogueSighting{rogue})
+	rows := buildRogueRows(false, []rogueSighting{rogue}, "about 30 minutes")
 	if len(rows) != 1 || rows[0].Severity != "err" || rows[0].Action != "standdown" {
 		t.Fatalf("live rogue rows = %+v, want one err/standdown row", rows)
 	}
 	if !strings.Contains(rows[0].Detail, "192.0.2.7") || !strings.Contains(rows[0].Detail, "aa:bb:cc:dd:ee:ff") {
 		t.Errorf("rogue detail must name the server IP and MAC: %q", rows[0].Detail)
 	}
+	if rows[0].LeaseHint != "about 30 minutes" {
+		t.Errorf("standdown row should carry the lease hint for the dialog, got %q", rows[0].LeaseHint)
+	}
+
+	// A present-but-not-sustained rogue (a single, forgeable OFFER) must NOT raise the
+	// loud one-click stand-down banner - only the quieter Network Health row.
+	transient := rogueSighting{Server: "192.0.2.7", MAC: "aa:bb:cc:dd:ee:ff", Iface: "eth0"} // Sustained: false
+	if rows := buildRogueRows(false, []rogueSighting{transient}, ""); rows != nil {
+		t.Errorf("a transient (unsustained) rogue must not raise the stand-down banner, got %+v", rows)
+	}
 
 	// Stood down wins even while the rogue is still visible.
-	held := buildRogueRows(true, []rogueSighting{rogue})
+	held := buildRogueRows(true, []rogueSighting{rogue}, "about 30 minutes")
 	if len(held) != 1 || held[0].Severity != "warn" || held[0].Action != "resume" {
 		t.Fatalf("stood-down rows = %+v, want one warn/resume row", held)
 	}
+	if !strings.Contains(held[0].Detail, "not stopped") || !strings.Contains(held[0].Detail, "30 minutes") {
+		t.Errorf("stood-down banner must state the rogue is not stopped and reference the lease lifetime: %q", held[0].Detail)
+	}
 
-	if rows := buildRogueRows(false, nil); rows != nil {
+	if rows := buildRogueRows(false, nil, ""); rows != nil {
 		t.Errorf("no rogue and not stood down should yield no row, got %+v", rows)
 	}
 }
@@ -43,8 +56,8 @@ func TestBuildRogueRows(t *testing.T) {
 // as POSTs to the stand-down / resume endpoints, and that an attacker-influenced MAC in
 // the detail is HTML-escaped (never emitted as live markup).
 func TestBackendAlertRendersRogueControls(t *testing.T) {
-	evil := rogueSighting{Server: "192.0.2.7", MAC: `x"><script>alert(1)</script>`, Iface: "eth0"}
-	strip := renderFragment(views.BackendAlert(buildRogueRows(false, []rogueSighting{evil})))
+	evil := rogueSighting{Server: "192.0.2.7", MAC: `x"><script>alert(1)</script>`, Iface: "eth0", Sustained: true}
+	strip := renderFragment(views.BackendAlert(buildRogueRows(false, []rogueSighting{evil}, "about 30 minutes")))
 	if !strings.Contains(strip, `action="/rogue/standdown"`) || !strings.Contains(strip, "Stand Down DHCP") {
 		t.Errorf("rogue strip missing the stand-down control:\n%s", strip)
 	}
@@ -52,7 +65,7 @@ func TestBackendAlertRendersRogueControls(t *testing.T) {
 		t.Errorf("attacker MAC was not escaped in the rendered strip:\n%s", strip)
 	}
 
-	held := renderFragment(views.BackendAlert(buildRogueRows(true, nil)))
+	held := renderFragment(views.BackendAlert(buildRogueRows(true, nil, "about 30 minutes")))
 	if !strings.Contains(held, `action="/rogue/resume"`) || !strings.Contains(held, "Resume DHCP") {
 		t.Errorf("stood-down strip missing the resume control:\n%s", held)
 	}
@@ -118,6 +131,39 @@ func TestResumeReloadFailureReArmsStandDown(t *testing.T) {
 	}
 	if got := auditActions(t, s); !got["RECONCILE_FAILED"] {
 		t.Errorf("a failed resume reload should audit RECONCILE_FAILED, saw %v", got)
+	}
+}
+
+// TestStandDownReloadFailureClearsFlag proves the stand-down path is hardened symmetrically
+// to resume: when the background Kea reload FAILS after the flag was set, Kea is still
+// serving the profile, so the flag must be cleared back (not left asserting "stood down"
+// over a running server) and the failure audited - the operator never sees "stood down"
+// while Kea serves.
+func TestStandDownReloadFailureClearsFlag(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedActiveProfile(t, s)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	if !s.beginReconcile() {
+		t.Fatal("could not claim the reconcile guard")
+	}
+	if err := s.setStandDown("admin", true, "192.0.2.7"); err != nil {
+		s.endReconcile()
+		t.Fatalf("stand down: %v", err)
+	}
+	if !s.dhcpStoodDown() {
+		t.Fatal("flag should be set immediately after stand down, before the reload")
+	}
+	s.scheduleServingReloadHeld("rogue-standdown", false) // background; the reload fails against dev Kea
+	waitGuardReleased(t, s)
+
+	if s.dhcpStoodDown() {
+		t.Error("a failed stand-down reload must clear the flag back (Kea still serving; must not assert stood down)")
+	}
+	if got := auditActions(t, s); !got["RECONCILE_FAILED"] {
+		t.Errorf("a failed stand-down reload should audit RECONCILE_FAILED, saw %v", got)
 	}
 }
 

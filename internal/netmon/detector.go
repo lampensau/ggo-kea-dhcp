@@ -97,3 +97,13 @@ func (p *presence) transition(now time.Time) int {
 }
 
 func (p *presence) isPresent() bool { return p.present }
+
+// sustainedFor reports whether the subject is present AND its current uninterrupted
+// run of sightings has spanned at least d - i.e. it has been seen repeatedly over
+// time, not merely confirmed off a single frame kept "warm" through the absence
+// window. A caller gating a loud, high-cost escalation (e.g. the one-click DHCP
+// stand-down) on genuine, sustained presence uses this so one stray/forged frame
+// can't trip it, while the ordinary present/Snapshot signal stays immediate.
+func (p *presence) sustainedFor(d time.Duration) bool {
+	return p.present && p.lastSeen.Sub(p.runStart) >= d
+}

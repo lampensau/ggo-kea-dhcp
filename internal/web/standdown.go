@@ -33,6 +33,11 @@ type rogueSighting struct {
 	MAC    string
 	Iface  string
 	Count  int
+	// Sustained is true once the detector has seen this interface's rogue across a
+	// sustained run rather than a single (forgeable) frame. The loud stand-down banner
+	// escalates only on a sustained sighting; the quieter Network Health row does not
+	// wait. See netmon rogueSustainedAfter.
+	Sustained bool
 }
 
 // activeRogues returns the foreign DHCP servers the monitor currently reports at
@@ -51,10 +56,11 @@ func (s *Server) activeRogues() []rogueSighting {
 					count = c
 				}
 				out = append(out, rogueSighting{
-					Server: d.Fields["server"],
-					MAC:    d.Fields["mac"],
-					Iface:  snap.Iface,
-					Count:  count,
+					Server:    d.Fields["server"],
+					MAC:       d.Fields["mac"],
+					Iface:     snap.Iface,
+					Count:     count,
+					Sustained: d.Fields["sustained"] == "1",
 				})
 			}
 		}
@@ -83,30 +89,89 @@ func totalRogues(rogues []rogueSighting) int {
 // promotes a live rogue detection into an error row with a Stand Down control. Empty
 // when neither applies, so a healthy box shows nothing here.
 func (s *Server) rogueAlertRows() []views.AlertRow {
-	return buildRogueRows(s.dhcpStoodDown(), s.activeRogues())
+	return buildRogueRows(s.dhcpStoodDown(), s.activeRogues(), leaseExpiryPhrase(s.leaseLifetime()))
 }
 
 // buildRogueRows is the pure banner-row logic (split out so it is testable without a
 // live monitor): the stood-down state wins over a live detection, since the operator's
 // hold persists until they resume regardless of whether the rogue is still visible.
-func buildRogueRows(stoodDown bool, rogues []rogueSighting) []views.AlertRow {
+// leaseHint is the human lease-lifetime phrase (e.g. "about 30 minutes") threaded into
+// the operator copy so the confirm dialog + stood-down banner can state honestly when
+// devices lose their addresses.
+//
+// The loud row escalates only on a SUSTAINED rogue (anyRogueSustained): a single spoofed
+// OFFER is a trivially LAN-forgeable outage lever, so a transient sighting stays in the
+// quieter Network Health row and does not raise the one-click stand-down control here.
+func buildRogueRows(stoodDown bool, rogues []rogueSighting, leaseHint string) []views.AlertRow {
 	if stoodDown {
 		return []views.AlertRow{{
-			Severity: "warn",
-			Title:    "DHCP stood down by operator",
-			Detail:   "This appliance is not serving DHCP. Resume once the rogue server is disconnected.",
-			Action:   "resume",
+			Severity:  "warn",
+			Title:     "DHCP stood down by operator",
+			Detail:    standDownBannerDetail(leaseHint),
+			Action:    "resume",
+			LeaseHint: leaseHint,
 		}}
 	}
-	if len(rogues) == 0 {
+	if !anyRogueSustained(rogues) {
 		return nil
 	}
 	return []views.AlertRow{{
-		Severity: "err",
-		Title:    rogueAlertTitle(rogues),
-		Detail:   rogueAlertDetail(rogues),
-		Action:   "standdown",
+		Severity:  "err",
+		Title:     rogueAlertTitle(rogues),
+		Detail:    rogueAlertDetail(rogues),
+		Action:    "standdown",
+		LeaseHint: leaseHint,
 	}}
+}
+
+// anyRogueSustained reports whether any sighting is a sustained rogue (see
+// rogueSighting.Sustained) - the gate that keeps a one-shot forged OFFER from raising the
+// loud stand-down banner.
+func anyRogueSustained(rogues []rogueSighting) bool {
+	for _, r := range rogues {
+		if r.Sustained {
+			return true
+		}
+	}
+	return false
+}
+
+// standDownBannerDetail is the stood-down banner copy: honest that standing down only
+// pauses OUR serving - the rogue is not stopped and devices lose their address as their
+// current lease expires.
+func standDownBannerDetail(leaseHint string) string {
+	d := "This appliance is not handing out or renewing DHCP leases. The rogue server is not stopped, and devices will lose their address as each current lease expires"
+	if leaseHint != "" {
+		d += " (" + leaseHint + ")"
+	}
+	return d + ". Resume once the rogue server is disconnected."
+}
+
+// leaseExpiryPhrase renders a DHCP lease lifetime (seconds) as an approximate human
+// phrase ("about 30 minutes") for the stand-down copy, or "" when it is unknown/invalid
+// so callers can omit the parenthetical rather than print a bare number.
+func leaseExpiryPhrase(secs int) string {
+	if secs <= 0 {
+		return ""
+	}
+	switch {
+	case secs < 60:
+		return "about " + plural(secs, "second")
+	case secs < 3600:
+		return "about " + plural(secs/60, "minute")
+	default:
+		return "about " + plural(secs/3600, "hour")
+	}
+}
+
+// plural formats n with unit, appending "s" for anything but 1 (e.g. "1 hour",
+// "30 minutes").
+func plural(n int, unit string) string {
+	s := strconv.Itoa(n) + " " + unit
+	if n != 1 {
+		s += "s"
+	}
+	return s
 }
 
 // rogueAlertTitle names the count of foreign servers in the banner headline, counting
@@ -138,7 +203,7 @@ func rogueAlertDetail(rogues []rogueSighting) string {
 	if more := totalRogues(rogues) - 1; more > 0 {
 		who += " and " + strconv.Itoa(more) + " more"
 	}
-	return who + " is answering DHCP - devices may lease from the wrong server. Stand our DHCP down to stop the conflict."
+	return who + " is answering DHCP - devices may lease from the wrong server. Standing our DHCP down pauses this appliance's serving; it does not remove the rogue."
 }
 
 // rogueAuditDetail is the audit-log detail: the server(s) that prompted the action,
@@ -243,11 +308,18 @@ func (s *Server) applyDHCPServingState() error {
 // persisted flag is authoritative, so a reload failure only logs/audits - the next
 // reconcile (or reboot) re-applies it.
 //
-// resuming marks the resume path, where a failed reload is dangerous: Kea is still
-// running the holdoff (serving nothing) but the flag is already cleared, so the UI would
-// show a healthy box over a dark one. On that failure we re-arm the stand-down flag so
-// the stood-down banner + Resume control return (a visible retry surface), then push the
-// banner - the operator is never left with a green UI over a box serving no leases.
+// A failed background reload is dangerous in BOTH directions, because the persisted flag
+// is flipped optimistically before the reload confirms - so on failure the flag asserts a
+// state Kea is not actually in. Both branches correct the flag back to the truth so the
+// operator is never shown a state that contradicts what Kea is serving:
+//
+//   - resuming: Kea is still running the holdoff (serving nothing) but the flag was
+//     cleared - re-arm it so the stood-down banner + Resume control return (a retry
+//     surface); never a green UI over a dark box.
+//   - standing down: Kea is still SERVING the profile but the flag was set - clear it
+//     back so the banner reflects the live server (the rogue row + Stand Down retry
+//     return) instead of asserting "stood down" over a running server, and nudge the
+//     operator that the action failed. Never "stood down" over a serving box.
 func (s *Server) scheduleServingReloadHeld(label string, resuming bool) {
 	go func() {
 		defer s.endReconcile()
@@ -257,9 +329,24 @@ func (s *Server) scheduleServingReloadHeld(label string, resuming bool) {
 			if resuming {
 				_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 				s.publishBackendAlert()
+			} else {
+				_ = s.sqlite.SetState(dhcpStandDownKey, "0")
+				s.publishBackendAlert()
+				s.publishStandDownFailToast()
 			}
 		}
 	}()
+}
+
+// publishStandDownFailToast pushes the one-shot "stand down failed - still serving" toast
+// to every connected page after a stand-down background reload fails. Edge-driven only
+// (never in the connect snapshot), mirroring the Kea down-edge toast; nil-safe so the DB
+// unit tests (no live hub) exercise the flag-clear without a panic.
+func (s *Server) publishStandDownFailToast() {
+	if s.live == nil {
+		return
+	}
+	s.live.publishIfChanged("standdown-toast", renderFragment(views.StandDownFailToast(true)))
 }
 
 // handleStandDown stops the appliance serving DHCP on every scope in response to a

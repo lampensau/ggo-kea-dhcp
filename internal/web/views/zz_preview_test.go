@@ -327,15 +327,16 @@ func TestZZPreviewRogueBanner(t *testing.T) {
 	}
 
 	rogue := []AlertRow{{
-		Severity: "err",
-		Title:    "Rogue DHCP server detected",
-		Detail:   "192.0.2.7 (9c:1f:80:de:ad:be) on eth0 is answering DHCP - devices may lease from the wrong server. Stand our DHCP down to stop the conflict.",
-		Action:   "standdown",
+		Severity:  "err",
+		Title:     "Rogue DHCP server detected",
+		Detail:    "192.0.2.7 (9c:1f:80:de:ad:be) on eth0 is answering DHCP - devices may lease from the wrong server. Standing our DHCP down pauses this appliance's serving; it does not remove the rogue.",
+		Action:    "standdown",
+		LeaseHint: "about 30 minutes",
 	}}
 	held := []AlertRow{{
 		Severity: "warn",
 		Title:    "DHCP stood down by operator",
-		Detail:   "This appliance is not serving DHCP. Resume once the rogue server is disconnected.",
+		Detail:   "This appliance is not handing out or renewing DHCP leases. The rogue server is not stopped, and devices will lose their address as each current lease expires (about 30 minutes). Resume once the rogue server is disconnected.",
 		Action:   "resume",
 	}}
 
@@ -351,9 +352,13 @@ func TestZZPreviewRogueBanner(t *testing.T) {
 	// confirm() is captured in the same screenshot without a backdrop hiding the banners.
 	b.WriteString(`<h2>Stand Down confirm dialog (styled, replaces native confirm)</h2>`)
 	b.WriteString(`<script>document.getElementById('dlg-standdown').show()</script>`)
+	b.WriteString(`<h2>Stand-down failure toast (reload failed, still serving)</h2>`)
+	b.WriteString(`<div id="toast-container">`)
+	_ = StandDownFailToast(true).Render(ctx, &b)
+	b.WriteString(`</div>`)
 	b.WriteString(`</main></body></html>`)
 
-	dir := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd-r2"
+	dir := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd-r3"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir preview: %v", err)
 	}
