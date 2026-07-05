@@ -3,6 +3,8 @@ package ggoscan
 import (
 	"bytes"
 	"net"
+	"os"
+	"regexp"
 	"testing"
 )
 
@@ -91,6 +93,53 @@ func TestOnlyEmitsScanAndReboot(t *testing.T) {
 	}
 	if diff != 1 {
 		t.Fatalf("reboot frame differs from scan in %d byte(s), want exactly 1", diff)
+	}
+}
+
+// frameDeclRe matches a package-level fixed frame literal declaration.
+var frameDeclRe = regexp.MustCompile(`(?m)^var (\w+) = \[\]byte\{`)
+
+// sendCallRe matches every send call, capturing the payload argument (its first token).
+var sendCallRe = regexp.MustCompile(`WriteToUDP\((\w+),`)
+
+// TestNoUndeclaredEmitter locks down the source itself so a THIRD emitter can't slip in
+// past the two pinned frames: it scans scan.go and asserts that (a) exactly two frame
+// literals are declared, and (b) every send call transmits one of those two - not a
+// newly introduced payload. Byte-pinning the two frames (above) does not catch a new
+// variable sent from a new call site; this does.
+func TestNoUndeclaredEmitter(t *testing.T) {
+	src, err := os.ReadFile("scan.go")
+	if err != nil {
+		t.Fatalf("read scan.go: %v", err)
+	}
+
+	declared := map[string]bool{}
+	for _, m := range frameDeclRe.FindAllStringSubmatch(string(src), -1) {
+		declared[m[1]] = true
+	}
+	if len(declared) != 2 || !declared["scanFrame"] || !declared["rebootFrame"] {
+		t.Fatalf("declared frame literals = %v, want exactly {scanFrame, rebootFrame}", declared)
+	}
+
+	sends := sendCallRe.FindAllStringSubmatch(string(src), -1)
+	if len(sends) == 0 {
+		t.Fatal("found no send call sites - the matcher is stale, tighten it before trusting this guard")
+	}
+	sentScan, sentReboot := false, false
+	for _, m := range sends {
+		payload := m[1]
+		if !declared[payload] {
+			t.Errorf("send call transmits %q, which is not one of the two pinned frames", payload)
+		}
+		switch payload {
+		case "scanFrame":
+			sentScan = true
+		case "rebootFrame":
+			sentReboot = true
+		}
+	}
+	if !sentScan || !sentReboot {
+		t.Errorf("expected both frames to be sent (scan=%v reboot=%v)", sentScan, sentReboot)
 	}
 }
 
