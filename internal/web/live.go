@@ -162,8 +162,9 @@ func (h *liveHub) broadcastLocked(region, fragment string) {
 }
 
 // regionOnPage reports whether a live region's element exists on the given page,
-// so the hub only pushes patches a page can actually apply. state-badge/link-status
-// live in the shell header (every authenticated page); the rest are page-specific.
+// so the hub only pushes patches a page can actually apply. The first branch is
+// the shell set (present on every authenticated page); everything else is
+// page-owned, link-status/shield-status included (wizard-only).
 // An empty page (no Referer) falls back to "send everything" so live updates are
 // never silently dropped; a page with no live regions of its own (audit, settings,
 // pools, reset) receives only the shell regions.

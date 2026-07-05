@@ -209,12 +209,21 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// give the same honest deferred message the guard-busy paths use instead
 		// of a success flash that implies the change is live.
 		msg := settingsDeferredMsg
-		// A form rendered while still ACTIVE carries the WiFi-uplink fields, but
-		// the uplink block above runs only in ACTIVE - so a submit landing after
-		// the flip drops those fields entirely. Say so instead of implying they
-		// were saved with the rest.
-		if r.Form.Has("uplink_enabled") || r.Form.Has("uplink_ssid") {
-			msg += " WiFi uplink changes were NOT saved - reopen Settings once the change finishes."
+		// A form rendered while still ACTIVE carries the uplink section (its
+		// hidden uplink_form marker survives even a disable, which submits no
+		// other uplink fields), but the uplink block above runs only in ACTIVE -
+		// a submit landing after the flip drops the section entirely. Warn only
+		// when the submitted intent actually differs from what is stored, so a
+		// lease-time-only save is not blamed for uplink changes it never made.
+		if r.Form.Has("uplink_form") {
+			if cfg, uerr := parseUplinkForm(r); uerr == nil {
+				curEn, curSSID, curPass := s.uplinkSettings()
+				changed := cfg.Enabled != curEn ||
+					(cfg.Enabled && (cfg.SSID != curSSID || cfg.Password != curPass))
+				if changed {
+					msg += " WiFi uplink changes were NOT saved - reopen Settings once the change finishes."
+				}
+			}
 		}
 		s.setFlash(w, r, msg, "info")
 		s.redirectHTMX(w, r, "/settings")

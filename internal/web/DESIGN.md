@@ -121,7 +121,7 @@ Two self-hosted subset faces, `font-display:swap`, system fallback:
 Scale (base 16px): card title 16/600; `h3` 14/600 uppercase `.04em`; body 14/400/1.5;
 table cell 13 (data cells mono); `th` 12/600 uppercase `--text-secondary`; label
 13/500 `--text-secondary` (no uppercase, no color accent); help 12; tile value
-28/600; code 13 mono; badge 11/600. `font-feature-settings:"tnum" 1` on body so
+30/650 (34px inside stat tiles); code 13 mono; badge 11/600. `font-feature-settings:"tnum" 1` on body so
 all figures are tabular (live numbers don't reflow).
 
 ## 6. Spacing / radius / elevation / motion
@@ -185,8 +185,8 @@ Token-driven classes (defined in `static/style.css`). Shared focus ring via
   pair with `role="progressbar"` + aria values.
 - **`.stat-tile`** (in a `.tile-grid`, column count pinned via the inline
   `--tiles` var) - the dashboard's live stat strip: a `.tile-label` header
-  (status dot + icon + label + optional `.tile-edit` pencil), the 28/600
-  `.tile-value` with optional unit/delta, then a **server-rendered inline-SVG
+  (status dot + icon + label + optional `.tile-edit` pencil), the `.tile-value`
+  (30/650, 34px in stat tiles) with optional unit/delta, then a **server-rendered inline-SVG
   `.sparkline`** (a translucent `<polygon>` area under a `<polyline>`, colored by
   the severity class through tokens so it auto-themes; `sr-only` trend summary
   for screen readers; framework-free hover tooltip from `data-tips`). **Never a
@@ -218,8 +218,8 @@ The core behavior: **the operator never refreshes and is never frozen.**
   (`internal/web/live.go`) pushes `PatchElements` to **stable region ids**, scoped
   per page by `regionOnPage` - **that function is the canonical region list; when
   a region is added or renamed, update it and this section together.** The shell
-  set (`#state-badge`, `#sys-health`, `#backend-alert`, `#kea-toast`,
-  `#update-badge`, `#standdown-toast`) reaches every authenticated page; the rest
+  set (`#state-badge`, `#sys-health`, `#backend-alert`, `#kea-toast-slot` (hub
+  key `kea-toast`), `#update-badge`, `#standdown-toast`) reaches every authenticated page; the rest
   are page-owned: the dashboard's ten (tiles, LLDP chip, pool table + rollup,
   recent leases, activity feed, net-health card + rollup, pinnings + rollup),
   `#leases-body` on /leases, the four pinned/learnable regions on /pinning, the

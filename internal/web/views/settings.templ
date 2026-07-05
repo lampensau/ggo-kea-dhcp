@@ -15,6 +15,10 @@ templ Settings(v SettingsView) {
 			<h3 class="section-heading">Network</h3>
 			if v.ShowUplink {
 				<div class="card" id="wifi-uplink">
+				// Marker for the save handler: an unchecked enable box submits no
+				// uplink fields at all, so field presence cannot distinguish "uplink
+				// section rendered" from "form rendered without it" (pre-ACTIVE).
+				<input type="hidden" name="uplink_form" value="1"/>
 					<h3>@Icon("globe") WiFi Uplink</h3>
 					<p class="help">Upstream WiFi for internet access (NAT on <span class="mono">wlan0</span>). Pick which scopes route through it on the DHCP Pools page.</p>
 					<div class="switch-field boxed">
