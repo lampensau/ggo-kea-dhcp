@@ -414,8 +414,9 @@ templ navLink(l link, currentPath string) {
 }
 
 // accountMenu is a native-<details> dropdown (framework-free, like the theme
-// toggle): an account icon opens a small menu showing who's signed in and a
-// clear "Sign Out" action - instead of an ambiguous bare icon in the header.
+// toggle): an account icon opens a small menu showing who's signed in, the
+// Account credentials dialog, and a clear "Sign Out" action - instead of an
+// ambiguous bare icon in the header.
 templ accountMenu(d PageData) {
 	<details class="account-menu">
 		<summary class="icon-btn" aria-label="Account menu" title="Account">@Icon("circle-user")</summary>
@@ -423,12 +424,86 @@ templ accountMenu(d PageData) {
 			if d.Username != "" {
 				<div class="account-who">Signed in as <strong>{ d.Username }</strong></div>
 			}
+			if d.Authenticated {
+				<button type="button" class="account-item" onclick="this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()">@Icon("key") Account</button>
+			}
 			<form method="post" action="/logout">
 				<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
 				<button type="submit" class="account-item">@Icon("log-out") Sign Out</button>
 			</form>
 		</div>
 	</details>
+	if d.Authenticated {
+		@accountDialog(d)
+		@pwStrengthScript()
+	}
+}
+
+// accountDialog renames the administrator and/or sets a new password - the flow
+// that used to be the Settings "Administrator Account" card, relocated here so
+// personal credentials live under the account icon, not among appliance settings.
+// A native <dialog> + native POST form (like confirmDialog); Datastar drives only
+// the in-form reveal/strength/match hints. Either change re-auths with the
+// current password server-side.
+templ accountDialog(d PageData) {
+	<dialog id="dlg-account" aria-labelledby="dlg-account-title">
+		<form method="post" action="/account/save" data-busy data-signals="{showacctpw: false, anp: '', anp2: ''}">
+			<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
+			<div class="dialog-head" id="dlg-account-title">Account</div>
+			<div class="dialog-body">
+				<p class="help">Enter your current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p>
+				<div class="form-group">
+					<label class="form-label" for="acct-username">Username</label>
+					<input class="form-control" id="acct-username" name="username" type="text" value={ d.Username } autocomplete="username"/>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-current">Current password</label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-current" name="current_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" autocomplete="current-password" required/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-new">New password <span class="help-inline">(min 12 characters)</span></label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-new" name="new_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp" autocomplete="new-password"/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+					<div class="pw-meter-row" data-show="$anp.length > 0">
+						<div class="pw-meter">
+							<div
+								class="pw-meter-fill"
+								data-style="{width: (window.ggoStrength($anp) * 25) + '%'}"
+								data-class="{'is-weak': window.ggoStrength($anp) <= 1, 'is-fair': window.ggoStrength($anp) === 2, 'is-good': window.ggoStrength($anp) >= 3}"
+							></div>
+						</div>
+						<span class="pw-strength-label" data-text="window.ggoStrengthLabel($anp)"></span>
+					</div>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-confirm">Confirm new password</label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-confirm" name="confirm_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp2" autocomplete="new-password" aria-describedby="acct-np-mismatch" data-attr:aria-invalid="$anp2 !== '' && $anp !== $anp2"/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+					<div id="acct-np-mismatch" class="help help-err" role="alert" data-show="$anp2 !== '' && $anp !== $anp2">Passwords do not match.</div>
+				</div>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-primary">Save Changes</button>
+			</div>
+		</form>
+	</dialog>
 }
 
 templ themeToggle() {

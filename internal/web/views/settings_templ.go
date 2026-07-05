@@ -10,8 +10,9 @@ import templruntime "github.com/a-h/templ/runtime"
 
 // Settings is a native POST form (it may re-IP the appliance, returning the
 // reconnect interstitial, so it navigates rather than streaming SSE). Datastar
-// signals drive in-form reactivity only (DNS toggle, password-match), never the
-// system. Export is a plain download link.
+// signals drive in-form reactivity only (uplink/DNS toggles), never the system.
+// Export is a plain download link. The administrator's own username/password
+// moved to the header account dialog (accountDialog, base.templ).
 func Settings(v SettingsView) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -45,7 +46,7 @@ func Settings(v SettingsView) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = PageHead("Settings", "Network, DHCP defaults, and administrator credentials.").Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = PageHead("Settings", "Network and DHCP defaults for this appliance.").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -72,7 +73,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(settingsSignals(v))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 12, Col: 108}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 13, Col: 108}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 			if templ_7745c5c3_Err != nil {
@@ -85,7 +86,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var4 string
 			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.Page.CSRFToken)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 13, Col: 66}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 14, Col: 66}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
 			if templ_7745c5c3_Err != nil {
@@ -116,7 +117,7 @@ func Settings(v SettingsView) templ.Component {
 					var templ_7745c5c3_Var5 string
 					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.UplinkSSID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 36, Col: 39}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 37, Col: 39}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var5)
 					if templ_7745c5c3_Err != nil {
@@ -129,7 +130,7 @@ func Settings(v SettingsView) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(v.UplinkSSID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 36, Col: 65}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 37, Col: 65}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -160,7 +161,7 @@ func Settings(v SettingsView) templ.Component {
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.UplinkPassword)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 46, Col: 112}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 47, Col: 112}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var7)
 				if templ_7745c5c3_Err != nil {
@@ -186,7 +187,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.OnboardingIP)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 58, Col: 101}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 59, Col: 101}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var8)
 			if templ_7745c5c3_Err != nil {
@@ -199,7 +200,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.SoftAPSSID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 62, Col: 90}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 63, Col: 90}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 			if templ_7745c5c3_Err != nil {
@@ -212,7 +213,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.SoftAPPass)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 66, Col: 106}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 67, Col: 106}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 			if templ_7745c5c3_Err != nil {
@@ -233,7 +234,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.ResolveAttributeValue(itoa(v.LeaseLifetime))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 77, Col: 145}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 78, Col: 145}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var11)
 			if templ_7745c5c3_Err != nil {
@@ -246,7 +247,7 @@ func Settings(v SettingsView) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.GlobalDNS)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 82, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 83, Col: 92}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var12)
 			if templ_7745c5c3_Err != nil {
@@ -260,76 +261,7 @@ func Settings(v SettingsView) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</div><h3 class=\"section-heading\">Administration</h3><div class=\"card\"><h3>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("key").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "Administrator Account</h3><p class=\"help\">Enter the current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p><div class=\"grid-2\"><div class=\"form-group no-margin\"><label class=\"form-label\" for=\"admin_username\">Username</label> <input class=\"form-control\" id=\"admin_username\" name=\"username\" type=\"text\" value=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var13 string
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.Username)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 95, Col: 100}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var13)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" autocomplete=\"username\"></div><div class=\"form-group no-margin\"><label class=\"form-label\" for=\"current_password\">Current password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"current_password\" name=\"current_password\" type=\"password\" data-attr:type=\"$showpw ? 'text' : 'password'\" autocomplete=\"current-password\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showpw = !$showpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</span> <span data-show=\"$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye-off").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</span></button></div></div></div><div class=\"grid-2\"><div class=\"form-group no-margin\"><label class=\"form-label\" for=\"new_password\">New password <span class=\"help-inline\">(min 12 characters)</span></label><div class=\"pw-field\"><input class=\"form-control\" id=\"new_password\" name=\"new_password\" type=\"password\" data-attr:type=\"$showpw ? 'text' : 'password'\" data-bind=\"np\" autocomplete=\"new-password\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showpw = !$showpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</span> <span data-show=\"$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye-off").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</span></button></div></div><div class=\"form-group no-margin\"><label class=\"form-label\" for=\"confirm_password\">Confirm new password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"confirm_password\" name=\"confirm_password\" type=\"password\" data-attr:type=\"$showpw ? 'text' : 'password'\" data-bind=\"np2\" autocomplete=\"new-password\" aria-describedby=\"np-mismatch\" data-attr:aria-invalid=\"$np2 !== '' && $np !== $np2\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showpw = !$showpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</span> <span data-show=\"$showpw\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = Icon("eye-off").Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</span></button></div><div id=\"np-mismatch\" class=\"help help-err\" role=\"alert\" data-show=\"$np2 !== '' && $np !== $np2\">Passwords do not match.</div></div></div></div></form>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</div></form>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -337,7 +269,7 @@ func Settings(v SettingsView) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "    ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "    ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -347,7 +279,7 @@ func Settings(v SettingsView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "    ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "    ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -357,7 +289,7 @@ func Settings(v SettingsView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, " ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -395,12 +327,12 @@ func settingsBackupCard(v SettingsView) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var14 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var14 == nil {
-			templ_7745c5c3_Var14 = templ.NopComponent
+		templ_7745c5c3_Var13 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var13 == nil {
+			templ_7745c5c3_Var13 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<h2 class=\"section-title\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<h2 class=\"section-title\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -408,7 +340,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "Backup &amp; Restore</h2><div class=\"split-grid\"><div class=\"card\"><h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "Backup &amp; Restore</h2><div class=\"split-grid\"><div class=\"card\"><h3>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -416,7 +348,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "Backup</h3><p class=\"help\">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so keep the file somewhere safe.</p><a class=\"btn btn-secondary\" href=\"/settings/backup\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "Backup</h3><p class=\"help\">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so keep the file somewhere safe.</p><a class=\"btn btn-secondary\" href=\"/settings/backup\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -424,7 +356,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "Download Backup</a></div><div class=\"card\"><h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "Download Backup</a></div><div class=\"card\"><h3>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -432,7 +364,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "Restore</h3><p class=\"help\">Load a backup file to bring saved configuration back. You choose which sections to restore - admins, profiles and scopes, port labels, reservations - and the selected ones are overwritten as the appliance re-applies them.</p><button type=\"button\" class=\"btn btn-secondary\" onclick=\"document.getElementById('settings-restore-dlg').showModal()\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "Restore</h3><p class=\"help\">Load a backup file to bring saved configuration back. You choose which sections to restore - admins, profiles and scopes, port labels, reservations - and the selected ones are overwritten as the appliance re-applies them.</p><button type=\"button\" class=\"btn btn-secondary\" onclick=\"document.getElementById('settings-restore-dlg').showModal()\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -440,7 +372,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "Restore from Backup</button></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "Restore from Backup</button></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -471,12 +403,12 @@ func settingsWifiScript() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var15 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var15 == nil {
-			templ_7745c5c3_Var15 = templ.NopComponent
+		templ_7745c5c3_Var14 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var14 == nil {
+			templ_7745c5c3_Var14 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "<script>\n\t\twindow.ggoSettingsScanWifi = function (btn) {\n\t\t\tvar sel = document.getElementById(\"uplink_ssid\"); if (!sel) return;\n\t\t\tggoScanBusy(btn, true);\n\t\t\tvar cur = sel.value;\n\t\t\tsel.innerHTML = \"<option value=''>Scanning…</option>\";\n\t\t\tfetch(\"/wifi/scan\").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur + \" (current)\"; c.selected = true; sel.appendChild(c); }\n\t\t\t\t(aps || []).forEach(function (ap) {\n\t\t\t\t\tif (ap.ssid === cur) return;\n\t\t\t\t\tvar o = document.createElement(\"option\"); o.value = ap.ssid; o.textContent = ap.ssid + \" (\" + ap.signal + \"%, \" + ap.security + \")\"; sel.appendChild(o);\n\t\t\t\t});\n\t\t\t\tif (!sel.options.length) { sel.innerHTML = \"<option value=''>No networks found</option>\"; }\n\t\t\t}).catch(function () {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }\n\t\t\t\tvar e = document.createElement(\"option\"); e.value = \"\"; e.textContent = \"Scan failed, click Scan to retry\"; sel.appendChild(e);\n\t\t\t}).finally(function () { ggoScanBusy(btn, false); });\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "<script>\n\t\twindow.ggoSettingsScanWifi = function (btn) {\n\t\t\tvar sel = document.getElementById(\"uplink_ssid\"); if (!sel) return;\n\t\t\tggoScanBusy(btn, true);\n\t\t\tvar cur = sel.value;\n\t\t\tsel.innerHTML = \"<option value=''>Scanning…</option>\";\n\t\t\tfetch(\"/wifi/scan\").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur + \" (current)\"; c.selected = true; sel.appendChild(c); }\n\t\t\t\t(aps || []).forEach(function (ap) {\n\t\t\t\t\tif (ap.ssid === cur) return;\n\t\t\t\t\tvar o = document.createElement(\"option\"); o.value = ap.ssid; o.textContent = ap.ssid + \" (\" + ap.signal + \"%, \" + ap.security + \")\"; sel.appendChild(o);\n\t\t\t\t});\n\t\t\t\tif (!sel.options.length) { sel.innerHTML = \"<option value=''>No networks found</option>\"; }\n\t\t\t}).catch(function () {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }\n\t\t\t\tvar e = document.createElement(\"option\"); e.value = \"\"; e.textContent = \"Scan failed, click Scan to retry\"; sel.appendChild(e);\n\t\t\t}).finally(function () { ggoScanBusy(btn, false); });\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

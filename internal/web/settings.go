@@ -59,7 +59,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		UplinkSSID:     upSSID,
 		UplinkPassword: upPass,
 		LeaseLifetime:  s.leaseLifetime(),
-		Username:       s.getActor(r),
 	}))
 }
 
@@ -160,99 +159,14 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Admin account (optional username rename + password change) --- validate now,
-	// apply after the state writes succeed. Either change is "sensitive" and requires
-	// the current password; the username keys the session, so a rename also rewrites
-	// the live session rows.
-	actor := s.getActor(r)
-	newUsername := strings.TrimSpace(r.FormValue("username"))
-	usernameChanged := newUsername != "" && newUsername != actor
-	if usernameChanged {
-		if len(newUsername) < 3 || len(newUsername) > 32 || strings.ContainsAny(newUsername, " \t") {
-			s.handleError(w, r, "Username must be 3-32 characters with no spaces", http.StatusBadRequest)
-			return
-		}
-		var n int
-		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", newUsername).Scan(&n); err != nil {
-			s.handleError(w, r, "Database error checking username", http.StatusInternalServerError)
-			return
-		} else if n > 0 {
-			s.handleError(w, r, "That username is already taken", http.StatusBadRequest)
-			return
-		}
-	}
-
-	newPass := r.FormValue("new_password")
-	var newPassHash string
-	if newPass != "" {
-		if newPass != r.FormValue("confirm_password") {
-			s.handleError(w, r, "New passwords do not match", http.StatusBadRequest)
-			return
-		}
-		if len(newPass) < 12 {
-			s.handleError(w, r, "New password must be at least 12 characters long", http.StatusBadRequest)
-			return
-		}
-		hashed, err := hashPassword(newPass)
-		if err != nil {
-			s.handleError(w, r, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		newPassHash = hashed
-	}
-
-	// Any sensitive account change (rename or new password) requires the current
-	// password, verified once against the still-current username.
-	if usernameChanged || newPassHash != "" {
-		var stored string
-		if err := s.sqlite.QueryRow("SELECT password_hash FROM users WHERE username = ?", actor).Scan(&stored); err != nil {
-			s.handleError(w, r, "Could not load current credentials", http.StatusInternalServerError)
-			return
-		}
-		if !verifyPassword(stored, r.FormValue("current_password")) {
-			s.handleError(w, r, "Current password is incorrect", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// All validation passed - commit the settings atomically.
+	// All validation passed - commit the settings atomically. (The admin-account
+	// rename/password flow moved to the header account dialog, POST /account/save.)
 	if err := s.sqlite.SetStates(updates); err != nil {
 		s.handleError(w, r, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Password first (keyed on the current username), then the rename, so the rename's
-	// session/users rewrite doesn't strand the password update.
-	if newPassHash != "" {
-		if _, err := s.sqlite.Exec("UPDATE users SET password_hash = ? WHERE username = ?", newPassHash, actor); err != nil {
-			s.handleError(w, r, "Failed to update password", http.StatusInternalServerError)
-			return
-		}
-		// A password change logs out every OTHER session (a forgotten browser or a
-		// suspected-compromise device), keeping only the current one. Keyed on the
-		// still-current username, before any rename below.
-		if c, err := r.Cookie(sessionCookieName); err == nil {
-			// Security-relevant: if this fails silently a suspected-compromise session
-			// survives the password change. Surface it rather than swallow.
-			if _, err := s.sqlite.Exec("DELETE FROM sessions WHERE username = ? AND session_id != ?", actor, c.Value); err != nil {
-				log.Printf("[settings] password changed but failed to revoke other sessions for %q: %v", actor, err)
-			}
-		}
-		_ = s.sqlite.LogAudit(actor, "CHANGE_PASSWORD", actor, "", "", "SUCCESS")
-	}
-	if usernameChanged {
-		if _, err := s.sqlite.Exec("UPDATE users SET username = ? WHERE username = ?", newUsername, actor); err != nil {
-			s.handleError(w, r, "Failed to rename administrator: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Keep every live session for this admin valid (the session cookie maps to a
-		// sessions row keyed by username), so the rename doesn't log the operator out.
-		if _, err := s.sqlite.Exec("UPDATE sessions SET username = ? WHERE username = ?", newUsername, actor); err != nil {
-			log.Printf("[settings] renamed user but failed to update sessions: %v", err)
-		}
-		_ = s.sqlite.LogAudit(newUsername, "CHANGE_USERNAME", actor+" -> "+newUsername, "", "", "SUCCESS")
-		actor = newUsername
-	}
 
+	actor := s.getActor(r)
 	_ = s.sqlite.LogAudit(actor, "UPDATE_SETTINGS", "settings", "", "", "SUCCESS")
 	if upChanged {
 		_ = s.sqlite.LogAudit(actor, "UPDATE_UPLINK", upTarget, "", "", "SUCCESS")

@@ -275,6 +275,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /login", s.handleLogin)
 	mux.HandleFunc("POST /login", s.handleLoginSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
+	// The signed-in admin's own credentials (header account dialog). Deliberately
+	// NOT in the ONBOARDING whitelist - account changes are a settled-appliance
+	// action, not part of bring-up.
+	mux.HandleFunc("POST /account/save", s.handleAccountSave)
 	mux.HandleFunc("GET /factory", s.handleFactory)
 	mux.HandleFunc("POST /factory/setup", s.handleFactorySetup)
 	mux.HandleFunc("GET /setup", s.handleSetup)

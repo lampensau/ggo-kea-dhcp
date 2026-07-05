@@ -2,11 +2,12 @@ package views
 
 // Settings is a native POST form (it may re-IP the appliance, returning the
 // reconnect interstitial, so it navigates rather than streaming SSE). Datastar
-// signals drive in-form reactivity only (DNS toggle, password-match), never the
-// system. Export is a plain download link.
+// signals drive in-form reactivity only (uplink/DNS toggles), never the system.
+// Export is a plain download link. The administrator's own username/password
+// moved to the header account dialog (accountDialog, base.templ).
 templ Settings(v SettingsView) {
 	@Base(v.Page) {
-		@PageHead("Settings", "Network, DHCP defaults, and administrator credentials.")
+		@PageHead("Settings", "Network and DHCP defaults for this appliance.")
 		@dhcpOptNames()
 		@dhcpOptionsScript()
 		<form id="settings-form" method="post" action="/settings/save" data-busy data-signals={ settingsSignals(v) }>
@@ -84,50 +85,6 @@ templ Settings(v SettingsView) {
 					</div>
 				</div>
 				@optionEditor("", withBlankRow(v.GlobalOptions))
-			</div>
-			<h3 class="section-heading">Administration</h3>
-			<div class="card">
-				<h3>@Icon("key") Administrator Account</h3>
-				<p class="help">Enter the current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p>
-				<div class="grid-2">
-					<div class="form-group no-margin">
-						<label class="form-label" for="admin_username">Username</label>
-						<input class="form-control" id="admin_username" name="username" type="text" value={ v.Username } autocomplete="username"/>
-					</div>
-					<div class="form-group no-margin">
-						<label class="form-label" for="current_password">Current password</label>
-						<div class="pw-field">
-							<input class="form-control" id="current_password" name="current_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" autocomplete="current-password"/>
-							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
-								<span data-show="!$showpw">@Icon("eye")</span>
-								<span data-show="$showpw">@Icon("eye-off")</span>
-							</button>
-						</div>
-					</div>
-				</div>
-				<div class="grid-2">
-					<div class="form-group no-margin">
-						<label class="form-label" for="new_password">New password <span class="help-inline">(min 12 characters)</span></label>
-						<div class="pw-field">
-							<input class="form-control" id="new_password" name="new_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="np" autocomplete="new-password"/>
-							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
-								<span data-show="!$showpw">@Icon("eye")</span>
-								<span data-show="$showpw">@Icon("eye-off")</span>
-							</button>
-						</div>
-					</div>
-					<div class="form-group no-margin">
-						<label class="form-label" for="confirm_password">Confirm new password</label>
-						<div class="pw-field">
-							<input class="form-control" id="confirm_password" name="confirm_password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="np2" autocomplete="new-password" aria-describedby="np-mismatch" data-attr:aria-invalid="$np2 !== '' && $np !== $np2"/>
-							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show passwords" title="Show passwords">
-								<span data-show="!$showpw">@Icon("eye")</span>
-								<span data-show="$showpw">@Icon("eye-off")</span>
-							</button>
-						</div>
-						<div id="np-mismatch" class="help help-err" role="alert" data-show="$np2 !== '' && $np !== $np2">Passwords do not match.</div>
-					</div>
-				</div>
 			</div>
 		</form>
 		@settingsBackupCard(v)

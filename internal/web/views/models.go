@@ -41,9 +41,9 @@ func setupSignals(v SetupView) string {
 }
 
 // settingsSignals is the initial Datastar signal set for the settings form
-// (WiFi-uplink-enabled toggle, new-password match check, password-reveal toggle).
+// (the WiFi-uplink-enabled toggle).
 func settingsSignals(v SettingsView) string {
-	return "{uplink: " + strconv.FormatBool(v.UplinkEnabled) + ", np: '', np2: '', showpw: false}"
+	return "{uplink: " + strconv.FormatBool(v.UplinkEnabled) + "}"
 }
 
 // orDash shows an em dash for empty optional fields (hostname, etc.).
