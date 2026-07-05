@@ -156,7 +156,7 @@ func passwordInput(id, name, autocomplete string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" required> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showpw = !$showpw\" aria-label=\"Show password\" title=\"Show password\"><span data-show=\"!$showpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" required> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showpw = !$showpw\" data-attr:aria-pressed=\"$showpw\" aria-label=\"Show password\" title=\"Show password\"><span data-show=\"!$showpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

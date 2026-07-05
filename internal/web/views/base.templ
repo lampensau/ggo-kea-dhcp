@@ -460,7 +460,7 @@ templ accountDialog(d PageData) {
 					<label class="form-label" for="acct-current">Current password</label>
 					<div class="pw-field">
 						<input class="form-control" id="acct-current" name="current_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" autocomplete="current-password" required/>
-						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
 							<span data-show="!$showacctpw">@Icon("eye")</span>
 							<span data-show="$showacctpw">@Icon("eye-off")</span>
 						</button>
@@ -470,7 +470,7 @@ templ accountDialog(d PageData) {
 					<label class="form-label" for="acct-new">New password <span class="help-inline">(min 12 characters)</span></label>
 					<div class="pw-field">
 						<input class="form-control" id="acct-new" name="new_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp" autocomplete="new-password"/>
-						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
 							<span data-show="!$showacctpw">@Icon("eye")</span>
 							<span data-show="$showacctpw">@Icon("eye-off")</span>
 						</button>
@@ -490,7 +490,7 @@ templ accountDialog(d PageData) {
 					<label class="form-label" for="acct-confirm">Confirm new password</label>
 					<div class="pw-field">
 						<input class="form-control" id="acct-confirm" name="confirm_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp2" autocomplete="new-password" aria-describedby="acct-np-mismatch" data-attr:aria-invalid="$anp2 !== '' && $anp !== $anp2"/>
-						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" aria-label="Show passwords" title="Show passwords">
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
 							<span data-show="!$showacctpw">@Icon("eye")</span>
 							<span data-show="$showacctpw">@Icon("eye-off")</span>
 						</button>
