@@ -36,7 +36,7 @@ The journal states plainly what the appliance could not do. Fix the cause (most 
 
 ## The banner warns the reservation database is down
 
-Dynamic leases keep serving, so the show is not in danger. Reservations and port pinning are read-only until the database returns; the appliance reconnects automatically and audits both the outage and the recovery. If it stays down across a reboot, Diagnostics will show the failing check.
+Dynamic leases keep serving, so the show is not in danger. Until the database returns, the Port Pinning page shows an error instead of its tables and reservation changes fail; the appliance reconnects automatically and audits both the outage and the recovery. If it stays down across a reboot, Diagnostics will show the failing check.
 
 ## The network health card says monitoring is idle, or warns constantly
 

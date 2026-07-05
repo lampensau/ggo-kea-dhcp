@@ -10,13 +10,12 @@ The dashboard is a live console; everything on it updates over a persistent conn
 
 At the top, stat tiles with sparklines track the appliance's vitals over the last quarter hour or so: lease activity, pool utilization, DHCP responsiveness, uplink reachability, and PTP clock health when a grandmaster is visible. Below them:
 
-- an alert strip that appears only when something needs attention (a rogue DHCP server, a duplicate address)
-- the network health card, one sub-card per served interface, showing what the passive monitor sees (see [Network health](network-health.md))
-- recent activity, recent leases and port pinning cards for a quick glance without leaving the page
+- the network health card, one sub-card per served interface, showing what the passive monitor sees (see [Network health](network-health.md)); anything that needs attention there (a rogue DHCP server, a duplicate address) also raises the error/warning count on the header's status pill
+- recent activity, active leases and port pinnings cards for a quick glance without leaving the page
 
 The header line names the active profile and, when the switch announces itself via LLDP, shows which switch and port the appliance is plugged into: a "you are here" for the rack.
 
-The Manage menu on the dashboard is where the bigger operations live: Edit Configuration, profile switching, and the reset and power controls.
+The Manage menu on the dashboard is where the bigger operations live: editing the configuration and its pools, creating a new configuration, and switching between saved profiles. The reset and power controls live in Settings.
 
 ## The backend health banner
 
@@ -29,7 +28,7 @@ Both transitions are recorded in the audit log with timestamps, which is useful 
 
 ## Leases and reservations
 
-The Leases page lists every device the appliance currently serves, searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
+The Leases page shows every device the appliance knows about: active leases and client reservations together, plus any device spotted on a pool address while it awaits a DHCP renewal. The list is searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
 
 From a lease row you can:
 

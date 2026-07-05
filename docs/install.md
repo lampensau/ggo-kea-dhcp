@@ -31,7 +31,7 @@ The installer checks its own prerequisites and refuses to run on an unsupported 
 1. Adds the package sources for [ISC Kea](https://www.isc.org/kea/) (pinned to the supported release series) and the [Caddy](https://caddyserver.com/) web server.
 2. Installs and starts [MariaDB](https://mariadb.org/). The Kea database and its user are created automatically with a random password; no credential is hardcoded anywhere.
 3. Downloads the latest released appliance package and verifies it against the SHA-256 checksum published with the release. A corrupted or tampered download is refused.
-4. Installs the package, which pulls in Kea, its hook libraries and Caddy, and sets up the system service.
+4. Installs the package, which pulls in Kea, its hook libraries and Caddy, and sets up the system service. This also renames the Pi to `ggo-kea-dhcp` - the name behind `https://ggo-kea-dhcp.local/` - replacing the hostname you set when flashing.
 
 If any step fails, the script stops and prints the reason. Nothing on the Pi is changed beyond package installation until the first reboot.
 

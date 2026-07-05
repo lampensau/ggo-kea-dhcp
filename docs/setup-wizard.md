@@ -30,7 +30,7 @@ Each scope also has a DHCP options section for the less common knobs: gateway an
 
 The preset seeds the scope's pool plan; everything it produces can be edited afterwards.
 
-**Green-GO Intercom.** The appliance recognizes Green-GO device families automatically and gives each family its own guaranteed pool, sized from the device counts you expect with headroom on top. Beltpacks take the elastic remainder: whatever address space the sized pools do not use. The result is that an address tells you what kind of device holds it. Size presets (Small, roughly 25 devices; Medium, roughly 120; Large, roughly 300) give you a starting point to adjust.
+**Green-GO Intercom.** The appliance recognizes Green-GO device families automatically and gives each family its own guaranteed pool, sized to the device count you expect (never below a small per-family floor). The two catch-all pools take the elastic remainder: whatever address space the sized pools leave over goes to Green-GO devices without a family pool and to non-Green-GO gear. The result is that an address tells you what kind of device holds it. Size presets (Small, roughly 25 devices; Medium, roughly 120; Large, roughly 300) give you a starting point to adjust.
 
 **Dante / AES67 Audio** and **sACN / Art-Net Lighting.** A single dynamic pool covering the scope. The value of a dedicated scope is isolation and monitoring: the network health detectors know what healthy PTP and sACN traffic look like.
 
@@ -51,7 +51,7 @@ If you have a backup file from another appliance or an earlier setup, Restore fr
 Apply Profile & Activate DHCP validates the profile, configures the network interfaces, writes the DHCP configuration and starts serving.
 
 > [!IMPORTANT]
-> Applying re-addresses the appliance itself: it moves from its setup address onto the gateway address of your first scope. The browser shows a reconnect page and follows it to the new address automatically; `https://ggo-kea-dhcp.local/` keeps working throughout. Devices on IP fallback need the new address from the [access table](first-boot.md).
+> Applying re-addresses the appliance itself: it moves from its setup address onto the gateway address of your untagged scope (or of the first scope, when every scope is tagged). The browser shows a reconnect page and follows it to the new address automatically; `https://ggo-kea-dhcp.local/` keeps working throughout. Devices on IP fallback need the new address from the [access table](first-boot.md).
 
 If the apply fails, the appliance returns to the setup state and restores the previously active profile, so a failed change never leaves the box half-configured. The reason lands in the [audit log](operating.md).
 

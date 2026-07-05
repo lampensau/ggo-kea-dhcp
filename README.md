@@ -35,7 +35,7 @@ While serving DHCP, the appliance passively listens to the network and warns abo
 - VLAN traffic arriving where it should not
 - Green-GO devices stuck on link-local addresses or running without a lease
 - multiple Green-GO configurations active on the same segment
-- mixed firmware within a Green-GO device family
+- mixed Green-GO firmware releases across the rig
 - PTP grandmaster changes and instability (Dante, AES67)
 - broadcast storms and spanning-tree topology changes
 - LLDP/CDP switch neighbors, IGMP queriers and sACN activity, so you can see what the network actually looks like from the appliance's port
