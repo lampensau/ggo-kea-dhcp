@@ -28,7 +28,7 @@ Both transitions are recorded in the audit log with timestamps, which is useful 
 
 ## Leases and reservations
 
-The Leases page shows every device the appliance knows about: active leases and client reservations together, plus any device spotted on a pool address while it awaits a DHCP renewal. The list is searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
+The Leases page shows every device the appliance knows about: active leases and client reservations together, plus any device spotted on a pool address while it awaits a DHCP renewal. Device names display as DNS-style labels (lowercase, dashes instead of spaces), and when two devices share a name each gets a short tag from its MAC so the rows stay distinguishable. The list is searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
 
 From a lease row you can:
 

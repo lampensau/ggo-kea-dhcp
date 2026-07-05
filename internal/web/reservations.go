@@ -207,10 +207,10 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Enter a valid MAC address (e.g. 00:1f:80:12:34:56).", http.StatusBadRequest)
 		return
 	}
-	// Carry the auto/default Green-GO hostname into a manual reservation: if the
-	// operator left the hostname blank, adopt the scanned device name (slugified).
-	// Only fills a blank - an explicit operator hostname is never overridden.
-	if hostname == "" {
+	// The hostname is stored as a DNS label, so sanitize unconditionally. A blank
+	// (or garbage-only) name adopts the scanned Green-GO device name; an explicit
+	// operator hostname is never replaced, only normalized.
+	if hostname = slugifyHostname(hostname); hostname == "" {
 		hostname = s.defaultHostnameFor(hw.String())
 	}
 	ip := net.ParseIP(ipStr)
@@ -417,7 +417,8 @@ func buildImportReservations(
 			skip(i+1, reason)
 			continue
 		}
-		if hostname == "" {
+		// Stored as a DNS label - sanitize unconditionally, matching the single add.
+		if hostname = slugifyHostname(hostname); hostname == "" {
 			hostname = hostnameFor(hw.String())
 		}
 		seenIP[ipU] = true
@@ -612,6 +613,9 @@ func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.Acti
 	// Fill any still-nameless row with the device's scanned Green-GO name (display
 	// only; never overrides a hostname the lease/reservation already carries).
 	s.overlayGgoNamesWith(rows, ggoNames)
+	// The row set is final: funnel every name (client-announced, stored, and
+	// scan-filled alike) through the sanitize+dedupe pass.
+	sanitizeLeaseHostnames(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return leaseIPKey(rows[i].IPAddress) < leaseIPKey(rows[j].IPAddress) })
 	// Presence is keyed by IP from the active ARP prober: a row is online iff the device
 	// holding that address answered an ARP recently. Because it is per-IP, a pinned device

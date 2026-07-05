@@ -13,8 +13,11 @@ func TestSlugifyHostname(t *testing.T) {
 	cases := map[string]string{
 		"Multichannel X": "multichannel-x",
 		"BPX-12":         "bpx-12",
+		"BPX 19666":      "bpx-19666",
 		"  weird__name ": "weird-name",
 		"TestingMCXD":    "testingmcxd",
+		"workstation.":   "workstation",
+		"Büro 1":         "bro-1",
 		"!!!":            "",
 		"":               "",
 	}
