@@ -119,8 +119,15 @@ templ settingsBackupCard(v SettingsView) {
 	<div class="split-grid">
 		<div class="card">
 			<h3>@Icon("download") Backup</h3>
-			<p class="help">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so keep the file somewhere safe.</p>
-			<a class="btn btn-secondary" href="/settings/backup">@Icon("download") Download Backup</a>
+			<p class="help">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so confirm your password and keep the file somewhere safe.</p>
+			<form method="post" action="/settings/backup">
+				<input type="hidden" name="csrf_token" value={ v.Page.CSRFToken }/>
+				<div class="form-group">
+					<label class="form-label" for="backup_current_password">Confirm your password</label>
+					<input class="form-control" id="backup_current_password" name="current_password" type="password" autocomplete="current-password" required/>
+				</div>
+				<button type="submit" class="btn btn-secondary">@Icon("download") Download Backup</button>
+			</form>
 		</div>
 		<div class="card">
 			<h3>@Icon("upload") Restore</h3>

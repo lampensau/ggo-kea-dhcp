@@ -416,7 +416,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /settings", s.handleSettings)
 	mux.HandleFunc("POST /settings/save", s.handleSettingsSave)
-	mux.HandleFunc("GET /settings/backup", s.handleBackupExport)
+	mux.HandleFunc("POST /settings/backup", s.handleBackupExport)
 	mux.HandleFunc("POST /settings/restore", s.handleSettingsRestore)
 	mux.HandleFunc("POST /factory/restore", s.handleFactoryRestore)
 	mux.HandleFunc("GET /reset", s.handleReset)
@@ -649,9 +649,9 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, msg string,
 	// settings) read as a toast instead of dumping the operator on a blank page. Falls
 	// back to the dashboard when there is no usable same-site Referer.
 	//
-	// Only for unsafe methods: a GET handler (e.g. the backup download) keeps its real
-	// status - redirecting a GET error would drop the status code and could loop if the
-	// failing page is its own Referer.
+	// Only for unsafe methods: a GET handler keeps its real status - redirecting a
+	// GET error would drop the status code and could loop if the failing page is
+	// its own Referer.
 	if isUnsafeMethod(r.Method) {
 		back := refererPath(r)
 		if !isValidRedirect(back) {

@@ -6,6 +6,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"ggo-kea-dhcp/internal/db"
@@ -241,5 +243,50 @@ func TestSelectedSectionsDefaultsToAll(t *testing.T) {
 		if !sel[s] {
 			t.Errorf("empty form should select %q", s)
 		}
+	}
+}
+
+// TestBackupExportRequiresReauth proves the backup download re-proves the operator's
+// password before handing out the bundle (it carries every admin hash plus the WiFi
+// and SoftAP passphrases): a wrong or missing password is refused and audited, the
+// correct one returns the attachment.
+func TestBackupExportRequiresReauth(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedAdmin(t, s, "correct horse battery staple")
+	sid, err := s.createSession("admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+	export := func(form url.Values) *httptest.ResponseRecorder {
+		req := postForm(form)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
+		rr := httptest.NewRecorder()
+		s.handleBackupExport(rr, req)
+		return rr
+	}
+
+	for _, form := range []url.Values{
+		{"current_password": {"wrong"}},
+		{}, // missing entirely
+	} {
+		if cd := export(form).Header().Get("Content-Disposition"); cd != "" {
+			t.Fatalf("form %v: export served an attachment without re-auth", form)
+		}
+	}
+	var refused int
+	if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'BACKUP_EXPORT' AND result = 'WARNING'").Scan(&refused); err != nil || refused != 2 {
+		t.Fatalf("refused exports audited %d times (err=%v), want 2", refused, err)
+	}
+
+	rr := export(url.Values{"current_password": {"correct horse battery staple"}})
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Header().Get("Content-Disposition"), "attachment") {
+		t.Fatalf("correct password: code=%d disposition=%q, want an attachment", rr.Code, rr.Header().Get("Content-Disposition"))
+	}
+	var b Backup
+	if err := json.Unmarshal(rr.Body.Bytes(), &b); err != nil {
+		t.Fatalf("export body is not a backup bundle: %v", err)
+	}
+	if len(b.Users) != 1 || b.Users[0].Username != "admin" {
+		t.Fatalf("bundle users = %+v, want the seeded admin", b.Users)
 	}
 }
