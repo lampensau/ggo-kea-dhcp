@@ -64,7 +64,11 @@ If something goes wrong and the appliance does not take over eth0, the Pi stays 
 
 ## Upgrading
 
-Re-run the same install command. On a box that is already active, the control plane is restarted in place onto the new version: no reboot, no address change, your browser session stays up. Your configuration is untouched.
+There are two ways to update, and both end the same way: the control plane restarts in place onto the new version, with no reboot, no address change, and your configuration untouched.
+
+When the appliance has a WiFi uplink with internet access, it notices new releases on its own and offers them in the web UI: a notice appears in the footer, and the Software Update card on the Settings page shows the release notes and an Install button. Installing asks for your password, downloads the package, verifies it against the checksum published with the release, and hands it to a privileged update service on the box. Nothing installs without that explicit, password-confirmed click. If a release also changes the system packages the appliance depends on, the card says so and warns about the brief DHCP interruption the broader install causes.
+
+Without an uplink, re-run the same install command from above over SSH. It downloads and verifies the latest release exactly the same way and restarts the control plane in place.
 
 The appliance version currently running is shown on the Settings page.
 
