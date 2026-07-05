@@ -728,6 +728,13 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
+			// Bound the body like the authenticated branch does: handleFactorySetup
+			// ParseForms pre-auth, so without this a SoftAP client could spill a
+			// multi-GB body into RAM before any admin exists. handleFactoryRestore also
+			// self-caps; this makes the guard uniform across both bootstrap POSTs.
+			if isUnsafeMethod(r.Method) {
+				r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

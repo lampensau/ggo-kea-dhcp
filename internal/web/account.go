@@ -27,14 +27,9 @@ func (s *Server) handleAccountSave(w http.ResponseWriter, r *http.Request) {
 			s.handleError(w, r, "Username must be 3-32 characters with no spaces", http.StatusBadRequest)
 			return
 		}
-		var n int
-		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", newUsername).Scan(&n); err != nil {
-			s.handleError(w, r, "Database error checking username", http.StatusInternalServerError)
-			return
-		} else if n > 0 {
-			s.handleError(w, r, "That username is already taken", http.StatusBadRequest)
-			return
-		}
+		// Uniqueness is checked AFTER re-auth (below): the DB probe would otherwise
+		// let an authenticated session enumerate which usernames exist without ever
+		// re-entering the password.
 	}
 
 	newPass := r.FormValue("new_password")
@@ -67,6 +62,18 @@ func (s *Server) handleAccountSave(w http.ResponseWriter, r *http.Request) {
 	if ok, reason := s.reauthCurrentPassword(r); !ok {
 		s.handleError(w, r, reason, http.StatusBadRequest)
 		return
+	}
+
+	// Username uniqueness, now that the password is proven (see the note above).
+	if usernameChanged {
+		var n int
+		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", newUsername).Scan(&n); err != nil {
+			s.handleError(w, r, "Database error checking username", http.StatusInternalServerError)
+			return
+		} else if n > 0 {
+			s.handleError(w, r, "That username is already taken", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Password first (keyed on the current username), then the rename, so the rename's
