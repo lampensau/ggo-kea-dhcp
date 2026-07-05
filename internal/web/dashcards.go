@@ -51,6 +51,8 @@ func localAuditTime(ts string) string {
 // dropOfflineRows removes rows the ARP prober has confirmed offline ("offline"),
 // keeping online and unknown ("") ones - the dashboard card omits absent devices,
 // while /leases keeps showing every lease and reservation regardless of presence.
+// Filters IN PLACE (rows[:0]) - only pass a slice the caller exclusively owns,
+// never a shared one like the unified /leases rows.
 func dropOfflineRows(rows []views.LeaseRow) []views.LeaseRow {
 	out := rows[:0]
 	for _, r := range rows {

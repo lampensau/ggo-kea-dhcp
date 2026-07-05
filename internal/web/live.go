@@ -261,12 +261,12 @@ func (s *Server) tickDashboard() {
 		// ones, so tiles/net-health/activity still refresh on this path).
 		s.publishDashboardWithLeases(ctx, leases)
 	case metricsChanged:
-		// Metrics tick (every 12s): refresh the periodic-cheap regions, and - when a
-		// client is connected - force-resync the lease-row regions so their presence dots
-		// reconcile even if an earlier push was dropped or the lease/presence state has
-		// stopped changing (the change-only gate would otherwise leave the dots frozen
-		// until a full reload). Skipped entirely with no viewers, so an idle box pays
-		// nothing.
+		// Metrics tick (every 12s): refresh the periodic-cheap regions and re-sync the
+		// pinning regions. The lease-row regions are deliberately NOT touched here (see
+		// publishMetricsTick) - they re-render only via the leasesChanged path above,
+		// whose signature folds in presence and the awaiting set, so dots and awaiting
+		// rows stay current without re-sending client-ticked countdown cells. Skipped
+		// entirely with no viewers, so an idle box pays nothing.
 		if s.live.clientCount() > 0 {
 			s.publishMetricsTick(ctx, leases)
 		}
