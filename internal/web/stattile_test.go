@@ -94,6 +94,39 @@ func TestBuildStatTilesOfflineUplinkFallsBack(t *testing.T) {
 	}
 }
 
+// TestBuildStatTilesOfflineUplinkDoesNotSquashRTT covers the mixed case: uplink
+// just went offline (last sample the -1 sentinel) but still carries large earlier
+// latencies, while Kea RTT is live. The uplink sparkline is hidden, so its history
+// must not feed the shared scale - the visible RTT line has to render on its own
+// range, not squashed against a 30 ms uplink ceiling it can no longer be seen next to.
+func TestBuildStatTilesOfflineUplinkDoesNotSquashRTT(t *testing.T) {
+	snap := metricsSnapshot{
+		KeaRTT: []int{6, 9, 7, 8},
+		Uplink: []int{22, 31, 26, -1}, // last sample offline -> sparkline hidden
+	}
+	tiles := buildStatTiles(0, nil, snap, nil)
+	var rtt, uplink views.StatTileView
+	for _, tl := range tiles {
+		switch tl.Label {
+		case "Lease processing":
+			rtt = tl
+		case "Uplink":
+			uplink = tl
+		}
+	}
+	if uplink.Value != "Offline" || uplink.Points != "" {
+		t.Errorf("offline uplink tile = value %q points %q, want Offline with no sparkline", uplink.Value, uplink.Points)
+	}
+	// RTT must scale to its own [6,9] range, i.e. byte-identical to the unscaled
+	// render - not to the [6,31] range the offline uplink history would impose.
+	if want := views.SparklinePoints(snap.KeaRTT); rtt.Points != want {
+		t.Errorf("RTT points with offline uplink = %q, want own-range %q", rtt.Points, want)
+	}
+	if squashed := views.SparklinePointsScaled(snap.KeaRTT, 6, 31); rtt.Points == squashed {
+		t.Error("RTT tile squashed by hidden offline-uplink history - shared scale still includes it")
+	}
+}
+
 // TestBuildStatTilesDeterministic guards the SSE hash contract: identical inputs
 // must render identical tiles, byte for byte.
 func TestBuildStatTilesDeterministic(t *testing.T) {

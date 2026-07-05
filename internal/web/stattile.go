@@ -36,7 +36,14 @@ func buildStatTiles(leaseCount int, pools []views.PoolRow, snap metricsSnapshot,
 
 	// The two millisecond tiles (uplink + Kea RTT) share one sparkline scale so
 	// their trends are comparable: a 10 ms spike renders taller than a 1 ms wiggle.
-	ms := sharedMSScale(snap.Uplink, snap.KeaRTT)
+	// Only series whose sparklines are actually drawn feed the scale: an offline
+	// uplink hides its own sparkline (buildUplinkTile), so its earlier - possibly
+	// large - history must not inflate the range and squash the visible RTT line.
+	msSeries := [][]int{snap.KeaRTT}
+	if lastSample(snap.Uplink, -1) >= 0 {
+		msSeries = append(msSeries, snap.Uplink)
+	}
+	ms := sharedMSScale(msSeries...)
 
 	// (c) Uplink - reachability/latency; offline is neutral, never red.
 	uplinkT := buildUplinkTile(snap.Uplink, ms)
