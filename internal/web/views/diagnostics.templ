@@ -116,7 +116,7 @@ templ auditJumpScript() {
 					var rows = document.querySelectorAll('.audit-row');
 					for (var i = 0; i < rows.length; i++) { // newest first
 						var r = (rows[i].getAttribute('data-result') || '').toUpperCase();
-						if (r === 'WARNING' || r === 'WARN' || r === 'ERROR' || r === 'FAIL' || r === 'FAILED') { el = rows[i]; break; }
+						if (r === 'WARNING' || r === 'WARN' || r === 'ERROR' || r === 'FAIL' || r === 'FAILED' || r === 'FAILURE') { el = rows[i]; break; }
 					}
 				} else if (h.indexOf('#audit-') === 0) {
 					el = document.getElementById(h.slice(1));

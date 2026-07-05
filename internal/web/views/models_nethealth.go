@@ -69,6 +69,15 @@ func alertClass(sev string) string {
 	return "alert-warn"
 }
 
+// toastRole is "alert" (assertive) for an error toast so a screen reader
+// interrupts to announce it, and "status" (polite) for success/info.
+func toastRole(typ string) string {
+	if typ == "error" {
+		return "alert"
+	}
+	return "status"
+}
+
 // PTPRow is one PTP-domain clock signal for the PTP panel.
 type PTPRow struct {
 	Severity   string
