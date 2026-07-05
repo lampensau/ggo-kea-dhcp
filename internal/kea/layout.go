@@ -259,11 +259,15 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 		// firstFitGap/the elastic min above guarantee sz fits the gap; make the
 		// bound explicit so the uint32 conversion below can never wrap. The
 		// MaxUint32 clause matters on its own: a gap spanning the whole IPv4
-		// space has 2^32 addresses, one more than uint32 can hold.
-		if sz <= 0 || uint64(sz) > math.MaxUint32 || uint64(sz) > uint64(g.hi-g.lo)+1 {
+		// space has 2^32 addresses, one more than uint32 can hold. Guard szU
+		// itself (not a conversion expression) and convert szU below; CodeQL
+		// only recognizes the bound when the compared variable is the one
+		// converted.
+		szU := uint64(sz)
+		if sz <= 0 || szU > math.MaxUint32 || szU > uint64(g.hi-g.lo)+1 {
 			return nil, fmt.Errorf("internal: pool %q size %d exceeds gap", specs[i].Class, sz)
 		}
-		end := g.lo + uint32(sz) - 1
+		end := g.lo + uint32(szU) - 1
 		ranges[i] = fmt.Sprintf("%s - %s", Uint32ToIP(g.lo), Uint32ToIP(end))
 		gaps = shrinkGap(gaps, gi, end)
 	}
