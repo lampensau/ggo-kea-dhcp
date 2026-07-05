@@ -390,9 +390,10 @@ func (s *Server) handleWifiScan(w http.ResponseWriter, r *http.Request) {
 	aps, err := s.net.ScanWifi()
 	if err != nil {
 		log.Printf("WiFi scanning failed: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		// Through the shared error path like every other handler: the scan buttons
+		// only check response.ok (the old bespoke JSON error body was never read),
+		// and the raw nmcli text stays in the log instead of on the wire.
+		s.handleError(w, r, "WiFi scan failed - check Diagnostics.", http.StatusInternalServerError)
 		return
 	}
 

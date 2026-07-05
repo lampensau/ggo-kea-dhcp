@@ -794,7 +794,7 @@ func removeReservationButton(l LeaseRow) templ.Component {
 // it before any hw-address reservation, so the row offers no Reserve and a disabled
 // Remove: deleting the lease would just re-DHCP to the same pinned IP, and the pin itself
 // is managed on the Port Pinning page. A leftover hw-address reservation for the same
-// device (if any) stays deletable on its own row (see unifiedLeaseRowsWithPins), never
+// device (if any) stays deletable on its own row (see unifiedLeaseRowsFrom), never
 // from this pinned row. The ethernet-port marker next to the IP signals the pin.
 func portPinnedAction() templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {

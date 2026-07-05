@@ -120,14 +120,9 @@ func (s *Server) handleWizardPoolEdit(w http.ResponseWriter, r *http.Request) {
 		size = "custom" // a structural edit deviates from any size preset
 	}
 
-	// Simple mode is size-driven: strip any Advanced range pins so the size inputs
-	// actually drive the layout. Otherwise a leftover pin survives (posted as a
-	// hidden field) and LayoutPools keeps honoring it, making the size input a
-	// silent no-op. Advanced mode keeps its pins.
+	// Simple mode is size-driven; Advanced keeps its pins (see StripRangePins).
 	if mode == "simple" {
-		for i := range sc.Plan {
-			sc.Plan[i].Range = ""
-		}
+		sc.Plan.StripRangePins()
 	}
 
 	// Auto-grow the subnet: if the plan's fixed pools no longer fit the chosen CIDR,

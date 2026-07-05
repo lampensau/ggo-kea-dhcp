@@ -137,7 +137,7 @@ func TestUnifiedLeaseRowsWithPins_NoMariaDB(t *testing.T) {
 		{IPAddress: "10.0.0.99", HWAddress: "00:1f:80:20:cc:cc", SubnetID: 1, Cltt: now - 7200, ValidLft: 60},
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil, nil, nil)
+	rows := s.unifiedLeaseRowsFrom(t.Context(), leases, leaseRowSources{Reachable: map[string]bool{}})
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 active rows (expired dropped), got %d: %+v", len(rows), rows)
 	}
@@ -166,7 +166,7 @@ func TestUnifiedLeaseRowsWithPins_Presence(t *testing.T) {
 	}
 	reachable := map[string]bool{"10.0.0.20": true}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil, nil, nil)
+	rows := s.unifiedLeaseRowsFrom(t.Context(), leases, leaseRowSources{Reachable: reachable, Available: true})
 	byIP := map[string]string{}
 	for _, r := range rows {
 		byIP[r.IPAddress] = r.Presence
@@ -196,7 +196,7 @@ func TestUnifiedLeaseRowsWithPins_AwaitingRenewal(t *testing.T) {
 		{IP: "10.0.0.77", MAC: "00:1f:80:20:dd:dd", Flagged: true}, // concluded static - static row
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, true, nil, nil, awaiting, nil)
+	rows := s.unifiedLeaseRowsFrom(t.Context(), leases, leaseRowSources{Reachable: map[string]bool{}, Available: true, Awaiting: awaiting})
 	if len(rows) != 3 {
 		t.Fatalf("expected lease + 2 awaiting rows, got %d: %+v", len(rows), rows)
 	}

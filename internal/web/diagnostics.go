@@ -133,7 +133,9 @@ func (s *Server) dbRecoveryNotice() *views.DiagRecovery {
 	}
 	when := at
 	if epoch, err := strconv.ParseInt(at, 10, 64); err == nil {
-		when = time.Unix(epoch, 0).Format("2006-01-02 15:04:05")
+		// UTC, matching the audit-log timestamps rendered on the same page - the
+		// Diagnostics page speaks one clock.
+		when = time.Unix(epoch, 0).UTC().Format("2006-01-02 15:04:05")
 	}
 	from, _ := s.sqlite.GetState("db_recovered_from")
 	return &views.DiagRecovery{When: when, From: from}

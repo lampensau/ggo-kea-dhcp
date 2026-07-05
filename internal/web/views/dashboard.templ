@@ -140,7 +140,7 @@ templ configMenu(profiles []ProfileOption, csrf string, showEditPools bool) {
 		</summary>
 		<div class="config-dropdown">
 			if hasOtherProfiles(profiles) {
-				<div class="config-dropdown-label">Switch configuration</div>
+				<div class="config-dropdown-label">Switch Configuration</div>
 				for _, p := range profiles {
 					if !p.Active {
 						<div class="config-row">
@@ -156,15 +156,15 @@ templ configMenu(profiles []ProfileOption, csrf string, showEditPools bool) {
 				<div class="config-divider"></div>
 			}
 			<a class="config-item" href="/setup?edit=1">
-				@Icon("layers") <span class="config-item-name">Edit configuration</span>
+				@Icon("layers") <span class="config-item-name">Edit Configuration</span>
 			</a>
 			if showEditPools {
 				<a class="config-item" href="/pools">
-					@Icon("settings") <span class="config-item-name">Edit pools</span>
+					@Icon("settings") <span class="config-item-name">Edit Pools</span>
 				</a>
 			}
 			<a class="config-item" href="/setup">
-				@Icon("plus") <span class="config-item-name">New configuration</span>
+				@Icon("plus") <span class="config-item-name">New Configuration</span>
 			</a>
 		</div>
 	</details>

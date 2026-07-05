@@ -464,16 +464,28 @@ func (s *Server) handleReservationDelete(w http.ResponseWriter, r *http.Request)
 // IP). Sorted by IP.
 func (s *Server) unifiedLeaseRows(ctx context.Context, leases []kea.ActiveLease) []views.LeaseRow {
 	reachable, available := s.presenceByIP()
-	return s.unifiedLeaseRowsWith(ctx, leases, reachable, available)
+	// Page-render path: no shared snapshots here, so self-fetch every source.
+	return s.unifiedLeaseRowsFrom(ctx, leases, leaseRowSources{
+		Reachable:  reachable,
+		Available:  available,
+		PinnedKeys: s.pinnedPortKeys(ctx),
+		GgoNames:   s.ggoNamesByMAC(),
+		Awaiting:   s.awaitingPoolHosts(),
+		Res:        s.fetchHWReservationMap(ctx),
+	})
 }
 
-// unifiedLeaseRowsWith is unifiedLeaseRows over an already-collected presence set, so the
-// live broadcast can share one prober snapshot with the dashboard view build. It fetches
-// the pinned-port set itself (the /leases page path); the dashboard broadcast reuses the
-// pins it already fetched via unifiedLeaseRowsWithPins.
-func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool) []views.LeaseRow {
-	// /leases path: no shared scanner snapshot here, so self-fetch the name map.
-	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC(), s.awaitingPoolHosts(), s.fetchHWReservationMap(ctx))
+// leaseRowSources carries the pre-collected inputs unifiedLeaseRowsFrom merges,
+// so the live broadcast can share the snapshots it already fetched for the
+// dashboard build instead of re-querying per region (this replaced a positional
+// staircase of overloads that had grown to eight parameters).
+type leaseRowSources struct {
+	Reachable  map[string]bool               // ARP presence by IP
+	Available  bool                          // whether the presence prober ran at all
+	PinnedKeys map[string]bool               // pinned-port flex-id keys
+	GgoNames   map[string]string             // device-scan names by MAC
+	Awaiting   []netmon.PoolHost             // static-in-pool hosts awaiting adoption
+	Res        map[string]db.HostReservation // hw-address reservations by MAC
 }
 
 // fetchHWReservationMap returns the client (hw-address) reservations keyed by
@@ -548,9 +560,9 @@ func dedupeStaleLeases(leases []kea.ActiveLease) []kea.ActiveLease {
 	return out
 }
 
-// unifiedLeaseRowsWithPins is unifiedLeaseRowsWith over an already-resolved pinned-port
-// key set, so the dashboard broadcast shares the single fetchPinnedPorts that
-// buildDashboardViewWith already ran (instead of querying type-4 reservations twice).
+// unifiedLeaseRowsFrom merges leases with the pre-collected source snapshots in
+// src, so the dashboard broadcast shares the single fetch of each source that
+// buildDashboardViewWith already ran (instead of querying per region).
 // A lease whose flex-id matches a pinned port is fixed by its port; the row must not
 // offer a MAC reservation (Kea's flex-id reservation wins, so a hw-address one is
 // shadowed) - but a leftover hw-address reservation stays removable (see LeasesBody).
@@ -560,7 +572,9 @@ func dedupeStaleLeases(leases []kea.ActiveLease) []kea.ActiveLease {
 // the prefetched hw-address reservation map (fetchHWReservationMap) - passed in so
 // the dashboard broadcast shares ONE HWReservations query with the card build
 // instead of re-querying per consumer (same rationale as pinnedKeys).
-func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string, awaiting []netmon.PoolHost, res map[string]db.HostReservation) []views.LeaseRow {
+func (s *Server) unifiedLeaseRowsFrom(ctx context.Context, leases []kea.ActiveLease, src leaseRowSources) []views.LeaseRow {
+	reachable, available := src.Reachable, src.Available
+	pinnedKeys, ggoNames, awaiting, res := src.PinnedKeys, src.GgoNames, src.Awaiting, src.Res
 	rows := buildLeaseRows(dedupeStaleLeases(activeLeases(leases)))
 
 	seen := make(map[string]bool, len(rows))
