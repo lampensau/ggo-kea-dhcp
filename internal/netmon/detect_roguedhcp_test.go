@@ -81,12 +81,11 @@ func TestRogueDHCP_UnknownSelfMACSuppressesEmission(t *testing.T) {
 	if ev := d.Tick(at(1 * time.Second)); ev != nil {
 		t.Fatalf("emitted a rogue event while self-MAC unknown: %v", ev)
 	}
+	// Unverified, not a confident all-clear: SevInfo is distinct from SevOK, so this
+	// single assertion covers both "reports Unverified" and "never reports SevOK".
 	s := d.Snapshot()
 	if s.Severity != SevInfo {
-		t.Fatalf("unverified snapshot should be SevInfo, got %+v", s)
-	}
-	if s.Severity == SevOK {
-		t.Fatal("unknown self-MAC must not report a confident all-clear")
+		t.Fatalf("unknown self-MAC should report Unverified (SevInfo), got %+v", s)
 	}
 }
 
