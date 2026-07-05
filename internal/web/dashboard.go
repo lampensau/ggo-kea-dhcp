@@ -298,10 +298,19 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	// be reached and rebooted to re-request DHCP immediately. The MAC rides along as the
 	// freshness anchor the reboot handler matches against.
 	if dev, ok := s.rebootOfferForIP(ip); ok {
-		ipArg, _ := json.Marshal(dev.IP)
-		nameArg, _ := json.Marshal(dev.Name)
-		macArg, _ := json.Marshal(dev.MAC)
-		_ = sse.ExecuteScript(
-			"window.ggoRebootOpen&&window.ggoRebootOpen(" + string(ipArg) + "," + string(nameArg) + "," + string(macArg) + ")")
+		rebootExecScript(sse, dev)
 	}
+}
+
+// rebootExecScript opens the reboot-to-apply dialog on the submitting page over
+// SSE (the live equivalent of setFlashDevice's reload-and-auto-open). The
+// `ggoRebootOpen&&` guard makes it a no-op on a page without the opener mounted
+// (e.g. a reserve submitted from the dashboard), so callers can always attempt
+// it. ExecuteScript self-removes the node, so repeated ops don't pile up.
+func rebootExecScript(sse *datastar.ServerSentEventGenerator, dev FlashDevice) {
+	ipArg, _ := json.Marshal(dev.IP)
+	nameArg, _ := json.Marshal(dev.Name)
+	macArg, _ := json.Marshal(dev.MAC)
+	_ = sse.ExecuteScript(
+		"window.ggoRebootOpen&&window.ggoRebootOpen(" + string(ipArg) + "," + string(nameArg) + "," + string(macArg) + ")")
 }

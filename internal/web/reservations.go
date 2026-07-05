@@ -17,6 +17,8 @@ import (
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/netmon"
 	"ggo-kea-dhcp/internal/web/views"
+
+	"github.com/starfederation/datastar-go/datastar"
 )
 
 // reservationConflict reports whether assigning ip (in subnetID) to the device
@@ -239,7 +241,21 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	msg := fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr)
 	// If the reserved device is a Green-GO client that is online now, offer to reboot it
 	// so the change applies immediately instead of waiting out the renewal.
-	if dev, ok := s.rebootOfferForMAC(hw.String()); ok {
+	dev, offer := s.rebootOfferForMAC(hw.String())
+
+	// Live path: the reserve dialog is opened from several pages (dashboard,
+	// leases), so the regions refresh on the operator's own SSE stream via the
+	// publishDashboard above and we answer with a toast. The reboot dialog opens
+	// only where its opener is mounted (rebootExecScript's guard no-ops elsewhere).
+	if isDatastar(r) {
+		sse := datastar.NewSSE(w, r)
+		toast(sse, msg, "success")
+		if offer {
+			rebootExecScript(sse, dev)
+		}
+		return
+	}
+	if offer {
 		s.setFlashDevice(w, r, msg, "success", dev)
 	} else {
 		s.setFlash(w, r, msg, "success")

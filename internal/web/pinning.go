@@ -359,13 +359,25 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// Offer a reboot-to-apply when the pinned device is a Green-GO client online now
 	// (its learned MAC ties the port to a scan-inventory device). The reboot reaches
 	// the device at its current address so it re-DHCPs onto the pinned IP immediately.
-	if dev, ok := s.rebootOfferForMAC(macStr); ok {
+	dev, offer := s.rebootOfferForMAC(macStr)
+
+	// Live path: the pinned/learnable regions arrive on the operator's own SSE
+	// stream via the publishDashboard above, so answer the submit with just a
+	// toast (and the reboot dialog when offered) instead of a full-page reload -
+	// matching lease-release right beside it.
+	if isDatastar(r) {
+		sse := datastar.NewSSE(w, r)
+		toast(sse, msg, "success")
+		if offer {
+			rebootExecScript(sse, dev)
+		}
+		return
+	}
+	if offer {
 		s.setFlashDevice(w, r, msg, "success", dev)
 	} else {
 		s.setFlash(w, r, msg, "success")
 	}
-
-	// Redirect back to pinning page
 	s.redirectHTMX(w, r, "/pinning")
 }
 
@@ -406,8 +418,12 @@ func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
 	// MariaDB pinning regions, so broadcast the unpin now.
 	s.publishDashboard()
 
-	s.setFlash(w, r, fmt.Sprintf("Port %s successfully unbound", portIdentity), "success")
-
+	msg := fmt.Sprintf("Port %s successfully unbound", portIdentity)
+	if isDatastar(r) {
+		toast(datastar.NewSSE(w, r), msg, "success") // regions arrive via the live stream
+		return
+	}
+	s.setFlash(w, r, msg, "success")
 	s.redirectHTMX(w, r, "/pinning")
 }
 

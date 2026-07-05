@@ -90,7 +90,7 @@ templ RecentLeases(rows []LeaseRow, canReserve bool) {
 // you choose the address, not whatever the device happened to get.
 templ ReserveDialog(csrf, returnTo string) {
 	<dialog id="reserve-dialog" aria-labelledby="reserve-dialog-title">
-		<form method="post" action="/reservations/add" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+		<form method="post" action="/reservations/add" data-on:submit__prevent={ dialogPost("/reservations/add") }>
 			<input type="hidden" name="csrf_token" value={ csrf }/>
 			<input type="hidden" name="return" value={ returnTo }/>
 			<div class="dialog-head" id="reserve-dialog-title">Reserve a Client IP</div>

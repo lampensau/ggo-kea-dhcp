@@ -71,6 +71,16 @@ func labelSaveOnBlur() string {
 	return "el.closest('form').querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;@post('/pinning/label',{contentType:'form'})"
 }
 
+// dialogPost is the Datastar submit expression for the pin/unpin/reserve confirm
+// dialogs: refresh the CSRF token from the page <meta> at submit time (a live SSE
+// re-render blanks the token baked into the form), @post the form, and close the
+// dialog. The handler answers with a toast (and the reboot dialog when offered),
+// and the pinned/learnable/lease regions refresh over the page's own live stream -
+// no full reload, matching the label autosave and lease-release right beside it.
+func dialogPost(action string) string {
+	return "el.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;@post('" + action + "',{contentType:'form'});el.closest('dialog').close()"
+}
+
 // meterClass returns the meter fill variant for an occupancy percentage:
 // amber ≥80%, red ≥95% (DESIGN.md §8). Used by the pool table.
 func meterClass(percent int) string {

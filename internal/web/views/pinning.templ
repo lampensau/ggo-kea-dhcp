@@ -183,7 +183,7 @@ templ unpinButton(p PortRow) {
 // from the page <meta> at submit time.
 templ unpinDialog(csrf string) {
 	<dialog id="unpin-dialog" aria-labelledby="unpin-dialog-title">
-		<form method="post" action="/pinning/unpin" data-busy>
+		<form method="post" action="/pinning/unpin" data-busy data-on:submit__prevent={ dialogPost("/pinning/unpin") }>
 			<input type="hidden" name="csrf_token" value={ csrf }/>
 			<input type="hidden" name="port_identity"/>
 			<input type="hidden" name="subnet_id"/>
@@ -221,7 +221,7 @@ templ pinButton(p PortRow) {
 // pinDialog is the single confirm dialog; ggoPinPrep fills it from the clicked row.
 templ pinDialog(csrf string) {
 	<dialog id="pin-dialog" aria-labelledby="pin-dialog-title">
-		<form method="post" action="/pinning/pin">
+		<form method="post" action="/pinning/pin" data-on:submit__prevent={ dialogPost("/pinning/pin") }>
 			<input type="hidden" name="csrf_token" value={ csrf }/>
 			<input type="hidden" name="port_identity"/>
 			<input type="hidden" name="subnet_id"/>
