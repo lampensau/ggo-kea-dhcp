@@ -36,6 +36,10 @@ const (
 
 const defaultOnboardingCIDR = "10.0.0.1/24"
 
+// errNoScopes marks the "ACTIVE but nothing to serve" case so the converge
+// dispatch can rescue the box to ONBOARDING instead of leaving it addressless.
+var errNoScopes = errors.New("no scopes for the active profile")
+
 // softAPWlanIP is the fixed address hostapd assigns to wlan0 in onboarding. Kept
 // in sync with softAPWlanCIDR in internal/network/hostapd.go (top corner of the
 // 172.16/12 RFC 1918 range, away from the operator subnets on eth0).
@@ -125,10 +129,31 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 	switch state {
 	case db.StateActive, db.StateConfiguring:
 		// ACTIVE and a live-apply CONFIGURING both serve the profile's scopes.
-		return s.reconcileActive(mode, targetProfileID)
+		err := s.reconcileActive(mode, targetProfileID)
+		if errors.Is(err, errNoScopes) && mode == ModeConverge && state == db.StateActive {
+			return s.rescueToOnboarding(err)
+		}
+		return err
 	default: // FACTORY and ONBOARDING share identical network state.
 		return s.reconcileOnboarding(mode)
 	}
+}
+
+// rescueToOnboarding demotes a box that claims ACTIVE but has nothing to serve
+// (zero scopes - e.g. a corrupted or hand-edited profile row) back to ONBOARDING
+// so the SoftAP and onboarding IP come up. Without this the converge fails before
+// any interface is configured and the box is unreachable except by console.
+// Converge-only: the apply/switch paths (ModeApply) have their own rollback and
+// must see the error, not a silent demotion.
+func (s *Server) rescueToOnboarding(cause error) error {
+	log.Printf("[reconcile] %v - falling back to ONBOARDING so the box stays reachable", cause)
+	_ = s.sqlite.LogAudit("SYSTEM", "RESCUE_ONBOARDING", "lifecycle", "", cause.Error(), "WARNING")
+	if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); e != nil {
+		log.Printf("[reconcile] failed to persist ONBOARDING on rescue: %v", e)
+	}
+	// ModeApply so stale NM connections from the dead profile are torn down, same
+	// as resumeInterruptedApply's fallback.
+	return s.reconcileOnboarding(ModeApply)
 }
 
 // resumeInterruptedApply completes a profile apply that was interrupted (the box
@@ -325,7 +350,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 		return fmt.Errorf("active reconcile: load scopes: %w", err)
 	}
 	if len(scopes) == 0 {
-		return fmt.Errorf("active reconcile: no scopes for the active profile")
+		return fmt.Errorf("active reconcile: %w", errNoScopes)
 	}
 
 	// Kea subnet-ids are positional, so a profile edit/switch renumbers them while
