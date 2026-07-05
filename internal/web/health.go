@@ -173,11 +173,11 @@ func (s *Server) backendAlertRows() []views.AlertRow {
 // flips the UI/audit state back to healthy once MariaDB returns - no restart needed.
 func (s *Server) startBackendHealthProbe() {
 	go func() {
-		s.probeMariaDB() // establish baseline promptly
+		runRecovered("mariadb-probe", s.probeMariaDB) // establish baseline promptly
 		t := time.NewTicker(backendProbeInterval)
 		defer t.Stop()
 		for range t.C {
-			s.probeMariaDB()
+			runRecovered("mariadb-probe", s.probeMariaDB)
 		}
 	}()
 }

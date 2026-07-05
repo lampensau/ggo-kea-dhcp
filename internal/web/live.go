@@ -228,7 +228,7 @@ func (s *Server) startLiveTicker() {
 			if s.live.clientCount() == 0 {
 				continue
 			}
-			s.tickDashboard()
+			runRecovered("live-ticker", s.tickDashboard)
 		}
 	}()
 }
@@ -558,21 +558,26 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 	// goroutine (the select loop); the goroutine only computes, never writes sse.
 	snap := make(chan string, 8)
 	go func() {
+		// close stays outside the recover wrapper: even a panicked snapshot must
+		// unblock the select loop below (a never-closed snap would idle this case
+		// forever, though the stream itself would keep serving hub pushes).
 		defer close(snap)
-		leases, err := s.kea.GetLeases(ctx, 1000)
-		if err != nil {
-			return
-		}
-		for _, f := range s.dashboardFragments(ctx, leases) {
-			if !regionOnPage(f.region, page) {
-				continue
-			}
-			select {
-			case snap <- f.fragment:
-			case <-ctx.Done():
+		runRecovered("sse-snapshot", func() {
+			leases, err := s.kea.GetLeases(ctx, 1000)
+			if err != nil {
 				return
 			}
-		}
+			for _, f := range s.dashboardFragments(ctx, leases) {
+				if !regionOnPage(f.region, page) {
+					continue
+				}
+				select {
+				case snap <- f.fragment:
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
 	}()
 
 	for {

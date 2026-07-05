@@ -155,12 +155,7 @@ func (s *Server) startMetricsSampler() {
 // scope/pool input) degrades that one reading instead of killing the goroutine -
 // which would silently freeze every dashboard sparkline until the next restart.
 func (s *Server) sampleOnceSafe() {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[metrics] sampler recovered from panic: %v", r)
-		}
-	}()
-	s.sampleMetrics()
+	runRecovered("metrics", s.sampleMetrics)
 }
 
 // sampleMetrics takes one reading of every series. The single GetLeases also

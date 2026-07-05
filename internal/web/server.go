@@ -279,6 +279,20 @@ func auditResult(sev netmon.Severity) string {
 	}
 }
 
+// runRecovered runs fn, logging and absorbing a panic. Background goroutines
+// (ticks, probes, the boot reconcile) don't get the net/http per-connection
+// recovery, so without this a panic in any of them kills the whole process -
+// DHCP management, DNS, and the UI together. A skipped cycle is the correct
+// degradation; the next tick retries.
+func runRecovered(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[%s] recovered from panic: %v", name, r)
+		}
+	}()
+	fn()
+}
+
 // Start runs the HTTP server and blocks until exit.
 func (s *Server) Start() error {
 	// One-shot: lift any legacy per-scope WiFi uplink up to the box-level keys before
@@ -293,7 +307,7 @@ func (s *Server) Start() error {
 	// Run it in the background so the web UI binds immediately - network/SoftAP
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
-	go func() {
+	go runRecovered("boot-reconcile", func() {
 		// Hold the mutation guard for the boot reconcile, like every other reconcile
 		// path, so a fast operator apply/switch arriving the instant the listener binds
 		// cannot run a second reconcile concurrently over the same NM connections and
@@ -302,14 +316,18 @@ func (s *Server) Start() error {
 		// (nothing else claims it before the listener is up); if it happens, the
 		// winning request's own reconcile converges state, so skipping is safe.
 		if s.beginReconcile() {
-			if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
-				// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
-				// interface would otherwise look healthy everywhere but journalctl. The
-				// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
-				log.Printf("Boot reconcile (best-effort) reported: %v", err)
-				_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
-			}
-			s.endReconcile()
+			// Deferred, not sequential: the recover wrapper above absorbs a panic,
+			// and an absorbed panic must not leave the mutation guard held forever.
+			func() {
+				defer s.endReconcile()
+				if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+					// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
+					// interface would otherwise look healthy everywhere but journalctl. The
+					// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
+					log.Printf("Boot reconcile (best-effort) reported: %v", err)
+					_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
+				}
+			}()
 		} else {
 			log.Printf("Boot reconcile skipped: an apply is already in progress")
 		}
@@ -320,7 +338,7 @@ func (s *Server) Start() error {
 		// banner so the stale warning self-clears without a Diagnostics visit.
 		s.SetPreflight(preflight.Run(s.cfg))
 		s.publishBackendAlert()
-	}()
+	})
 
 	// Keep the dashboard's Kea-derived live regions ticking while operators watch.
 	s.startLiveTicker()
