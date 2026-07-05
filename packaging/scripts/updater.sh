@@ -128,6 +128,21 @@ esac
 got="sha256:$(sha256sum "$DEB" | awk '{print $1}')"
 [ "$got" = "$want" ] || fail "staged package does not match GitHub's published digest for v$VERSION"
 
+# Monotonic downgrade guard (root-side, cannot be bypassed by a compromised app
+# user). The web handler already refuses a non-newer stage before it writes the
+# manifest, but a compromised app process skips the web layer entirely and drives
+# this service directly - so re-enforce "strictly newer" HERE against the version
+# dpkg currently has installed. An authentic-but-older published release still
+# passes the digest gate above, yet reinstalling it re-opens whatever
+# vulnerabilities later releases fixed. Compare the SAME $VERSION that anchored
+# the digest fetch, so the guard can't be desynchronized from what installs.
+# Equal versions are not an upgrade -> refuse (blocks reinstall-as-downgrade).
+# Not-installed (empty) is not a downgrade -> allow.
+INSTALLED="$(dpkg-query -W -f='${Version}' ggo-kea-dhcp 2>/dev/null || true)"
+if [ -n "$INSTALLED" ] && ! dpkg --compare-versions "$VERSION" gt "$INSTALLED"; then
+	fail "refusing to install v$VERSION over installed v$INSTALLED - not an upgrade"
+fi
+
 PKG="$(dpkg-deb -f "$DEB" Package 2>/dev/null || true)"
 [ "$PKG" = "ggo-kea-dhcp" ] || fail "staged file is not the ggo-kea-dhcp package (got '$PKG')"
 
