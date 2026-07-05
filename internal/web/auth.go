@@ -23,6 +23,11 @@ import (
 // pbkdf2Iter is the PBKDF2-HMAC-SHA256 work factor (OWASP-recommended floor).
 const pbkdf2Iter = 600000
 
+// pbkdf2SaltLen is the salt size hashPassword generates. Every hash this repo
+// has ever written uses exactly this, so verifyPassword pins the stored field
+// to it (like the digest length) rather than decoding whatever it finds.
+const pbkdf2SaltLen = 16
+
 // dummyPasswordHash is a well-formed but unmatchable hash used to equalize login
 // timing: a login for a NONEXISTENT username must run the same ~600k-iteration
 // derivation as one for a real user, otherwise its sub-millisecond response time
@@ -69,7 +74,7 @@ func (s *Server) postAuthRedirect() string {
 
 // hashPassword returns a "pbkdf2$<iter>$<saltHex>$<hashHex>" encoded hash.
 func hashPassword(pw string) (string, error) {
-	salt := make([]byte, 16)
+	salt := make([]byte, pbkdf2SaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
@@ -82,13 +87,22 @@ func hashPassword(pw string) (string, error) {
 
 // verifyPassword checks a candidate against a stored pbkdf2 hash in constant
 // time. Non-pbkdf2 (e.g. legacy) hashes never verify - this is a hard cutover.
+// The stored string must not dictate unbounded derivation work (a restored
+// backup carries hashes verbatim): the iteration count is clamped and the hash
+// length pinned, since both multiply PBKDF2 cost. A hash outside these bounds
+// is corrupt or hostile and fails closed like any other malformed hash.
 func verifyPassword(stored, pw string) bool {
 	parts := strings.Split(stored, "$")
 	if len(parts) != 4 || parts[0] != "pbkdf2" {
 		return false
 	}
 	iter, err := strconv.Atoi(parts[1])
-	if err != nil {
+	if err != nil || iter <= 0 || iter > pbkdf2Iter*4 {
+		return false
+	}
+	// Pin both hex fields to the only sizes ever written BEFORE decoding, so a
+	// hostile stored string can't make us allocate and decode megabytes either.
+	if len(parts[2]) != 2*pbkdf2SaltLen || len(parts[3]) != 2*sha256.Size {
 		return false
 	}
 	salt, err := hex.DecodeString(parts[2])
