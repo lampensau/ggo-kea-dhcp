@@ -908,3 +908,18 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .scope-name-input:focus { border-color:var(--accent); background:var(--surface); outline:none; }
 .scope-name-input::placeholder { color:var(--text-muted); font-weight:600; }
 
+
+/* Software update: footer badge (#update-badge is a live region - empty when
+   current or dismissed) + the Settings card meta line + the release-notes dialog. */
+#update-badge { display:inline-flex; margin-right:auto; }
+#update-badge:empty { display:none; }
+.update-badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:var(--r-full); font-size:11.5px; font-weight:600; line-height:1.5; background:var(--accent-tint); border:1px solid var(--ok-border); color:var(--accent); text-decoration:none; }
+.update-badge .lucide { width:12px; height:12px; }
+.update-badge:hover { border-color:var(--accent); }
+.update-meta { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-3); }
+dialog.update-notes { width:min(560px, calc(100vw - 32px)); }
+dialog.update-notes .dialog-body { max-height:min(60vh, 480px); overflow-y:auto; }
+.note-h { display:block; margin:var(--sp-3) 0 var(--sp-1); font-size:13px; }
+.note-h:first-child { margin-top:0; }
+.note-list { margin:0 0 var(--sp-2); padding-left:var(--sp-4); }
+.note-list li { margin:2px 0; }

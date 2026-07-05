@@ -28,6 +28,9 @@ type SettingsView struct {
 	LeaseLifetime int
 	// Username is the current administrator's name (the rename field's value).
 	Username string
+	// Update is the Software Update card (mounted outside #settings-form,
+	// ACTIVE only - like the danger zone).
+	Update UpdateView
 }
 
 // --- Setup wizard ---

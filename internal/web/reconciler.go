@@ -439,6 +439,9 @@ func (s *Server) connectUplink(ssid, pwd string) {
 	if s.uplink.observe(true) {
 		_ = s.sqlite.LogAudit("SYSTEM", "UPLINK_UP", ssid, "", "connected", "OK")
 	}
+	// The box just gained internet - the one moment a release check is worth
+	// kicking rather than waiting out the 30-min ticker.
+	s.kickUpdateCheck()
 	s.health.setUplinkDown(false, "") // connected - clear the banner
 	s.publishBackendAlert()
 }

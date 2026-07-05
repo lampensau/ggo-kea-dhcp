@@ -1,0 +1,91 @@
+package views
+
+// UpdateBadge is the footer's #update-badge live region, next to the version
+// line on every authenticated page. Empty (and invisible) when the box is
+// current or the operator dismissed this version; otherwise a compact link to
+// the Settings update card. The same partial renders first paint and the SSE
+// fragment.
+templ UpdateBadge(v UpdateBadgeView) {
+	<span id="update-badge">
+		if v.Show {
+			<a class="update-badge" href="/settings#update">@Icon("download") <span>Update <span class="mono">v{ v.Version }</span> available</span></a>
+		}
+	</span>
+}
+
+// UpdateCard is the Settings "Software Update" card (anchor #update, the badge's
+// link target). Mounted OUTSIDE #settings-form - its buttons are their own
+// forms/dialogs, like the danger zone. Rendered only in ACTIVE (the check loop
+// and the installer both require it).
+templ UpdateCard(v UpdateView) {
+	<h2 class="section-title" id="update">@Icon("download") Software Update</h2>
+	<div class="card">
+		<div class="update-meta">
+			<span>Installed <span class="mono">v{ v.Current }</span></span>
+			if v.Available {
+				<span class="badge badge-ok">@Icon("download") <span class="mono">v{ v.Version }</span>&nbsp;available</span>
+				if v.Scope == "system" {
+					<span class="badge badge-warn">system update</span>
+				}
+			} else if v.LastCheck != "" {
+				<span class="badge">up to date</span>
+			}
+		</div>
+		if v.Available {
+			<p class="help">{ updateScopeHint(v.Scope) }</p>
+			if !v.CanInstall {
+				<p class="help">This release publishes no verification digest, so it cannot be installed from here. Update by re-running the installer.</p>
+			}
+		} else {
+			<p class="help">The appliance checks for new releases while the WiFi uplink is connected. Installing is always a deliberate action - nothing updates on its own.</p>
+		}
+		<div class="btn-row">
+			<form method="post" action="/update/check" data-busy>
+				<input type="hidden" name="csrf_token" value={ v.CSRF }/>
+				<button type="submit" class="btn btn-secondary">@Icon("refresh-cw") Check Now</button>
+			</form>
+			if v.Available && v.Notes != "" {
+				<button type="button" class="btn btn-secondary" onclick="document.getElementById('update-notes-dlg').showModal()">@Icon("info") View Release Notes</button>
+			}
+			if v.Available && !v.Dismissed {
+				<form method="post" action="/update/dismiss">
+					<input type="hidden" name="csrf_token" value={ v.CSRF }/>
+					<button type="submit" class="btn btn-secondary">@Icon("x") Dismiss Notification</button>
+				</form>
+			}
+		</div>
+	</div>
+	if v.Available && v.Notes != "" {
+		@ReleaseNotesDialog(v)
+	}
+}
+
+// ReleaseNotesDialog renders the fetched release body inline in a native
+// <dialog>, so the notes are readable on an operator laptop with no internet.
+// The body is remote content (a trust boundary): it is broken into plain
+// blocks by parseReleaseNotes and every string is emitted through templ's
+// escaping - never as markup.
+templ ReleaseNotesDialog(v UpdateView) {
+	<dialog id="update-notes-dlg" class="update-notes" aria-labelledby="update-notes-title">
+		<div class="dialog-head" id="update-notes-title">Release Notes - v{ v.Version }</div>
+		<div class="dialog-body">
+			for _, b := range parseReleaseNotes(v.Notes) {
+				switch b.Kind {
+					case "h":
+						<strong class="note-h">{ b.Text }</strong>
+					case "list":
+						<ul class="note-list">
+							for _, it := range b.Items {
+								<li>{ it }</li>
+							}
+						</ul>
+					default:
+						<p>{ b.Text }</p>
+				}
+			}
+		</div>
+		<div class="dialog-foot">
+			<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Close</button>
+		</div>
+	</dialog>
+}

@@ -288,6 +288,7 @@ templ appFooter(d PageData) {
 	<footer class="app-footer">
 		<div class="app-footer-inner">
 			<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
+			@UpdateBadge(d.Update)
 			<div class="btn-row">
 				if d.CurrentPath == "/settings" {
 					<button class="btn btn-primary" type="submit" form="settings-form">@Icon("check") Save Settings</button>

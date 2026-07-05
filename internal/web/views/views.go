@@ -40,6 +40,9 @@ type PageData struct {
 	// (error - DHCP stopped), MariaDB down / Wi-Fi uplink down (warnings). Empty when
 	// every backend is healthy, so the #backend-alert:empty rule collapses it.
 	BackendAlerts []AlertRow
+	// Update is the footer's #update-badge first paint (a newer-release notice;
+	// the live hub re-patches the same partial when a check lands).
+	Update UpdateBadgeView
 }
 
 // StatusPillView is the header status pill: the lifecycle State plus aggregated live
