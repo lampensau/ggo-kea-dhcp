@@ -235,6 +235,10 @@ func (s *Server) Start() error {
 	// the boot reconcile reads them.
 	s.migrateUplinkToBoxLevel()
 
+	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
+	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.
+	s.reconcileUpdateResult()
+
 	// Bring runtime state in line with the persisted lifecycle state on boot.
 	// Run it in the background so the web UI binds immediately - network/SoftAP
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
@@ -334,6 +338,7 @@ func (s *Server) Start() error {
 
 	mux.HandleFunc("POST /update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /update/dismiss", s.handleUpdateDismiss)
+	mux.HandleFunc("POST /update/install", s.handleUpdateInstall)
 
 	// The dedicated CaptiveRedirectMiddleware was dropped: lifecycleMiddleware is
 	// the outer wrapper and already 302s unauthenticated onboarding probes to

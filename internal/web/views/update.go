@@ -72,6 +72,14 @@ func parseReleaseNotes(body string) []noteBlock {
 	return blocks
 }
 
+// installDlgID names the two install-confirm dialogs (normal / system-escalation).
+func installDlgID(system bool) string {
+	if system {
+		return "update-install-sys-dlg"
+	}
+	return "update-install-dlg"
+}
+
 // updateScopeHint is the honest one-liner for what installing this release does
 // to the running show, keyed by the release manifest's scope.
 func updateScopeHint(scope string) string {

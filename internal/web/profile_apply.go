@@ -37,6 +37,11 @@ type applyPlan struct {
 // makes a crash before finishApply recoverable on boot. On any error it leaves
 // the appliance untouched (state still ONBOARDING, apply guard cleared).
 func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink UplinkConfig) (applyPlan, error) {
+	// A running self-update holds the shared guard too, but name it explicitly -
+	// "apply in progress" would be a lie while the box is mid-update.
+	if s.updating.Load() {
+		return applyPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
+	}
 	// Guard against concurrent applies first, so every irreversible side effect
 	// below (monitor teardown, uplink + profile persistence, conf snapshot) is
 	// serialized by one apply. A double-submit is rejected here before it can

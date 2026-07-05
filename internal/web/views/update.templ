@@ -36,10 +36,26 @@ templ UpdateCard(v UpdateView) {
 			if !v.CanInstall {
 				<p class="help">This release publishes no verification digest, so it cannot be installed from here. Update by re-running the installer.</p>
 			}
+			if v.NeedsSystem {
+				<div class="alert alert-warn" role="alert">
+					@Icon("triangle-alert")
+					<div class="alert-body">
+						<strong>This release needs a system-scope update</strong>
+						<span class="alert-detail">Installing with frozen dependencies failed because the release requires newer system packages. The broader install below also upgrades those packages - expect a brief DHCP interruption.</span>
+					</div>
+				</div>
+			}
 		} else {
 			<p class="help">The appliance checks for new releases while the WiFi uplink is connected. Installing is always a deliberate action - nothing updates on its own.</p>
 		}
 		<div class="btn-row">
+			if v.Available && v.CanInstall {
+				if v.NeedsSystem {
+					<button type="button" class="btn btn-danger" onclick="document.getElementById('update-install-sys-dlg').showModal()">@Icon("download") Install With System Updates</button>
+				} else {
+					<button type="button" class="btn btn-primary" onclick="document.getElementById('update-install-dlg').showModal()">@Icon("download") Install Update</button>
+				}
+			}
 			<form method="post" action="/update/check" data-busy>
 				<input type="hidden" name="csrf_token" value={ v.CSRF }/>
 				<button type="submit" class="btn btn-secondary">@Icon("refresh-cw") Check Now</button>
@@ -58,6 +74,50 @@ templ UpdateCard(v UpdateView) {
 	if v.Available && v.Notes != "" {
 		@ReleaseNotesDialog(v)
 	}
+	if v.Available && v.CanInstall {
+		if v.NeedsSystem {
+			@updateInstallDialog(v, true)
+		} else {
+			@updateInstallDialog(v, false)
+		}
+	}
+}
+
+// updateInstallDialog is the password-gated confirm for the privileged install
+// (the reset.templ confirmDialog pattern, with the version - and for the
+// escalation path the system scope - as hidden fields). system=true is the
+// second-click broader path offered only after needs_system latched.
+templ updateInstallDialog(v UpdateView, system bool) {
+	<dialog id={ installDlgID(system) } aria-labelledby={ installDlgID(system) + "-title" }>
+		<form method="post" action="/update/install" data-busy>
+			<input type="hidden" name="csrf_token" value={ v.CSRF }/>
+			<input type="hidden" name="version" value={ v.Version }/>
+			if system {
+				<input type="hidden" name="scope" value="system"/>
+			}
+			<div class="dialog-head" id={ installDlgID(system) + "-title" }>Install update v{ v.Version }?</div>
+			<div class="dialog-body">
+				if system {
+					<p>This also upgrades the system packages the appliance depends on. Expect a brief DHCP interruption while they update; the page reconnects on its own.</p>
+				} else {
+					<p>{ updateScopeHint(v.Scope) }</p>
+				}
+				<p>The package is downloaded and verified against the release's published checksum before anything is installed.</p>
+				<div class="form-group">
+					<label class="form-label" for={ installDlgID(system) + "-pw" }>Confirm your password</label>
+					<input class="form-control" id={ installDlgID(system) + "-pw" } name="current_password" type="password" autocomplete="current-password" required/>
+				</div>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				if system || v.Scope == "system" {
+					<button type="submit" class="btn btn-danger-solid">Install Update</button>
+				} else {
+					<button type="submit" class="btn btn-primary">Install Update</button>
+				}
+			</div>
+		</form>
+	</dialog>
 }
 
 // ReleaseNotesDialog renders the fetched release body inline in a native

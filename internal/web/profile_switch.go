@@ -176,6 +176,10 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("Configuration for %q failed validation: %w", name, err)
 	}
 
+	// A running self-update holds the shared guard too, but name it explicitly.
+	if s.updating.Load() {
+		return switchPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
+	}
 	// Claim the shared mutation guard BEFORE writing any persistent artifact, so a
 	// guard-loser can't orphan a snapshot file + config_snapshots row (beginApply also
 	// claims first). snapshotKeaConf then runs under the guard, never racing an

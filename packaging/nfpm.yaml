@@ -55,6 +55,12 @@ contents:
       mode: 0755
   - src: ./packaging/systemd/ggo-kea-dhcp.service
     dst: /lib/systemd/system/ggo-kea-dhcp.service
+  - src: ./packaging/systemd/ggo-kea-dhcp-update.service
+    dst: /lib/systemd/system/ggo-kea-dhcp-update.service
+  - src: ./packaging/scripts/updater.sh
+    dst: /usr/lib/ggo-kea-dhcp/updater.sh
+    file_info:
+      mode: 0755
   - src: ./packaging/caddy/Caddyfile
     dst: /etc/caddy/Caddyfile
     type: config|noreplace
