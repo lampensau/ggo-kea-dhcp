@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -158,5 +159,92 @@ func TestResumeInterruptedApplyFallsBackToOnboarding(t *testing.T) {
 
 	if got, _ := s.sqlite.GetState(db.LifecycleStateKey); got != db.StateOnboarding {
 		t.Errorf("uncompletable interrupted apply = %q want %q", got, db.StateOnboarding)
+	}
+}
+
+// TestActiveZeroScopesRescuesToOnboarding verifies the survivability fallback:
+// a box persisted ACTIVE whose active profile has no scopes (or no active
+// profile at all - a corrupted or hand-edited DB) must not fail its converge
+// before any interface is up and sit unreachable. It demotes itself to
+// ONBOARDING (SoftAP + onboarding IP) and leaves an audit trail.
+func TestActiveZeroScopesRescuesToOnboarding(t *testing.T) {
+	seed := func(t *testing.T, withProfile bool) *Server {
+		s, _ := newTestServer(t)
+		if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+			t.Fatalf("seed ACTIVE: %v", err)
+		}
+		if withProfile {
+			if _, err := s.sqlite.Exec("INSERT INTO profiles (name, active) VALUES ('empty', 1)"); err != nil {
+				t.Fatalf("seed profile: %v", err)
+			}
+		}
+		return s
+	}
+
+	for _, tc := range []struct {
+		name        string
+		withProfile bool
+	}{
+		{"active profile with zero scopes", true},
+		{"no active profile at all", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := seed(t, tc.withProfile)
+			s.rescueArmed.Store(true) // NewServer arms it; newTestServer builds the struct bare
+			_ = s.ReconcileApplianceState(ModeConverge, 0)
+
+			if got, _ := s.sqlite.GetState(db.LifecycleStateKey); got != db.StateOnboarding {
+				t.Errorf("state after converge = %q want %q", got, db.StateOnboarding)
+			}
+			var n int
+			if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'RESCUE_ONBOARDING'").Scan(&n); err != nil || n != 1 {
+				t.Errorf("RESCUE_ONBOARDING audit rows = %d (err %v), want 1", n, err)
+			}
+		})
+	}
+}
+
+// TestActiveZeroScopesApplyDoesNotRescue pins the guard: the apply/switch paths
+// (ModeApply) have their own rollback and must see the zero-scopes error - a
+// silent demotion here would make finishApply declare the apply successful and
+// stamp ACTIVE over a box actually sitting in onboarding.
+func TestActiveZeroScopesApplyDoesNotRescue(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("seed ACTIVE: %v", err)
+	}
+
+	err := s.ReconcileApplianceState(ModeApply, 0)
+	if !errors.Is(err, errNoScopes) {
+		t.Errorf("ModeApply with zero scopes = %v, want errNoScopes", err)
+	}
+	if got, _ := s.sqlite.GetState(db.LifecycleStateKey); got != db.StateActive {
+		t.Errorf("state after failed apply = %q, want %q (no demotion)", got, db.StateActive)
+	}
+}
+
+// TestZeroScopesRescueOnlyOnFirstConverge pins the rescue window: the flag is
+// consumed by the FIRST ACTIVE converge, so a later zero-scopes converge (a
+// mid-show settings save on a box whose rows were lost while its runtime still
+// serves) surfaces the error instead of demoting a serving box to the SoftAP.
+func TestZeroScopesRescueOnlyOnFirstConverge(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatal(err)
+	}
+	// The boot converge already ran (and consumed the window) on a healthy box.
+	s.rescueArmed.Store(false)
+
+	err := s.ReconcileApplianceState(ModeConverge, 0)
+	if !errors.Is(err, errNoScopes) {
+		t.Errorf("post-boot converge with zero scopes = %v, want errNoScopes surfaced", err)
+	}
+	if got, _ := s.sqlite.GetState(db.LifecycleStateKey); got != db.StateActive {
+		t.Errorf("state = %q, want ACTIVE untouched (no mid-show demotion)", got)
+	}
+	var n int
+	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'RESCUE_ONBOARDING'").Scan(&n)
+	if n != 0 {
+		t.Errorf("RESCUE_ONBOARDING fired outside the boot window (%d rows)", n)
 	}
 }

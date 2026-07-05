@@ -137,6 +137,12 @@ type Server struct {
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
 	applying atomic.Bool
+	// rescueArmed opens the zero-scopes rescue window: armed at process start,
+	// consumed by the FIRST ACTIVE converge (usually boot). Only inside that
+	// window may a nothing-to-serve ACTIVE box demote itself to ONBOARDING - a
+	// later converge (a mid-show settings save) must surface the error instead,
+	// never tear a serving box down to the SoftAP.
+	rescueArmed atomic.Bool
 	// updating guards the self-update install path: claimed by POST /update/install
 	// (alongside the applying guard) and held until the updater reports a result or
 	// the control plane restarts onto the new binary.
@@ -247,6 +253,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.updateAPIBase = "https://api.github.com"
 	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
+	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.

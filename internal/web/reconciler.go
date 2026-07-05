@@ -25,7 +25,10 @@ const (
 	// ModeConverge brings runtime state to match the persisted lifecycle state
 	// idempotently: no snapshots, no DB writes, and it never tears down working
 	// NM connections wholesale (relies on per-connection delete-then-add). Used
-	// on boot and for live settings convergence.
+	// on boot and for live settings convergence. One exception to the no-writes
+	// rule: the boot-only zero-scopes rescue (rescueToOnboarding) persists the
+	// ONBOARDING demotion and reconciles with ModeApply semantics - see the
+	// rescueArmed window in ReconcileApplianceState.
 	ModeConverge ReconcileMode = iota
 	// ModeApply is ModeConverge plus a full NM teardown first (so stale scopes
 	// from a previous profile are removed). Snapshots are taken by the caller
@@ -35,6 +38,10 @@ const (
 )
 
 const defaultOnboardingCIDR = "10.0.0.1/24"
+
+// errNoScopes marks the "ACTIVE but nothing to serve" case so the converge
+// dispatch can rescue the box to ONBOARDING instead of leaving it addressless.
+var errNoScopes = errors.New("no scopes for the active profile")
 
 // softAPWlanIP is the fixed address hostapd assigns to wlan0 in onboarding. Kept
 // in sync with softAPWlanCIDR in internal/network/hostapd.go (top corner of the
@@ -118,10 +125,42 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 	switch state {
 	case db.StateActive, db.StateConfiguring:
 		// ACTIVE and a live-apply CONFIGURING both serve the profile's scopes.
-		return s.reconcileActive(mode, targetProfileID)
+		err := s.reconcileActive(mode, targetProfileID)
+		// The rescue window is the FIRST ACTIVE converge after process start
+		// (the boot reconcile): only a box that never managed to serve since
+		// starting may demote itself. Consuming the flag on that converge -
+		// success or failure - means a later zero-scopes converge (a settings
+		// save on a box whose rows were lost mid-show while its runtime still
+		// serves) surfaces the error instead of tearing the venue network down.
+		if mode == ModeConverge && state == db.StateActive && s.rescueArmed.CompareAndSwap(true, false) {
+			if errors.Is(err, errNoScopes) {
+				return s.rescueToOnboarding(err)
+			}
+		}
+		return err
 	default: // FACTORY and ONBOARDING share identical network state.
 		return s.reconcileOnboarding(mode)
 	}
+}
+
+// rescueToOnboarding demotes a box that claims ACTIVE but has nothing to serve
+// (zero scopes - e.g. a corrupted or hand-edited profile row) back to ONBOARDING
+// so the SoftAP and onboarding IP come up. Without this the converge fails before
+// any interface is configured and the box is unreachable except by console.
+// Converge-only: the apply/switch paths (ModeApply) have their own rollback and
+// must see the error, not a silent demotion.
+func (s *Server) rescueToOnboarding(cause error) error {
+	log.Printf("[reconcile] %v - falling back to ONBOARDING so the box stays reachable", cause)
+	_ = s.sqlite.LogAudit("SYSTEM", "RESCUE_ONBOARDING", "lifecycle", "", cause.Error(), "WARNING")
+	if e := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); e != nil {
+		log.Printf("[reconcile] failed to persist ONBOARDING on rescue: %v", e)
+	}
+	// ModeApply so stale NM connections from the dead profile are torn down, same
+	// as resumeInterruptedApply's fallback. That mode also wipes the lease store -
+	// deliberate: the leases belong to the profile that just proved unservable,
+	// and the onboarding pool must not inherit them. A backup restored later
+	// re-creates reservations; dynamic leases re-acquire on their own.
+	return s.reconcileOnboarding(ModeApply)
 }
 
 // resumeInterruptedApply completes a profile apply that was interrupted (the box
@@ -304,7 +343,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 		return fmt.Errorf("active reconcile: load scopes: %w", err)
 	}
 	if len(scopes) == 0 {
-		return fmt.Errorf("active reconcile: no scopes for the active profile")
+		return fmt.Errorf("active reconcile: %w", errNoScopes)
 	}
 
 	// Kea subnet-ids are positional, so a profile edit/switch renumbers them while
