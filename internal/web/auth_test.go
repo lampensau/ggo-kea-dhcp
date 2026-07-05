@@ -32,17 +32,20 @@ func TestHashPasswordSaltsDiffer(t *testing.T) {
 }
 
 func TestVerifyPasswordRejectsMalformed(t *testing.T) {
+	salt := strings.Repeat("00", pbkdf2SaltLen) // valid-length salt, so each row fails on ITS property
 	for _, stored := range []string{
 		"",
 		"plaintext",
-		"pbkdf2$notanint$aa$bb",
-		"bcrypt$10$salt$hash",      // non-pbkdf2 scheme: hard cutover
-		"pbkdf2$600000$nothex$bb",  // bad salt hex
-		"pbkdf2$600000$aa$nothex2", // bad hash hex
-		"pbkdf2$0$aa$" + strings.Repeat("00", 32),      // zero iterations
-		"pbkdf2$-1$aa$" + strings.Repeat("00", 32),     // negative iterations
-		"pbkdf2$600000$aa$" + strings.Repeat("00", 16), // hash too short
-		"pbkdf2$600000$aa$" + strings.Repeat("00", 64), // hash too long
+		"pbkdf2$notanint$" + salt + "$bb",
+		"bcrypt$10$salt$hash", // non-pbkdf2 scheme: hard cutover
+		"pbkdf2$600000$" + strings.Repeat("nothex!!", 4) + "$" + strings.Repeat("00", 32), // bad salt hex
+		"pbkdf2$600000$" + salt + "$" + strings.Repeat("nothex!!", 8),                     // bad hash hex
+		"pbkdf2$0$" + salt + "$" + strings.Repeat("00", 32),                               // zero iterations
+		"pbkdf2$-1$" + salt + "$" + strings.Repeat("00", 32),                              // negative iterations
+		"pbkdf2$600000$" + salt + "$" + strings.Repeat("00", 16),                          // hash too short
+		"pbkdf2$600000$" + salt + "$" + strings.Repeat("00", 64),                          // hash too long
+		"pbkdf2$600000$" + strings.Repeat("00", 8) + "$" + strings.Repeat("00", 32),       // salt too short
+		"pbkdf2$600000$" + strings.Repeat("00", 32) + "$" + strings.Repeat("00", 32),      // salt too long
 	} {
 		if verifyPassword(stored, "anything") {
 			t.Errorf("verifyPassword accepted malformed stored hash %q", stored)
@@ -58,6 +61,7 @@ func TestVerifyPasswordBoundsWork(t *testing.T) {
 	for name, stored := range map[string]string{
 		"huge iteration count": fmt.Sprintf("pbkdf2$50000000000$%s$%s", salt, strings.Repeat("00", 32)),
 		"oversized hash field": fmt.Sprintf("pbkdf2$600000$%s$%s", salt, strings.Repeat("00", 1<<20)),
+		"oversized salt field": fmt.Sprintf("pbkdf2$600000$%s$%s", strings.Repeat("00", 1<<20), strings.Repeat("00", 32)),
 	} {
 		done := make(chan bool, 1)
 		go func() { done <- verifyPassword(stored, "anything") }()
