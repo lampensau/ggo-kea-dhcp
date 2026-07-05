@@ -33,7 +33,7 @@ func TestSharedMSScaleDegenerate(t *testing.T) {
 		if got, want := sc.points(series), views.SparklinePoints(series); got != want {
 			t.Errorf("fallback points = %q, want unscaled %q", got, want)
 		}
-		if got, want := sc.area(series), views.SparklineArea(series); got != want {
+		if got, want := views.AreaFromPoints(sc.points(series)), views.SparklineArea(series); got != want {
 			t.Errorf("fallback area = %q, want unscaled %q", got, want)
 		}
 	}

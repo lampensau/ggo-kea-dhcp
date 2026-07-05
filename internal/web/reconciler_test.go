@@ -42,7 +42,7 @@ func TestReconcileGuardSerializes(t *testing.T) {
 // newTestServer builds a Server backed by a temp SQLite DB, a fake Commander, and
 // a Kea client pointed at an unreachable endpoint - enough to exercise the
 // reconciler's state machine without touching the host or a real Kea.
-func newTestServer(t *testing.T) (*Server, *network.RecordingCommander) {
+func newTestServer(t testing.TB) (*Server, *network.RecordingCommander) {
 	t.Helper()
 	dir := t.TempDir()
 	sqlite, err := db.OpenSQLite(filepath.Join(dir, "test.db"))
