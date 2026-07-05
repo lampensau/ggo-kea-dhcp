@@ -289,6 +289,16 @@ func bpduFrame(tcn bool) Frame {
 	return Frame{Iface: "eth0", TS: base, Data: buildEth(macSTP, macTestSwitch, uint16(len(body)), body)}
 }
 
+// rstpTCFrame builds an RSTP/MSTP BPDU (type 0x02) carrying the topology-change
+// flag - what a modern switch emits on reconvergence instead of a legacy TCN.
+func rstpTCFrame() Frame {
+	body := make([]byte, 46)
+	body[0], body[1], body[2] = 0x42, 0x42, 0x03 // LLC DSAP/SSAP/control
+	body[6] = 0x02                               // RSTP/MSTP BPDU type
+	body[7] = 0x01                               // topology-change flag
+	return Frame{Iface: "eth0", TS: base, Data: buildEth(macSTP, macTestSwitch, uint16(len(body)), body)}
+}
+
 // ptpAnnounce builds a PTP Announce message for domain advertising clockIdentity
 // and priorities. viaUDP selects the UDP/320 transport (multicast) over L2 0x88F7.
 func ptpAnnounce(domain uint8, clockIdentity uint64, priority1, priority2 uint8, viaUDP bool) Frame {
