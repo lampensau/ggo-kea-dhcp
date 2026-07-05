@@ -10,7 +10,10 @@
 // always fit the classic 512-byte payload; anything that somehow would not gets
 // the TC bit and no TCP listener to fall back to. No EDNS0 is negotiated for
 // the server's own answers either. Forwarded queries and replies are relayed
-// verbatim, so a client's own EDNS0 still works against the upstream.
+// verbatim so a client's own EDNS0 still works against the upstream, except that
+// a reply over 512 bytes to a client that did not signal EDNS0 is truncated with
+// TC rather than reflected - together with a global forward-rate ceiling, that
+// keeps the LAN-only forwarder from being used as an amplifier.
 //
 // Isolation matches internal/netmon: this package imports neither web nor kea;
 // the zone contents are pushed in by the owner (SetZone) and everything else is
@@ -48,6 +51,12 @@ const (
 	forwardTimeout      = 3 * time.Second
 	queryLimitPerSec    = 100
 	maxInflightForwards = 16
+	// maxForwardsPerSec caps the forward path globally, across all sources. The
+	// per-source limiter is trivially defeated by spoofed source IPs, so this
+	// ceiling - not the per-source one - is what bounds how much the box will
+	// relay out its uplink under a reflection flood. A real show LAN stays well
+	// below it.
+	maxForwardsPerSec = 200
 )
 
 // dohCanary is Firefox's use-application-dns.net probe: answering NXDOMAIN
@@ -63,6 +72,7 @@ type Server struct {
 	resolv     *resolvCache
 	forwardSem chan struct{}
 	limiter    rateLimiter
+	fwdGate    forwardGate
 
 	mu        sync.Mutex
 	listeners []*listener
@@ -273,6 +283,9 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 	if !ok {
 		return
 	}
+	if !l.srv.fwdGate.allow(time.Now()) {
+		return // over the global forward ceiling: drop, never reflect
+	}
 	select {
 	case l.srv.forwardSem <- struct{}{}:
 	default:
@@ -282,8 +295,16 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 	go func() {
 		defer func() { <-l.srv.forwardSem }()
 		resp := l.srv.forward(req, q)
-		if resp == nil {
+		switch {
+		case resp == nil:
 			resp = respond(req, q, rcodeServFail, false)
+		case len(resp) > maxUDPResponse && arCount(req) == 0:
+			// A client that did not signal EDNS0 must not get more than 512
+			// bytes; relaying a large upstream answer verbatim would make the
+			// box an amplifier. Truncate to the question with TC set - the same
+			// UDP-only stance as our own answers.
+			resp = respond(req, q, rcodeNoError, false)
+			resp[2] |= 0x02 // TC
 		}
 		_, _ = l.conn.WriteToUDP(resp, remote)
 	}()
@@ -331,6 +352,32 @@ func forwardOne(req []byte, q question, upstream string) []byte {
 		return resp
 	}
 	return nil
+}
+
+// arCount reads the ARCOUNT header field. A request with no additional records
+// carried no EDNS0 OPT pseudo-record, so the client is bound to the 512-byte
+// pre-EDNS0 limit. req is always at least a full header here (parseQuestion ran).
+func arCount(req []byte) int {
+	return int(req[10])<<8 | int(req[11])
+}
+
+// forwardGate is a global fixed-window rate cap on the forward path, across all
+// sources - the ceiling the per-source limiter cannot provide once source IPs
+// are spoofed.
+type forwardGate struct {
+	mu     sync.Mutex
+	window int64
+	count  int
+}
+
+func (g *forwardGate) allow(now time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if w := now.Unix(); w != g.window {
+		g.window, g.count = w, 0
+	}
+	g.count++
+	return g.count <= maxForwardsPerSec
 }
 
 // rateLimiter is a per-source fixed-window counter: cheap, deterministic, and

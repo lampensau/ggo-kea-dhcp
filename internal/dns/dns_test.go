@@ -168,6 +168,53 @@ func TestForwardVerifiedAgainstFakeUpstream(t *testing.T) {
 	}
 }
 
+func TestForwardGateCapsGloballyAndResets(t *testing.T) {
+	var g forwardGate
+	now := time.Unix(1000, 0)
+	for i := 0; i < maxForwardsPerSec; i++ {
+		if !g.allow(now) {
+			t.Fatalf("forward %d denied under the ceiling", i+1)
+		}
+	}
+	if g.allow(now) {
+		t.Fatal("forward past the global ceiling allowed in the same window")
+	}
+	if !g.allow(now.Add(time.Second)) {
+		t.Fatal("a new window did not reset the ceiling")
+	}
+}
+
+func TestArCountDetectsEDNS0(t *testing.T) {
+	plain := buildQuery(1, "example.com", typeA) // ARCOUNT 0: no EDNS0
+	if got := arCount(plain); got != 0 {
+		t.Fatalf("plain query arCount = %d, want 0", got)
+	}
+	// An OPT pseudo-record bumps ARCOUNT; such a client may accept >512.
+	edns := append([]byte(nil), plain...)
+	edns[11] = 1
+	if got := arCount(edns); got != 1 {
+		t.Fatalf("edns query arCount = %d, want 1", got)
+	}
+}
+
+func TestOversizedForwardTruncatedForNonEDNS0(t *testing.T) {
+	// The anti-amplification branch: respond echoing the question with TC set is
+	// smaller than the 512-byte cap and carries no answers, so it cannot amplify.
+	req := buildQuery(0x7788, "example.com", typeA)
+	q, _ := parseQuestion(req)
+	trunc := respond(req, q, rcodeNoError, false)
+	trunc[2] |= 0x02
+	if len(trunc) > maxUDPResponse {
+		t.Fatalf("truncated reply is %d bytes, over the %d cap", len(trunc), maxUDPResponse)
+	}
+	if trunc[2]&0x02 == 0 {
+		t.Fatal("TC bit not set on the truncated reply")
+	}
+	if ancountOf(trunc) != 0 {
+		t.Fatalf("truncated reply ANCOUNT = %d, want 0", ancountOf(trunc))
+	}
+}
+
 func TestForwardIsolatedReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "resolv.conf")
