@@ -16,13 +16,17 @@ func (m *Manager) ensureNATChain(chain, hookSpec string) {
 }
 
 // SetIPForwarding enables or disables IPv4 packet forwarding in the kernel.
+// Both argvs are spelled out as literals: sysctl is on the sudoers exact-argument
+// tier, and the cross-check test (sudoers_test.go) verifies every literal argv
+// against packaging/sudoers/ggo-kea-dhcp.
 func (m *Manager) SetIPForwarding(enabled bool) error {
-	val := "0"
 	if enabled {
-		val = "1"
+		log.Printf("Setting sysctl net.ipv4.ip_forward to 1...")
+		_, err := m.cmd.Run("sysctl", "-w", "net.ipv4.ip_forward=1")
+		return err
 	}
-	log.Printf("Setting sysctl net.ipv4.ip_forward to %s...", val)
-	_, err := m.cmd.Run("sysctl", "-w", fmt.Sprintf("net.ipv4.ip_forward=%s", val))
+	log.Printf("Setting sysctl net.ipv4.ip_forward to 0...")
+	_, err := m.cmd.Run("sysctl", "-w", "net.ipv4.ip_forward=0")
 	return err
 }
 
