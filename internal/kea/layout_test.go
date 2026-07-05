@@ -238,3 +238,29 @@ func assertPools(t *testing.T, got, want []PoolConfig) {
 		}
 	}
 }
+
+// TestLayoutPools_ElasticCatchAllFloor locks the unmatched-device safety net: a
+// catch-all (GGO-OTHERS/OTHERS) landing as the ELASTIC remainder must be floored
+// at its documented catch-all minimum (10), not the bare elastic minimum (5). The
+// seed path (ForecastForClass) already floors it; without the same floor here a
+// 6-9 address remainder silently violates the "can never shrink below it"
+// invariant instead of surfacing the subnet-too-small error.
+func TestLayoutPools_ElasticCatchAllFloor(t *testing.T) {
+	specs := []PoolSpec{
+		{Kind: PoolReserve, Size: 18}, // .2 - .19
+		{Class: "GGO-WAA", Kind: PoolFixed, Size: 5},
+		{Class: "GGO-OTHERS", Kind: PoolElastic, Weight: 1},
+	}
+	// /27: 30 usable minus the gateway leaves .2-.30; reserve 18 + fixed 5
+	// leaves a 6-address remainder - above the elastic minimum, below the
+	// catch-all floor.
+	if _, err := LayoutPools("10.0.0.0/27", specs); err == nil {
+		t.Fatal("a 6-address elastic catch-all must be rejected (floor 10), got success")
+	}
+
+	// The same remainder is fine for a non-catch-all elastic (floor 5).
+	specs[2].Class = "GGO-BPX"
+	if _, err := LayoutPools("10.0.0.0/27", specs); err != nil {
+		t.Fatalf("a 6-address GGO-BPX elastic remainder must still fit (floor 5): %v", err)
+	}
+}

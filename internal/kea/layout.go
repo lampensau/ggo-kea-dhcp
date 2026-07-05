@@ -220,8 +220,11 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 			sizes[best] += leftover
 		}
 		for _, i := range elasticIdx {
-			if sizes[i] < layoutMinPool {
-				return nil, fmt.Errorf("subnet too small for the configured pools: elastic pool %q would get only %d addresses (min %d) - reduce device counts or use a larger subnet", specs[i].Class, sizes[i], layoutMinPool)
+			// FloorForClass, not the bare layoutMinPool: a catch-all landing as the
+			// elastic remainder keeps its higher safety-net floor (see the invariant
+			// on FloorForClass), matching the seed path's ForecastForClass.
+			if floor := FloorForClass(specs[i].Class); sizes[i] < floor {
+				return nil, fmt.Errorf("subnet too small for the configured pools: elastic pool %q would get only %d addresses (min %d) - reduce device counts or use a larger subnet", specs[i].Class, sizes[i], floor)
 			}
 		}
 	}
