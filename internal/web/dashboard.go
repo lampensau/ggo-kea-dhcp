@@ -111,8 +111,16 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 
 	// Recent-leases card: top active leases plus awaiting-renewal hosts (online but
 	// unleased after a purge - the card must not go empty while devices are up),
-	// tagged with passive online/offline.
-	recent := appendAwaitingRows(buildLeaseRows(active), ns.Awaiting)
+	// tagged with passive online/offline. Awaiting hosts covered by a hw-address
+	// reservation are dropped so the card agrees with /leases, where the reservation
+	// row's MAC suppresses the awaiting row. Reservation MACs are fetched only on the
+	// withPinning (lease-change/page) path; the metrics-only path never broadcasts
+	// this card, so its unfiltered build is never shown.
+	awaiting := ns.Awaiting
+	if withPinning {
+		awaiting = filterAwaitingByMAC(awaiting, s.reservationMACs(ctx))
+	}
+	recent := appendAwaitingRows(buildLeaseRows(active), awaiting)
 	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
 	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)

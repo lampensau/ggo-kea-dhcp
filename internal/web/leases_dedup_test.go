@@ -221,3 +221,21 @@ func TestUnifiedLeaseRowsWithPins_AwaitingRenewal(t *testing.T) {
 		t.Errorf("lease row disturbed: %+v", rows[0])
 	}
 }
+
+// TestFilterAwaitingByMAC proves the dashboard card applies the same reservation
+// suppression as /leases: an awaiting host whose MAC holds a hw-address reservation
+// is dropped (the reservation row represents it there), others pass through, and a
+// nil set (no MariaDB) is a no-op.
+func TestFilterAwaitingByMAC(t *testing.T) {
+	awaiting := []netmon.PoolHost{
+		{IP: "10.0.0.42", MAC: "00:1f:80:20:cc:cc"},
+		{IP: "10.0.0.77", MAC: "00:1F:80:20:DD:DD"}, // reserved (case differs)
+	}
+	got := filterAwaitingByMAC(awaiting, map[string]bool{normalizeMAC("00:1f:80:20:dd:dd"): true})
+	if len(got) != 1 || got[0].IP != "10.0.0.42" {
+		t.Fatalf("expected only .42 to survive, got %+v", got)
+	}
+	if got := filterAwaitingByMAC(awaiting, nil); len(got) != 2 {
+		t.Fatalf("nil MAC set must pass through, got %+v", got)
+	}
+}

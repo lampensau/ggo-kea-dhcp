@@ -648,6 +648,39 @@ func appendAwaitingRows(rows []views.LeaseRow, awaiting []netmon.PoolHost) []vie
 	return rows
 }
 
+// reservationMACs returns the normalized MACs holding a client (hw-address)
+// reservation, or nil when MariaDB is absent or the read fails.
+func (s *Server) reservationMACs(ctx context.Context) map[string]bool {
+	if s.mariadb == nil {
+		return nil
+	}
+	list, err := s.mariadb.HWReservations(ctx)
+	if err != nil {
+		log.Printf("[Reservations] MAC-set read failed: %v", err)
+		return nil
+	}
+	macs := make(map[string]bool, len(list))
+	for _, rsv := range list {
+		macs[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
+	}
+	return macs
+}
+
+// filterAwaitingByMAC drops awaiting hosts whose MAC is in the given normalized-MAC
+// set (hosts a reservation already represents). A nil/empty set passes through.
+func filterAwaitingByMAC(awaiting []netmon.PoolHost, macs map[string]bool) []netmon.PoolHost {
+	if len(macs) == 0 || len(awaiting) == 0 {
+		return awaiting
+	}
+	out := make([]netmon.PoolHost, 0, len(awaiting))
+	for _, h := range awaiting {
+		if !macs[normalizeMAC(h.MAC)] {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // markLeaseLastSeen tags each row with when its MAC was last observed active (from
 // the persisted last-seen tracker). For a live lease this is "just now"; for an
 // offline reservation it is the real age, and a reservation unseen past the stale
