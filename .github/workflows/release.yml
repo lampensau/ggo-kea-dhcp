@@ -14,6 +14,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history + tags: the release-scope derivation below diffs the
+          # packaging inputs against the previous tag.
+          fetch-depth: 0
 
       - name: Verify tag matches version.go
         run: |
@@ -50,11 +54,37 @@ jobs:
           cp dist/ggo-kea-dhcp_*_arm64.deb dist/ggo-kea-dhcp_arm64.deb
           ls -l dist/
 
+      - name: Write the release.json manifest (app vs system scope)
+        # The appliance's self-updater reads this to message the install
+        # honestly: "app" installs the .deb with dependencies frozen; "system"
+        # (this release changed the dependency set) runs the broader apt path.
+        # Derived from whether the packaging inputs changed since the previous
+        # tag; an explicit "release-scope: app|system" line in the tag message
+        # overrides the derivation. Asset checksums need no step here - the
+        # GitHub API publishes a digest per asset, which install.sh and the
+        # appliance both verify against.
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          scope=app
+          if [ -z "$prev" ]; then
+            scope=system   # first release: nothing to diff against, take the safe path
+          elif [ -n "$(git diff --name-only "$prev" "$GITHUB_REF_NAME" -- packaging/nfpm.yaml packaging/apt/)" ]; then
+            scope=system
+          fi
+          override="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed -n 's/^release-scope:[[:space:]]*//p' | head -n1)"
+          case "$override" in
+            app|system) scope="$override" ;;
+          esac
+          printf '{"schema":1,"version":"%s","scope":"%s"}\n' "$VER" "$scope" > dist/release.json
+          cat dist/release.json
+
       - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             dist/ggo-kea-dhcp_arm64.deb \
+            dist/release.json \
             ggo-kea-dhcp-arm64 \
             --generate-notes
