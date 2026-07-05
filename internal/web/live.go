@@ -188,7 +188,8 @@ func regionOnPage(region, page string) bool {
 			return true
 		}
 	case "/setup":
-		return region == "link-status" // the cable/link badge only exists in the wizard
+		// The cable/link and rogue-DHCP shield badges only exist in the wizard.
+		return region == "link-status" || region == "shield-status"
 	}
 	return false
 }
@@ -379,15 +380,17 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 // metrics-only tick can refresh them without the pinning/reservation round-trips.
 func (s *Server) periodicFragments(v views.DashboardView) []liveFragment {
 	state, _ := s.sqlite.GetState(db.LifecycleStateKey)
-	shield := s.net.GetLinkStatus("eth0")
-	linkState, linkDetail := s.linkTrunkState(shield.LinkState)
+	link := s.net.GetLinkStatus("eth0")
+	linkState, linkDetail := s.linkTrunkState(link.LinkState)
+	shieldState, shieldDetail := s.shieldStatus(link.ShieldState)
 	frags := []liveFragment{
 		{"dash-tiles", renderFragment(views.StatTiles(v))},
 		{"dash-lldp", renderFragment(views.DashLLDP(v.LLDP))},
 		{"activity-feed", renderFragment(views.ActivityFeed(v.Activity))},
 		{"state-badge", renderFragment(views.StatusPill(s.statusPillView(state, v.NetHealth)))},
 		{"sys-health", renderFragment(views.SysHealthIndicator(s.buildSysHealthView(state)))},
-		{"link-status", renderFragment(views.LinkBadge(linkState, shield.Interface, linkDetail))},
+		{"link-status", renderFragment(views.LinkBadge(linkState, link.Interface, linkDetail))},
+		{"shield-status", renderFragment(views.ShieldBadge(shieldState, link.Interface, shieldDetail))},
 		{"net-health", renderFragment(views.NetHealthBody(v.NetHealth))},
 		{"net-health-rollup", renderFragment(views.NetHealthRollup(v.NetHealth))},
 		// The diagnostics audit list, so a new SYSTEM event lands on an open
