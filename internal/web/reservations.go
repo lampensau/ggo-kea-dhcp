@@ -489,6 +489,9 @@ func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLe
 // once per build and shared by the lease-row merge and the dashboard card's awaiting
 // suppression.
 func (s *Server) fetchHWReservationMap(ctx context.Context) map[string]db.HostReservation {
+	if s.hwResFetch != nil {
+		return s.hwResFetch(ctx)
+	}
 	res := map[string]db.HostReservation{}
 	if s.mariadb == nil {
 		return res

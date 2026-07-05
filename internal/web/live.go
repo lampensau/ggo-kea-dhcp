@@ -332,10 +332,18 @@ type liveFragment struct {
 // render but never the wire - acceptable at single-operator scale, so the
 // regions are deliberately not gated on which page each client is viewing.
 func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
+	return s.dashboardFragmentsWith(ctx, leases, s.fetchHWReservationMap(ctx))
+}
+
+// dashboardFragmentsWith is dashboardFragments with the hw-address reservation map
+// supplied by the caller. publishDashboardWithLeases fetches the map once and hands
+// it to both the DNS zone rebuild and this render, so a lease-changed broadcast makes
+// one reservation round-trip instead of two. The connect snapshot and the split test
+// go through dashboardFragments, which fetches its own map.
+func (s *Server) dashboardFragmentsWith(ctx context.Context, leases []kea.ActiveLease, res map[string]db.HostReservation) []liveFragment {
 	ns := s.collectNetSnapshot() // one SnapshotAll shared by the view + lease table
-	// One HWReservations fetch shared by the card's awaiting suppression and the
-	// leases-body merge below (same single-fetch rationale as pinnedKeys).
-	res := s.fetchHWReservationMap(ctx)
+	// res is shared by the card's awaiting suppression and the leases-body merge below
+	// (same single-fetch rationale as pinnedKeys).
 	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true, res)
 
 	// Periodic-cheap regions (also refreshed on a metrics-only tick).
@@ -433,8 +441,15 @@ func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.Ac
 	// (reservation add/delete, pin/unpin, apply/switch), from the leases already
 	// in hand. The headless path (no viewers, no mutations) rides the metrics
 	// sampler via maybeRebuildDNSZone.
-	s.rebuildDNSZone(ctx, leases)
-	s.publishFragments(s.dashboardFragments(ctx, leases))
+	//
+	// Fetch the hw-address reservation map ONCE and share it: the zone rebuild and
+	// the fragment render both need it, and issuing the same query twice per broadcast
+	// was pure waste. Both paths previously read it from fetchHWReservationMap, so one
+	// shared snapshot is byte-identical - it only removes the second round-trip (and
+	// the two now see one consistent set rather than two reads a moment apart).
+	res := s.fetchHWReservationMap(ctx)
+	s.rebuildDNSZoneWith(leases, res)
+	s.publishFragments(s.dashboardFragmentsWith(ctx, leases, res))
 }
 
 // leasesSignature is an order-independent fingerprint of the lease set's identity

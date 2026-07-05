@@ -12,13 +12,21 @@ import (
 )
 
 // collectDNSHosts gathers the zone builder's three inputs and delegates to the
-// pure buildDNSHosts. Kept thin so the merge rules are unit-testable.
+// pure buildDNSHosts. Kept thin so the merge rules are unit-testable. Fetches the
+// reservation map itself; callers that already hold one use collectDNSHostsWith.
 func (s *Server) collectDNSHosts(ctx context.Context, leases []kea.ActiveLease) map[string]string {
+	return s.collectDNSHostsWith(leases, s.fetchHWReservationMap(ctx))
+}
+
+// collectDNSHostsWith is collectDNSHosts with the reservation map supplied by the
+// caller, so a single publishDashboardWithLeases fetch feeds both the zone rebuild
+// and the dashboard fragments instead of querying MariaDB twice per broadcast.
+func (s *Server) collectDNSHostsWith(leases []kea.ActiveLease, res map[string]db.HostReservation) map[string]string {
 	var devs []ggoscan.Device
 	if s.ggoscan != nil {
 		devs = s.ggoscan.Snapshot().Devices
 	}
-	return buildDNSHosts(devs, leases, s.fetchHWReservationMap(ctx))
+	return buildDNSHosts(devs, leases, res)
 }
 
 // buildDNSHosts assembles the local-DNS zone input: every device the appliance
@@ -103,7 +111,17 @@ func (s *Server) rebuildDNSZone(ctx context.Context, leases []kea.ActiveLease) {
 	if s.dns == nil {
 		return
 	}
-	s.dns.SetZone(dns.NewZone(s.collectDNSHosts(ctx, leases)))
+	s.rebuildDNSZoneWith(leases, s.fetchHWReservationMap(ctx))
+}
+
+// rebuildDNSZoneWith is rebuildDNSZone with a caller-supplied reservation map, so
+// the dashboard broadcast reuses the map it already fetched for the fragments
+// rather than issuing a second identical MariaDB query.
+func (s *Server) rebuildDNSZoneWith(leases []kea.ActiveLease, res map[string]db.HostReservation) {
+	if s.dns == nil {
+		return
+	}
+	s.dns.SetZone(dns.NewZone(s.collectDNSHostsWith(leases, res)))
 }
 
 // maybeRebuildDNSZone is the sampler's gate: rebuild only when the lease set or

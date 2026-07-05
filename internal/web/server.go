@@ -125,6 +125,10 @@ type Server struct {
 	// re-applied uplink logs exactly one row per real up/down transition (zero value =
 	// unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
+	// hwResFetch overrides the hw-address reservation fetch in tests (a counting fake),
+	// so the per-broadcast fetch-count invariant is assertable. nil in production, where
+	// fetchHWReservationMap reads MariaDB directly.
+	hwResFetch func(context.Context) map[string]db.HostReservation
 }
 
 // rogueProber is the onboarding rogue-DHCP probe surface (*netmon.RogueProbe in
