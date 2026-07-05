@@ -67,7 +67,7 @@ Settings collects the appliance-wide knobs:
 - **DHCP Defaults** - the default lease lifetime and DNS servers handed to every scope; individual scopes can override them. Shorter leases make pool changes and reservations take effect sooner, at the cost of more renewal traffic.
 - **Backup and Restore** - see [Backup, restore and reset](backup-restore.md)
 
-Your own username and password are not appliance settings: change them from the account menu at the right end of the header (the person icon), where the Account dialog asks for your current password before saving.
+Your own username and password are not appliance settings: they are set once when you create the administrator at first boot, and changed later from the account menu at the right end of the header (the person icon) once the appliance is active, where the Account dialog asks for your current password before saving.
 
 The running appliance version is shown here too; include it when reporting an issue.
 
