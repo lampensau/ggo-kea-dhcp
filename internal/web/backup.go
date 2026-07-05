@@ -341,23 +341,30 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			log.Printf("[restore] clearing MariaDB hosts failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
-		hosts := make([]db.HostReservation, 0, len(b.Reservations))
-		for _, h := range b.Reservations {
-			hosts = append(hosts, db.HostReservation{
-				Identifier:     h.Identifier,
-				IdentifierType: h.IdentifierType,
-				SubnetID:       h.SubnetID,
-				IPv4Address:    h.IPv4Address,
-				Hostname:       h.Hostname,
-			})
-		}
-		if err := s.mariadb.InsertReservations(context.Background(), hosts); err != nil {
+		if err := s.mariadb.InsertReservations(context.Background(), restoreHosts(b.Reservations)); err != nil {
 			log.Printf("[restore] inserting reservations failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
 	}
 
 	return lifecycle, nil
+}
+
+// restoreHosts converts the bundle's hosts rows for insert, slugifying each
+// hostname on the way in: bundles round-trip reservation hostnames verbatim, so
+// one exported before sanitization existed still carries raw names.
+func restoreHosts(hosts []BackupHost) []db.HostReservation {
+	out := make([]db.HostReservation, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, db.HostReservation{
+			Identifier:     h.Identifier,
+			IdentifierType: h.IdentifierType,
+			SubnetID:       h.SubnetID,
+			IPv4Address:    h.IPv4Address,
+			Hostname:       slugifyHostname(h.Hostname),
+		})
+	}
+	return out
 }
 
 // handleBackupExport serves the full appliance backup as a downloadable JSON file.

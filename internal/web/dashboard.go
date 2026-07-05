@@ -129,6 +129,7 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
 	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)
+	sanitizeLeaseHostnames(recent)
 
 	return views.DashboardView{
 		Page:         pd,
