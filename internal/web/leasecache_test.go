@@ -106,3 +106,50 @@ func TestLeaseCacheSharesErrors(t *testing.T) {
 		t.Fatalf("stale read after an outage cost %d total fetches, want 2 (must retry)", n)
 	}
 }
+
+// TestLeaseCacheSurvivesFetchPanic pins the panic boundary: the cache is the
+// single chokepoint for all lease reads, so a fetch that panics must publish an
+// honest error and release the in-flight marker - not wedge every future read
+// into blocking until its context expires (which would degrade the dashboard to
+// a permanent "Kea down" until restart).
+func TestLeaseCacheSurvivesFetchPanic(t *testing.T) {
+	calls := 0
+	now := time.Unix(1000, 0)
+	c := newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
+		calls++
+		if calls == 1 {
+			panic("boom in fetch")
+		}
+		return []kea.ActiveLease{{IPAddress: "10.0.0.7"}}, nil
+	})
+	c.now = func() time.Time { return now }
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the leader's panic must propagate to its own recover wrapper")
+			}
+		}()
+		_, _ = c.get(context.Background(), leaseSrcTTL)
+	}()
+
+	// A follow-up read must return promptly with an honest error - not block on
+	// a never-closed in-flight marker until its deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := c.get(ctx, leaseSrcTTL)
+	if errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Fatalf("post-panic read blocked (err=%v after %v) - the cache is wedged", err, time.Since(start))
+	}
+	if err == nil {
+		t.Fatal("post-panic read must surface an error, not an empty success")
+	}
+
+	// Past the TTL the cache retries and recovers.
+	now = now.Add(leaseSrcTTL + time.Second)
+	leases, err := c.get(context.Background(), leaseSrcTTL)
+	if err != nil || len(leases) != 1 {
+		t.Fatalf("post-TTL retry = %v leases, err %v - want recovery", len(leases), err)
+	}
+}
