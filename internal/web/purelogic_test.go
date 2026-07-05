@@ -328,3 +328,18 @@ func TestParseUplinkForm(t *testing.T) {
 		t.Error("too-short WPA2 password should error")
 	}
 }
+
+// A panic inside a background tick must be absorbed by runRecovered, not
+// propagate and kill the process (issue #20).
+func TestRunRecoveredAbsorbsPanic(t *testing.T) {
+	ran := false
+	runRecovered("test", func() {
+		ran = true
+		panic("boom")
+	})
+	if !ran {
+		t.Fatal("wrapped fn did not run")
+	}
+	// Reaching this line at all is the assertion: the panic did not propagate.
+	runRecovered("test", func() {}) // and a non-panicking fn passes through
+}

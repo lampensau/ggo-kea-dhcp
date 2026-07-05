@@ -207,10 +207,10 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Enter a valid MAC address (e.g. 00:1f:80:12:34:56).", http.StatusBadRequest)
 		return
 	}
-	// Carry the auto/default Green-GO hostname into a manual reservation: if the
-	// operator left the hostname blank, adopt the scanned device name (slugified).
-	// Only fills a blank - an explicit operator hostname is never overridden.
-	if hostname == "" {
+	// The hostname is stored as a DNS label, so sanitize unconditionally. A blank
+	// (or garbage-only) name adopts the scanned Green-GO device name; an explicit
+	// operator hostname is never replaced, only normalized.
+	if hostname = slugifyHostname(hostname); hostname == "" {
 		hostname = s.defaultHostnameFor(hw.String())
 	}
 	ip := net.ParseIP(ipStr)
@@ -251,7 +251,14 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease
 	// would otherwise not appear until the next lease change.
 	s.publishDashboard()
-	s.setFlash(w, r, fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr), "success")
+	msg := fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr)
+	// If the reserved device is a Green-GO client that is online now, offer to reboot it
+	// so the change applies immediately instead of waiting out the renewal.
+	if dev, ok := s.rebootOfferForMAC(hw.String()); ok {
+		s.setFlashDevice(w, r, msg, "success", dev)
+	} else {
+		s.setFlash(w, r, msg, "success")
+	}
 	s.redirectHTMX(w, r, formReturn(r, "/leases"))
 }
 
@@ -417,7 +424,8 @@ func buildImportReservations(
 			skip(i+1, reason)
 			continue
 		}
-		if hostname == "" {
+		// Stored as a DNS label - sanitize unconditionally, matching the single add.
+		if hostname = slugifyHostname(hostname); hostname == "" {
 			hostname = hostnameFor(hw.String())
 		}
 		seenIP[ipU] = true
@@ -488,6 +496,9 @@ func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLe
 // once per build and shared by the lease-row merge and the dashboard card's awaiting
 // suppression.
 func (s *Server) fetchHWReservationMap(ctx context.Context) map[string]db.HostReservation {
+	if s.hwResFetch != nil {
+		return s.hwResFetch(ctx)
+	}
 	res := map[string]db.HostReservation{}
 	if s.mariadb == nil {
 		return res
@@ -612,6 +623,9 @@ func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.Acti
 	// Fill any still-nameless row with the device's scanned Green-GO name (display
 	// only; never overrides a hostname the lease/reservation already carries).
 	s.overlayGgoNamesWith(rows, ggoNames)
+	// The row set is final: funnel every name (client-announced, stored, and
+	// scan-filled alike) through the sanitize+dedupe pass.
+	sanitizeLeaseHostnames(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return leaseIPKey(rows[i].IPAddress) < leaseIPKey(rows[j].IPAddress) })
 	// Presence is keyed by IP from the active ARP prober: a row is online iff the device
 	// holding that address answered an ARP recently. Because it is per-IP, a pinned device

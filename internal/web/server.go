@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"ggo-kea-dhcp/internal/arpscan"
 	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
+	"ggo-kea-dhcp/internal/dns"
 	"ggo-kea-dhcp/internal/ggoscan"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/netmon"
@@ -33,13 +35,40 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
+// deviceScanner is the subset of *ggoscan.Scanner the web layer drives. Declaring the
+// field as an interface lets a test inject a fake inventory and capture the reboot send
+// without opening a real socket. *ggoscan.Scanner satisfies it.
+type deviceScanner interface {
+	Start([]ggoscan.Spec)
+	Stop()
+	Snapshot() ggoscan.Snapshot
+	SendReboot(ip string) error
+}
+
+// presenceProber is the subset of *arpscan.Prober the web layer drives, seamed for the
+// same reason: a test can report presence and the live MAC at an IP. *arpscan.Prober
+// satisfies it.
+type presenceProber interface {
+	Start([]arpscan.Spec)
+	Stop()
+	Snapshot() arpscan.Snapshot
+	ProbeHost(ip string) (mac string, alive bool)
+}
+
 type Server struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB
 	mariadb *db.MariaDB
 	kea     *kea.Client
-	dns     *network.DNSManager
-	net     *network.Manager
+	// dns is the single owner of UDP port 53: stopped through FACTORY/ONBOARDING
+	// (the reconciler deliberately serves no DNS there), authoritative for the
+	// device zones + dumb forwarder in ACTIVE. The zone is rebuilt from leases,
+	// reservations and scan names on the dashboard cadence (rebuildDNSZone).
+	dns *dns.Server
+	net *network.Manager
+	// dnsZoneSig gates the metrics sampler's zone rebuild so an idle box does not
+	// re-query reservations every 12s (event-driven rebuilds ride publishDashboard).
+	dnsZoneSig atomic.Uint64
 	// live is the in-process SSE broadcaster pushing state changes to connected
 	// operators (lifecycle badge, tiles, lease/learnable lists) without polling.
 	live *liveHub
@@ -53,11 +82,11 @@ type Server struct {
 	// on the leases/dashboard views. Runs only while ACTIVE, started/stopped beside
 	// netmon. (netmon stays passive; this is the active counterpart that reliably
 	// reaches quiet devices a passive capture never sees.)
-	arp *arpscan.Prober
+	arp presenceProber
 	// ggoscan is the active Green-GO device scanner (6464 device-scan): a firmware/model
 	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
 	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
-	ggoscan *ggoscan.Scanner
+	ggoscan deviceScanner
 	// ggoFwMu guards ggoFwScopes: the greengo-preset scopes the scanner targets
 	// (iface + subnet), refreshed on every startGgoScan. Used to attribute
 	// firmware-mismatch findings to the owning scope's Network Health sub-card.
@@ -77,6 +106,11 @@ type Server struct {
 	// the switch port is trunking tagged VLANs (the full monitor runs only in ACTIVE).
 	// Started/stopped by the reconciler beside the onboarding bring-up.
 	trunkProbe *netmon.TrunkProbe
+	// rogueProbe passively watches eth0 during onboarding for a foreign DHCP server
+	// already answering (an OFFER/ACK carrying another server-id), feeding the wizard's
+	// shield badge. Same lifecycle as trunkProbe. Interface-typed so wizard tests can
+	// fake a detection without a capture socket.
+	rogueProbe rogueProber
 	// metrics holds the dashboard's live trend series (lease count, pool
 	// utilization, Kea RTT, uplink), filled by an always-on sampler independent of
 	// the client-gated live ticker so a cold-opened dashboard has sparkline history.
@@ -97,6 +131,18 @@ type Server struct {
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
 	applying atomic.Bool
+	// updating guards the self-update install path: claimed by POST /update/install
+	// (alongside the applying guard) and held until the updater reports a result or
+	// the control plane restarts onto the new binary.
+	updating atomic.Bool
+	// updateHTTP is the dedicated outbound client for GitHub release checks and the
+	// .deb download - separate from the Kea client so a wedged remote can never
+	// contend with control-socket traffic. updateAPIBase is the API origin
+	// (overridden by tests to an httptest server); updateDir is the .deb staging
+	// directory (the StateDirectory's update/ subdir in production).
+	updateHTTP    *http.Client
+	updateAPIBase string
+	updateDir     string
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
@@ -112,6 +158,21 @@ type Server struct {
 	// re-applied uplink logs exactly one row per real up/down transition (zero value =
 	// unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
+	// hwResFetch overrides the hw-address reservation fetch in tests (a counting fake),
+	// so the per-broadcast fetch-count invariant is assertable. nil in production, where
+	// fetchHWReservationMap reads MariaDB directly.
+	hwResFetch func(context.Context) map[string]db.HostReservation
+}
+
+// rogueProber is the onboarding rogue-DHCP probe surface (*netmon.RogueProbe in
+// production; faked in wizard tests).
+type rogueProber interface {
+	Start(iface string)
+	Stop()
+	// Watching is false when the probe is stopped or blind (no CAP_NET_RAW), so
+	// the shield can report "unverified" instead of a false all-clear.
+	Watching() bool
+	Server() (ip, mac string, ok bool)
 }
 
 // SetPreflight stores the latest preflight result.
@@ -138,7 +199,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		sqlite:  sqlite,
 		mariadb: mariadb,
 		kea:     keaClient,
-		dns:     network.NewDNSManager(),
+		dns:     dns.New(""),
 		net:     network.NewManager(),
 		live:    newLiveHub(),
 	}
@@ -170,10 +231,15 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		}
 		return out, true
 	}, leaseCacheTTL, time.Now)
-	// The onboarding trunk probe (started in reconcileOnboarding, stopped on entering ACTIVE).
+	// The onboarding trunk + rogue-DHCP probes (started in reconcileOnboarding,
+	// stopped on entering ACTIVE).
 	s.trunkProbe = netmon.NewTrunkProbe()
+	s.rogueProbe = netmon.NewRogueProbe()
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
+	s.updateHTTP = newUpdateHTTPClient()
+	s.updateAPIBase = "https://api.github.com"
+	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
 	s.health = newBackendHealth()
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
@@ -213,23 +279,57 @@ func auditResult(sev netmon.Severity) string {
 	}
 }
 
+// runRecovered runs fn, logging and absorbing a panic. Background goroutines
+// (ticks, probes, the boot reconcile) don't get the net/http per-connection
+// recovery, so without this a panic in any of them kills the whole process -
+// DHCP management, DNS, and the UI together. A skipped cycle is the correct
+// degradation; the next tick retries.
+func runRecovered(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[%s] recovered from panic: %v", name, r)
+		}
+	}()
+	fn()
+}
+
 // Start runs the HTTP server and blocks until exit.
 func (s *Server) Start() error {
 	// One-shot: lift any legacy per-scope WiFi uplink up to the box-level keys before
 	// the boot reconcile reads them.
 	s.migrateUplinkToBoxLevel()
 
+	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
+	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.
+	s.reconcileUpdateResult()
+
 	// Bring runtime state in line with the persisted lifecycle state on boot.
 	// Run it in the background so the web UI binds immediately - network/SoftAP
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
-	go func() {
-		if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
-			// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
-			// interface would otherwise look healthy everywhere but journalctl. The
-			// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
-			log.Printf("Boot reconcile (best-effort) reported: %v", err)
-			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
+	go runRecovered("boot-reconcile", func() {
+		// Hold the mutation guard for the boot reconcile, like every other reconcile
+		// path, so a fast operator apply/switch arriving the instant the listener binds
+		// cannot run a second reconcile concurrently over the same NM connections and
+		// kea-dhcp4.conf. Synchronous begin/end (this is already its own goroutine, so
+		// no scheduleReconcileHeld). The guard being busy at boot is near-impossible
+		// (nothing else claims it before the listener is up); if it happens, the
+		// winning request's own reconcile converges state, so skipping is safe.
+		if s.beginReconcile() {
+			// Deferred, not sequential: the recover wrapper above absorbs a panic,
+			// and an absorbed panic must not leave the mutation guard held forever.
+			func() {
+				defer s.endReconcile()
+				if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+					// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
+					// interface would otherwise look healthy everywhere but journalctl. The
+					// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
+					log.Printf("Boot reconcile (best-effort) reported: %v", err)
+					_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
+				}
+			}()
+		} else {
+			log.Printf("Boot reconcile skipped: an apply is already in progress")
 		}
 		// Re-probe prerequisites now that the reconcile has brought Kea up (and
 		// waited for its control socket): the synchronous boot-time preflight in
@@ -238,7 +338,7 @@ func (s *Server) Start() error {
 		// banner so the stale warning self-clears without a Diagnostics visit.
 		s.SetPreflight(preflight.Run(s.cfg))
 		s.publishBackendAlert()
-	}()
+	})
 
 	// Keep the dashboard's Kea-derived live regions ticking while operators watch.
 	s.startLiveTicker()
@@ -255,6 +355,10 @@ func (s *Server) Start() error {
 	// Probe MariaDB reachability so a runtime outage (and its recovery) surfaces in
 	// the UI and audit log. Kea health rides the metrics sampler.
 	s.startBackendHealthProbe()
+
+	// Release checks: every 30 min while ACTIVE (each successful uplink connect
+	// also kicks one). Notify-only - installing is always a deliberate operator action.
+	s.startUpdateCheckLoop()
 
 	mux := http.NewServeMux()
 
@@ -275,6 +379,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /login", s.handleLogin)
 	mux.HandleFunc("POST /login", s.handleLoginSubmit)
 	mux.HandleFunc("POST /logout", s.handleLogout)
+	// The signed-in admin's own credentials (header account dialog). Deliberately
+	// NOT in the ONBOARDING whitelist - account changes are a settled-appliance
+	// action, not part of bring-up.
+	mux.HandleFunc("POST /account/save", s.handleAccountSave)
 	mux.HandleFunc("GET /factory", s.handleFactory)
 	mux.HandleFunc("POST /factory/setup", s.handleFactorySetup)
 	mux.HandleFunc("GET /setup", s.handleSetup)
@@ -298,6 +406,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /pinning/pin", s.handlePin)
 	mux.HandleFunc("POST /pinning/unpin", s.handleUnpin)
 	mux.HandleFunc("POST /pinning/label", s.handleLabel)
+	mux.HandleFunc("POST /device/reboot", s.handleDeviceReboot)
 	mux.HandleFunc("GET /audit", s.handleAudit)
 	mux.HandleFunc("GET /diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /settings", s.handleSettings)
@@ -309,8 +418,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /reset/routine", s.handleResetRoutine)
 	mux.HandleFunc("POST /reset/factory", s.handleResetFactory)
 
+	mux.HandleFunc("POST /rogue/standdown", s.handleStandDown)
+	mux.HandleFunc("POST /rogue/resume", s.handleResumeDHCP)
+
 	mux.HandleFunc("POST /system/reboot", s.handleSystemReboot)
 	mux.HandleFunc("POST /system/poweroff", s.handleSystemPowerOff)
+
+	mux.HandleFunc("POST /update/check", s.handleUpdateCheck)
+	mux.HandleFunc("POST /update/dismiss", s.handleUpdateDismiss)
+	mux.HandleFunc("POST /update/install", s.handleUpdateInstall)
 
 	// The dedicated CaptiveRedirectMiddleware was dropped: lifecycleMiddleware is
 	// the outer wrapper and already 302s unauthenticated onboarding probes to
@@ -375,12 +491,16 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request, title string) 
 		d.CSRFToken = csrf
 		d.SysHealth = s.buildSysHealthView(state)
 		d.HealthPill = s.buildStatusPill(state)
+		d.Update = s.updateBadgeView() // first paint of the footer #update-badge
 		if s.health != nil {
 			d.BackendAlerts = s.backendAlertRows() // first paint of the #backend-alert strip (health + preflight)
 		}
 	}
 	if f := s.getFlash(w, r); f != nil {
 		d.Flash = &views.Flash{Message: f.Message, Type: f.Type}
+		if f.Device != nil {
+			d.Flash.Device = &views.FlashDevice{MAC: f.Device.MAC, IP: f.Device.IP, Name: f.Device.Name}
+		}
 	}
 	return d
 }
@@ -430,13 +550,30 @@ func (s *Server) redirectHTMX(w http.ResponseWriter, r *http.Request, path strin
 type FlashMessage struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
+	// Device is set only when the action targeted an online Green-GO device: the next
+	// page offers to reboot it to apply the change now (see setFlashDevice).
+	Device *FlashDevice `json:"device,omitempty"`
+}
+
+// FlashDevice is the reboot-to-apply target carried alongside a flash: the device's
+// current address and already-sanitized name (its MAC is kept for reference).
+type FlashDevice struct {
+	MAC  string `json:"mac,omitempty"`
+	IP   string `json:"ip"`
+	Name string `json:"name"`
 }
 
 func (s *Server) setFlash(w http.ResponseWriter, r *http.Request, msg, msgType string) {
-	flash := FlashMessage{
-		Message: msg,
-		Type:    msgType,
-	}
+	s.writeFlash(w, r, FlashMessage{Message: msg, Type: msgType})
+}
+
+// setFlashDevice writes a flash that also carries a reboot-to-apply device context, so
+// the next page load can offer to reboot that Green-GO device and apply the change now.
+func (s *Server) setFlashDevice(w http.ResponseWriter, r *http.Request, msg, msgType string, dev FlashDevice) {
+	s.writeFlash(w, r, FlashMessage{Message: msg, Type: msgType, Device: &dev})
+}
+
+func (s *Server) writeFlash(w http.ResponseWriter, r *http.Request, flash FlashMessage) {
 	data, _ := json.Marshal(flash)
 	// Server-read only (getFlash) - HttpOnly + Strict + Secure like the session
 	// cookie (conditional: FACTORY/ONBOARDING runs over plain HTTP on the SoftAP).
@@ -475,6 +612,12 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 
 	var flash FlashMessage
 	if err := json.Unmarshal(data, &flash); err != nil {
+		// Tolerate a cookie that predates the JSON schema (a bare message string), so
+		// an in-flight flash across a deploy still shows rather than being dropped.
+		var bare string
+		if json.Unmarshal(data, &bare) == nil && bare != "" {
+			return &FlashMessage{Message: bare, Type: "info"}
+		}
 		return nil
 	}
 
@@ -536,13 +679,15 @@ func isUnsafeMethod(m string) bool {
 
 // sameOriginRequest is the pre-session CSRF defense for the FACTORY-state bootstrap
 // POSTs (/factory/setup, /factory/restore), which run before any session or CSRF
-// token exists. For an unsafe method it requires the Origin (else Referer) header,
-// when present, to match the request Host. A cross-origin browser POST always carries
-// a mismatched Origin and is rejected; a legitimate same-origin submit matches. When
-// both headers are absent (some non-browser clients) it allows the request rather than
-// break onboarding - the header check is defense-in-depth, not the sole gate. It does
-// not stop an attacker who forges a matching Origin; that needs an out-of-band recovery
-// secret, deliberately out of scope to keep zero-touch onboarding usable.
+// token exists. For an unsafe method it requires the Origin (else Referer) header to
+// match the request Host. A cross-origin browser POST always carries a mismatched
+// Origin and is rejected; a legitimate same-origin submit matches. When both headers
+// are absent it fails closed: browsers always send at least one on an unsafe request
+// (a fetch/@post sends Origin, a native <form> POST sends Referer), so only header-less
+// scripted clients (curl) are blocked - and blocking those is the point, since they can
+// otherwise seize a fresh box via the pre-auth /factory/restore before the operator
+// reaches it. It does not stop an attacker who forges a matching Origin; that needs an
+// out-of-band recovery secret, deliberately out of scope to keep onboarding usable.
 func sameOriginRequest(r *http.Request) bool {
 	if !isUnsafeMethod(r.Method) {
 		return true
@@ -556,7 +701,7 @@ func sameOriginRequest(r *http.Request) bool {
 		}
 	}
 	if origin == "" {
-		return true // no Origin/Referer to check - allow (don't break onboarding)
+		return false // no Origin/Referer to check - fail closed (browsers always send one)
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -612,6 +757,13 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 			if !sameOriginRequest(r) {
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
+			}
+			// Bound the body like the authenticated branch does: handleFactorySetup
+			// ParseForms pre-auth, so without this a SoftAP client could spill a
+			// multi-GB body into RAM before any admin exists. handleFactoryRestore also
+			// self-caps; this makes the guard uniform across both bootstrap POSTs.
+			if isUnsafeMethod(r.Method) {
+				r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 			}
 			next.ServeHTTP(w, r)
 			return
@@ -722,12 +874,17 @@ func stateRedirectFor(state, path string) string {
 		// second apply from starting). The reconnect interstitial's /dashboard
 		// navigation lands on the dashboard instead of bouncing to /setup before
 		// the apply goroutine flips the state to ACTIVE.
-		if path == "/setup" || path == "/setup/apply" {
+		if path == "/setup" || path == "/setup/apply" || strings.HasPrefix(path, "/factory") {
 			return "/dashboard"
 		}
 	case db.StateActive:
 		// ACTIVE allows the setup wizard as "create a new configuration" - that is
-		// how a second profile (and thus profile switching) becomes reachable.
+		// how a second profile (and thus profile switching) becomes reachable. The
+		// /factory bootstrap POSTs are the exception: they carry no re-auth and exist
+		// only for the pre-auth FACTORY window, so they must not be reachable here.
+		if strings.HasPrefix(path, "/factory") {
+			return "/dashboard"
+		}
 	}
 	return ""
 }

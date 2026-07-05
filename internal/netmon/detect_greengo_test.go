@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// hFrame builds a minimal UDP-5810 'h' broadcast from srcMAC/srcIP, optionally
+// hFrame builds a minimal UDP-5810 broadcast from srcMAC/srcIP, optionally
 // 802.1Q-tagged with vid (0 = untagged). The greengo presence path needs only the
 // headers (source MAC + IP + tag), not the G5 payload, so this omits it.
 func hFrame(srcMAC [6]byte, srcIP [4]byte, vid int) []byte {
@@ -36,14 +36,14 @@ func hFrame(srcMAC [6]byte, srcIP [4]byte, vid int) []byte {
 	return b
 }
 
-// TestGreengoForeignVLAN: an Evenution device heard only via its 'h' broadcast, on a
+// TestGreengoForeignVLAN: an Evenution device heard only via its 5810 broadcast, on a
 // VLAN we do not serve, is reported as "on unserved VLAN N" - never folded into the
-// served census - and is found via 'h' alone (no ARP), so it survives a restart.
+// served census - and is found via 5810 alone (no ARP), so it survives a restart.
 func TestGreengoForeignVLAN(t *testing.T) {
 	d := newGreengoDetector("eth0", func() []LeasedAddr { return nil }, 0, 0) // serve untagged VID 0
 	bpx := [6]byte{0x00, 0x1f, 0x80, 0x20, 0x4e, 0x52}
 	feed := func(now time.Time) {
-		d.Consume(Frame{Data: hFrame(bpx, [4]byte{169, 254, 78, 82}, 200)}, now) // 'h' on VLAN 200
+		d.Consume(Frame{Data: hFrame(bpx, [4]byte{169, 254, 78, 82}, 200)}, now) // on VLAN 200
 	}
 	start := time.Unix(1000, 0)
 	feed(start)
@@ -54,7 +54,7 @@ func TestGreengoForeignVLAN(t *testing.T) {
 
 	s := d.Snapshot()
 	if s.Severity != SevWarn || !strings.Contains(s.Text, "unserved") || !strings.Contains(s.Text, "200") {
-		t.Fatalf("foreign-VLAN 'h' device should warn 'unserved ... 200', got %+v", s)
+		t.Fatalf("foreign-VLAN device should warn 'unserved ... 200', got %+v", s)
 	}
 	if s.Fields["foreign"] != "1" {
 		t.Errorf("foreign = %q, want 1", s.Fields["foreign"])

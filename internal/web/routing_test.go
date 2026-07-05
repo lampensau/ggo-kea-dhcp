@@ -52,6 +52,12 @@ func TestStateRedirectFor_Extra(t *testing.T) {
 		{db.StateOnboarding, "/leases", "/setup"},
 		{db.StateOnboarding, "/", "/setup"},
 		{db.StateOnboarding, "/audit", "/setup"},
+		// The account dialog is ACTIVE-only: a rename/password change is not part
+		// of onboarding, so /account/save is not whitelisted and bounces to /setup;
+		// once ACTIVE it proceeds. Pinned so a future whitelist edit can't silently
+		// expose credential changes during first-boot.
+		{db.StateOnboarding, "/account/save", "/setup"},
+		{db.StateActive, "/account/save", ""},
 		// CONFIGURING only blocks the wizard; everything else proceeds.
 		{db.StateConfiguring, "/setup/apply", "/dashboard"},
 		{db.StateConfiguring, "/leases", ""},
@@ -59,6 +65,11 @@ func TestStateRedirectFor_Extra(t *testing.T) {
 		// ACTIVE allows the wizard and all dashboard pages.
 		{db.StateActive, "/settings", ""},
 		{db.StateActive, "/leases", ""},
+		// The /factory bootstrap POSTs carry no re-auth and belong to the FACTORY
+		// window only - they must not be reachable by an ACTIVE/CONFIGURING session.
+		{db.StateActive, "/factory/restore", "/dashboard"},
+		{db.StateActive, "/factory/setup", "/dashboard"},
+		{db.StateConfiguring, "/factory/restore", "/dashboard"},
 		// An unexpected/empty state is permissive (no redirect from this pure fn).
 		{"WEIRD", "/dashboard", ""},
 		{"", "/dashboard", ""},
@@ -101,9 +112,13 @@ func TestRegionOnPage(t *testing.T) {
 		{"pinned-body", "/pinning", true},
 		{"learnable-head", "/pinning", true},
 		{"leases-body", "/pinning", false},
-		// Setup wizard: only the link-status badge.
+		// Setup wizard: only the link-status and shield-status badges.
 		{"link-status", "/setup", true},
+		{"shield-status", "/setup", true},
 		{"dash-tiles", "/setup", false},
+		// Diagnostics page: the live audit list.
+		{"diag-audit", "/diagnostics", true},
+		{"dash-tiles", "/diagnostics", false},
 		// A page with no live regions of its own gets nothing but shell regions.
 		{"dash-tiles", "/audit", false},
 		{"pool-table", "/settings", false},

@@ -19,21 +19,25 @@ The Manage menu on the dashboard is where the bigger operations live: editing th
 
 ## The backend health banner
 
-Every page shares an always-on alert region for the two backends the appliance depends on:
+Every page shares an always-on alert region for the things that need attention right now. Two of them are backend outages:
 
 - **DHCP server down** is an error: devices stop getting addresses. The banner clears itself the moment the server answers again; if it does not, [Troubleshooting](troubleshooting.md) has the recovery steps.
 - **Reservation database down** is a warning: dynamic leases keep serving, but reservations and port pinning are unavailable until it returns. The appliance reconnects on its own.
 
-Both transitions are recorded in the audit log with timestamps, which is useful when reconstructing what happened during a show.
+The same banner carries the appliance's loudest alarm: a **rogue DHCP server** on a network you serve. When the passive monitor sees another server handing out addresses, the banner names it and offers a **Stand Down DHCP** control that stops this appliance serving on every scope, so the two servers stop fighting over your devices; it switches to **Resume DHCP** while stood down. Nothing here is automatic - the monitor only warns, standing down is your explicit choice, and it survives a reboot, so the box will not resume serving until you say so. See [Network health](network-health.md) for the detector behind it.
+
+These transitions are recorded in the audit log with timestamps - the backend outages and every stand-down and resume - which is useful when reconstructing what happened during a show.
 
 ## Leases and reservations
 
-The Leases page shows every device the appliance knows about: active leases and client reservations together, plus any device spotted on a pool address while it awaits a DHCP renewal. The list is searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
+The Leases page shows every device the appliance knows about: active leases and client reservations together, plus any device spotted on a pool address while it awaits a DHCP renewal. Device names display as DNS-style labels (lowercase, dashes instead of spaces), and when two devices share a name each gets a short tag from its MAC so the rows stay distinguishable. The list is searchable live by IP, MAC, hostname or device class. Each row shows what the device is and how it got its address, with badges marking reserved addresses and port-pinned devices. A presence dot shows whether the device currently answers on the network, so a lease that outlived its unplugged device is easy to spot.
 
 From a lease row you can:
 
 - **Reserve** the device's current address, so this MAC always gets this IP
 - **Release** the lease, forcing the device to ask again (useful after moving a device between pools)
+
+Both changes normally take effect when the device next renews its lease, which can be minutes away. When the device is a Green-GO client that is online right now, the appliance follows the change with an offer to reboot it, so the released or reserved address takes effect immediately: the reboot makes the device re-request DHCP straight away, at the cost of a few seconds of dropped audio and comms while it restarts. The dialog names the device and its address; declining leaves the change to apply at the next renewal as before.
 
 Reserve a Client IP creates a reservation by hand for a device that is not on the network yet, and Import CSV adds reservations in bulk; imports are additive and never delete existing entries.
 
@@ -46,13 +50,13 @@ Port pinning fixes an address to a physical switch port rather than to a device.
 
 ![Port pinning](images/pinning.png)
 
-The Learnable Ports table fills up on its own as devices request addresses through Option-82-tagged ports. Pinning a port takes its current address and gives the port a label ("SM Desk", "Stage Left"); pinned ports then show live status in the table above. Port identities are raw switch data; the ASCII/hex toggle changes how they are displayed, not what is stored.
+The Learnable Ports table fills up on its own as devices request addresses through Option-82-tagged ports. Pinning a port takes its current address and gives the port a label ("SM Desk", "Stage Left"); pinned ports then show live status in the table above. When the device on the port is a Green-GO client that is online, pinning it offers the same reboot-to-apply step as the Leases page, so the port's address takes effect at once instead of at the device's next renewal; declining leaves it to apply on renewal. Port identities are raw switch data; the ASCII/hex toggle changes how they are displayed, not what is stored.
 
 Use reservations when the device matters ("this beltpack"), pins when the position matters ("whatever is at the SM desk").
 
 ## Diagnostics and the audit log
 
-The Diagnostics page has two halves. The prerequisite checks re-run on every load and probe everything the appliance depends on: the DHCP server, its hook libraries, the databases, the privileged tools and the capture permissions. Green across the board is the expected state; see [Troubleshooting](troubleshooting.md) for what to do when it is not.
+The Diagnostics page has two halves. The prerequisite checks re-run on every load and probe everything the appliance depends on: the DHCP server, its hook libraries, the databases, the privileged tools, the capture permissions, and port 53 for [local DNS](dns.md). Green across the board is the expected state; see [Troubleshooting](troubleshooting.md) for what to do when it is not.
 
 Below the checks sits the audit log, the appliance's flight recorder: every configuration change, login, system event and monitor finding, with actor, timestamp and result. Failed actions are recorded alongside successful ones, with the reason. When someone asks "what changed at 20:14", this is where you look.
 
@@ -65,8 +69,10 @@ Settings collects the appliance-wide knobs:
 - **WiFi Uplink** - the upstream WiFi credentials used for internet routing
 - **Onboarding Network** - the management address and access point name/passphrase the box will use after its next factory reset, so recovery comes up the way you want
 - **DHCP Defaults** - the default lease lifetime and DNS servers handed to every scope; individual scopes can override them. Shorter leases make pool changes and reservations take effect sooner, at the cost of more renewal traffic.
-- **Administrator Account** - change the username or password (current password required)
 - **Backup and Restore** - see [Backup, restore and reset](backup-restore.md)
+- **Software Update** - when the WiFi uplink has internet access, the appliance checks for new releases on its own and offers them here (and as a notice in the footer), with the release notes readable inline; installing one requires your password and never happens automatically. See [Installation](install.md) for the details of both update paths.
+
+Your own username and password are not appliance settings: they are set once when you create the administrator at first boot, and changed later from the account menu at the right end of the header (the person icon) once the appliance is active, where the Account dialog asks for your current password before saving.
 
 The running appliance version is shown here too; include it when reporting an issue.
 

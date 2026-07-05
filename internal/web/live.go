@@ -168,7 +168,7 @@ func (h *liveHub) broadcastLocked(region, fragment string) {
 // never silently dropped; a page with no live regions of its own (audit, settings,
 // pools, reset) receives only the shell regions.
 func regionOnPage(region, page string) bool {
-	if region == "state-badge" || region == "sys-health" || region == "backend-alert" || region == "kea-toast" {
+	if region == "state-badge" || region == "sys-health" || region == "backend-alert" || region == "kea-toast" || region == "update-badge" || region == "standdown-toast" {
 		return true // these live in the shell on every authenticated page
 	}
 	switch page {
@@ -188,7 +188,12 @@ func regionOnPage(region, page string) bool {
 			return true
 		}
 	case "/setup":
-		return region == "link-status" // the cable/link badge only exists in the wizard
+		// The cable/link and rogue-DHCP shield badges only exist in the wizard.
+		return region == "link-status" || region == "shield-status"
+	case "/diagnostics":
+		// The live audit list; without this the diag-audit fragment the hub renders
+		// every tick is filtered out for the very page it targets.
+		return region == "diag-audit"
 	}
 	return false
 }
@@ -223,7 +228,7 @@ func (s *Server) startLiveTicker() {
 			if s.live.clientCount() == 0 {
 				continue
 			}
-			s.tickDashboard()
+			runRecovered("live-ticker", s.tickDashboard)
 		}
 	}()
 }
@@ -331,10 +336,18 @@ type liveFragment struct {
 // render but never the wire - acceptable at single-operator scale, so the
 // regions are deliberately not gated on which page each client is viewing.
 func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
+	return s.dashboardFragmentsWith(ctx, leases, s.fetchHWReservationMap(ctx))
+}
+
+// dashboardFragmentsWith is dashboardFragments with the hw-address reservation map
+// supplied by the caller. publishDashboardWithLeases fetches the map once and hands
+// it to both the DNS zone rebuild and this render, so a lease-changed broadcast makes
+// one reservation round-trip instead of two. The connect snapshot and the split test
+// go through dashboardFragments, which fetches its own map.
+func (s *Server) dashboardFragmentsWith(ctx context.Context, leases []kea.ActiveLease, res map[string]db.HostReservation) []liveFragment {
 	ns := s.collectNetSnapshot() // one SnapshotAll shared by the view + lease table
-	// One HWReservations fetch shared by the card's awaiting suppression and the
-	// leases-body merge below (same single-fetch rationale as pinnedKeys).
-	res := s.fetchHWReservationMap(ctx)
+	// res is shared by the card's awaiting suppression and the leases-body merge below
+	// (same single-fetch rationale as pinnedKeys).
 	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true, res)
 
 	// Periodic-cheap regions (also refreshed on a metrics-only tick).
@@ -352,7 +365,7 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), "", s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 
@@ -379,15 +392,17 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 // metrics-only tick can refresh them without the pinning/reservation round-trips.
 func (s *Server) periodicFragments(v views.DashboardView) []liveFragment {
 	state, _ := s.sqlite.GetState(db.LifecycleStateKey)
-	shield := s.net.GetLinkStatus("eth0")
-	linkState, linkDetail := s.linkTrunkState(shield.LinkState)
+	link := s.net.GetLinkStatus("eth0")
+	linkState, linkDetail := s.linkTrunkState(link.LinkState)
+	shieldState, shieldDetail := s.shieldStatus(link.ShieldState)
 	frags := []liveFragment{
 		{"dash-tiles", renderFragment(views.StatTiles(v))},
 		{"dash-lldp", renderFragment(views.DashLLDP(v.LLDP))},
 		{"activity-feed", renderFragment(views.ActivityFeed(v.Activity))},
 		{"state-badge", renderFragment(views.StatusPill(s.statusPillView(state, v.NetHealth)))},
 		{"sys-health", renderFragment(views.SysHealthIndicator(s.buildSysHealthView(state)))},
-		{"link-status", renderFragment(views.LinkBadge(linkState, shield.Interface, linkDetail))},
+		{"link-status", renderFragment(views.LinkBadge(linkState, link.Interface, linkDetail))},
+		{"shield-status", renderFragment(views.ShieldBadge(shieldState, link.Interface, shieldDetail))},
 		{"net-health", renderFragment(views.NetHealthBody(v.NetHealth))},
 		{"net-health-rollup", renderFragment(views.NetHealthRollup(v.NetHealth))},
 		// The diagnostics audit list, so a new SYSTEM event lands on an open
@@ -425,21 +440,38 @@ func (s *Server) publishFragments(frags []liveFragment) {
 // lease set and broadcasts any that changed. The fragments morph by element id into
 // whichever page is open; on a page lacking an id the patch is a harmless no-op.
 func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.ActiveLease) {
-	s.publishFragments(s.dashboardFragments(ctx, leases))
+	// The local-DNS zone follows the same cadence as the dashboard: this covers
+	// the ticker's leasesChanged branch AND every post-mutation publishDashboard
+	// (reservation add/delete, pin/unpin, apply/switch), from the leases already
+	// in hand. The headless path (no viewers, no mutations) rides the metrics
+	// sampler via maybeRebuildDNSZone.
+	//
+	// Fetch the hw-address reservation map ONCE and share it: the zone rebuild and
+	// the fragment render both need it, and issuing the same query twice per broadcast
+	// was pure waste. Both paths previously read it from fetchHWReservationMap, so one
+	// shared snapshot is byte-identical - it only removes the second round-trip (and
+	// the two now see one consistent set rather than two reads a moment apart).
+	res := s.fetchHWReservationMap(ctx)
+	s.rebuildDNSZoneWith(leases, res)
+	s.publishFragments(s.dashboardFragmentsWith(ctx, leases, res))
 }
 
 // leasesSignature is an order-independent fingerprint of the lease set's identity
-// (IP + MAC + client-id + count). XOR makes it independent of GetLeases' result
-// ordering; lease expiry is deliberately excluded (a renewal must not force a
+// (IP + MAC + client-id + hostname + count). XOR makes it independent of GetLeases'
+// result ordering; lease expiry is deliberately excluded (a renewal must not force a
 // re-render). The client-id IS included because a learnable switch port is defined
 // entirely by its Option-82 flex-id (the lease client-id): a device gaining/changing
 // its Option-82 identity on a STABLE IP+MAC (observed on the Pi: same IP+MAC carrying
 // both a normal client-id and an "AV-Edge-3<0x1f>etherN" flex-id) must re-render the
-// /pinning learnable list, which it otherwise wouldn't until a full reload.
+// /pinning learnable list, which it otherwise wouldn't until a full reload. The
+// hostname is included so a renewal that changes only the client-announced hostname
+// still re-renders the lease table AND (via maybeRebuildDNSZone, which gates on this)
+// rebuilds the local-DNS zone on a headless box; hostnames are stable per device, so
+// this does not add churn.
 func leasesSignature(leases []kea.ActiveLease) uint64 {
 	var x uint64
 	for _, l := range leases {
-		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID)
+		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID + "|" + l.Hostname)
 	}
 	return x ^ uint64(len(leases))
 }
@@ -526,21 +558,26 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 	// goroutine (the select loop); the goroutine only computes, never writes sse.
 	snap := make(chan string, 8)
 	go func() {
+		// close stays outside the recover wrapper: even a panicked snapshot must
+		// unblock the select loop below (a never-closed snap would idle this case
+		// forever, though the stream itself would keep serving hub pushes).
 		defer close(snap)
-		leases, err := s.kea.GetLeases(ctx, 1000)
-		if err != nil {
-			return
-		}
-		for _, f := range s.dashboardFragments(ctx, leases) {
-			if !regionOnPage(f.region, page) {
-				continue
-			}
-			select {
-			case snap <- f.fragment:
-			case <-ctx.Done():
+		runRecovered("sse-snapshot", func() {
+			leases, err := s.kea.GetLeases(ctx, 1000)
+			if err != nil {
 				return
 			}
-		}
+			for _, f := range s.dashboardFragments(ctx, leases) {
+				if !regionOnPage(f.region, page) {
+					continue
+				}
+				select {
+				case snap <- f.fragment:
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
 	}()
 
 	for {

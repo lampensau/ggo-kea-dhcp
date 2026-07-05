@@ -155,12 +155,7 @@ func (s *Server) startMetricsSampler() {
 // scope/pool input) degrades that one reading instead of killing the goroutine -
 // which would silently freeze every dashboard sparkline until the next restart.
 func (s *Server) sampleOnceSafe() {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[metrics] sampler recovered from panic: %v", r)
-		}
-	}()
-	s.sampleMetrics()
+	runRecovered("metrics", s.sampleMetrics)
 }
 
 // sampleMetrics takes one reading of every series. The single GetLeases also
@@ -174,6 +169,11 @@ func (s *Server) sampleMetrics() {
 	if s.sysHealth != nil {
 		s.sysHealth.sample()
 	}
+
+	// Self-heal any DNS listener whose bind lost the post-re-IP race at apply time.
+	// Independent of Kea (like sysHealth above), so a scope's local DNS recovers even
+	// while Kea is down; inert outside ACTIVE, where the server is stopped.
+	s.healDNSBinds()
 
 	ctx, cancel := opCtx()
 	defer cancel()
@@ -196,6 +196,10 @@ func (s *Server) sampleMetrics() {
 	// recordLastSeen still gets the full set so last-seen tracking is unaffected.
 	s.metrics.push(len(dedupeStaleLeases(active)), s.samplePoolUtil(leases), rttMs, s.uplinkProbe(), s.samplePTPClass())
 	s.recordLastSeen(active)
+	// Keep the local-DNS zone fresh on a headless box (no dashboard viewers means
+	// the live ticker's rebuild never runs). Signature-gated, so an idle box pays
+	// no reservation query.
+	s.maybeRebuildDNSZone(ctx, leases)
 }
 
 // lastSeenAdvance is the minimum cltt advance (seconds) before a last_seen row is
@@ -209,30 +213,38 @@ const lastSeenAdvance = 60
 // flex-id key. The in-memory map always takes the freshest value; SQLite is written
 // only for identities whose cltt advanced past what was last persisted.
 func (s *Server) recordLastSeen(leases []kea.ActiveLease) {
-	pending := make(map[string]db.LastSeen)
-	s.lastSeenMu.Lock()
-	for _, l := range leases {
-		if l.Cltt <= 0 {
-			continue
-		}
-		ids := make([]db.LastSeen, 0, 2)
-		if mac := normalizeMAC(l.HWAddress); mac != "" {
-			ids = append(ids, db.LastSeen{Identity: mac, Kind: "lease", LastSeen: l.Cltt})
-		}
-		if id, ok := decodePortIdentity(l.ClientID); ok {
-			ids = append(ids, db.LastSeen{Identity: id.Key, Kind: "port", LastSeen: l.Cltt})
-		}
-		for _, e := range ids {
-			if l.Cltt > s.lastSeen[e.Identity] {
-				s.lastSeen[e.Identity] = l.Cltt
+	// The map work is scoped so the lock is released via defer even if anything in
+	// here panics: this runs under the sampler's panic recovery (sampleOnceSafe),
+	// and a lock left held would wedge every later tick and page render (all of
+	// which take lastSeenMu), turning a recoverable panic into a UI-wide deadlock.
+	// The SQLite write stays outside the lock.
+	pending := func() map[string]db.LastSeen {
+		pending := make(map[string]db.LastSeen)
+		s.lastSeenMu.Lock()
+		defer s.lastSeenMu.Unlock()
+		for _, l := range leases {
+			if l.Cltt <= 0 {
+				continue
 			}
-			if l.Cltt-s.lastSeenWritten[e.Identity] >= lastSeenAdvance {
-				s.lastSeenWritten[e.Identity] = l.Cltt
-				pending[e.Identity] = e
+			ids := make([]db.LastSeen, 0, 2)
+			if mac := normalizeMAC(l.HWAddress); mac != "" {
+				ids = append(ids, db.LastSeen{Identity: mac, Kind: "lease", LastSeen: l.Cltt})
+			}
+			if id, ok := decodePortIdentity(l.ClientID); ok {
+				ids = append(ids, db.LastSeen{Identity: id.Key, Kind: "port", LastSeen: l.Cltt})
+			}
+			for _, e := range ids {
+				if l.Cltt > s.lastSeen[e.Identity] {
+					s.lastSeen[e.Identity] = l.Cltt
+				}
+				if l.Cltt-s.lastSeenWritten[e.Identity] >= lastSeenAdvance {
+					s.lastSeenWritten[e.Identity] = l.Cltt
+					pending[e.Identity] = e
+				}
 			}
 		}
-	}
-	s.lastSeenMu.Unlock()
+		return pending
+	}()
 
 	if err := s.sqlite.UpsertLastSeen(pending); err != nil {
 		log.Printf("[last-seen] upsert failed: %v", err)

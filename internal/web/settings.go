@@ -47,8 +47,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	showUplink := state == db.StateActive
 	upEnabled, upSSID, upPass := s.uplinkSettings()
 
+	page := s.pageData(w, r, "Settings")
 	s.renderTempl(w, r, views.Settings(views.SettingsView{
-		Page:           s.pageData(w, r, "Settings"),
+		Page:           page,
 		OnboardingIP:   s.onboardingCIDR(),
 		SoftAPSSID:     ssid,
 		SoftAPPass:     pass,
@@ -59,9 +60,15 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		UplinkSSID:     upSSID,
 		UplinkPassword: upPass,
 		LeaseLifetime:  s.leaseLifetime(),
-		Username:       s.getActor(r),
+		Update:         s.buildUpdateView(page.CSRFToken),
 	}))
 }
+
+// settingsDeferredMsg tells the operator a save persisted but did NOT converge
+// (another configuration change holds the box). There is no queue that re-applies
+// the values when it frees, so the message asks for an explicit re-save rather
+// than implying an automatic retry that never comes.
+const settingsDeferredMsg = "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them."
 
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -117,7 +124,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// unless it overrides per-scope on /pools). Reuse the per-scope parser for the
 	// shared DNS/option validation, ignoring its gateway/lease fields. A global option
 	// change is a soft change applied on the next reconcile (config-reload, no re-IP).
-	gsvc, gerr := parseScopeServices("", r.FormValue("global_dns"), "", r.Form["opt_name[]"], r.Form["opt_data[]"])
+	gsvc, gerr := parseScopeServices("", r.FormValue("global_dns"), "", "", r.Form["opt_name[]"], r.Form["opt_data[]"])
 	if gerr != nil {
 		s.handleError(w, r, gerr.Error(), http.StatusBadRequest)
 		return
@@ -160,99 +167,14 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// --- Admin account (optional username rename + password change) --- validate now,
-	// apply after the state writes succeed. Either change is "sensitive" and requires
-	// the current password; the username keys the session, so a rename also rewrites
-	// the live session rows.
-	actor := s.getActor(r)
-	newUsername := strings.TrimSpace(r.FormValue("username"))
-	usernameChanged := newUsername != "" && newUsername != actor
-	if usernameChanged {
-		if len(newUsername) < 3 || len(newUsername) > 32 || strings.ContainsAny(newUsername, " \t") {
-			s.handleError(w, r, "Username must be 3-32 characters with no spaces", http.StatusBadRequest)
-			return
-		}
-		var n int
-		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", newUsername).Scan(&n); err != nil {
-			s.handleError(w, r, "Database error checking username", http.StatusInternalServerError)
-			return
-		} else if n > 0 {
-			s.handleError(w, r, "That username is already taken", http.StatusBadRequest)
-			return
-		}
-	}
-
-	newPass := r.FormValue("new_password")
-	var newPassHash string
-	if newPass != "" {
-		if newPass != r.FormValue("confirm_password") {
-			s.handleError(w, r, "New passwords do not match", http.StatusBadRequest)
-			return
-		}
-		if len(newPass) < 12 {
-			s.handleError(w, r, "New password must be at least 12 characters long", http.StatusBadRequest)
-			return
-		}
-		hashed, err := hashPassword(newPass)
-		if err != nil {
-			s.handleError(w, r, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		newPassHash = hashed
-	}
-
-	// Any sensitive account change (rename or new password) requires the current
-	// password, verified once against the still-current username.
-	if usernameChanged || newPassHash != "" {
-		var stored string
-		if err := s.sqlite.QueryRow("SELECT password_hash FROM users WHERE username = ?", actor).Scan(&stored); err != nil {
-			s.handleError(w, r, "Could not load current credentials", http.StatusInternalServerError)
-			return
-		}
-		if !verifyPassword(stored, r.FormValue("current_password")) {
-			s.handleError(w, r, "Current password is incorrect", http.StatusBadRequest)
-			return
-		}
-	}
-
-	// All validation passed - commit the settings atomically.
+	// All validation passed - commit the settings atomically. (The admin-account
+	// rename/password flow moved to the header account dialog, POST /account/save.)
 	if err := s.sqlite.SetStates(updates); err != nil {
 		s.handleError(w, r, "Failed to save settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Password first (keyed on the current username), then the rename, so the rename's
-	// session/users rewrite doesn't strand the password update.
-	if newPassHash != "" {
-		if _, err := s.sqlite.Exec("UPDATE users SET password_hash = ? WHERE username = ?", newPassHash, actor); err != nil {
-			s.handleError(w, r, "Failed to update password", http.StatusInternalServerError)
-			return
-		}
-		// A password change logs out every OTHER session (a forgotten browser or a
-		// suspected-compromise device), keeping only the current one. Keyed on the
-		// still-current username, before any rename below.
-		if c, err := r.Cookie(sessionCookieName); err == nil {
-			// Security-relevant: if this fails silently a suspected-compromise session
-			// survives the password change. Surface it rather than swallow.
-			if _, err := s.sqlite.Exec("DELETE FROM sessions WHERE username = ? AND session_id != ?", actor, c.Value); err != nil {
-				log.Printf("[settings] password changed but failed to revoke other sessions for %q: %v", actor, err)
-			}
-		}
-		_ = s.sqlite.LogAudit(actor, "CHANGE_PASSWORD", actor, "", "", "SUCCESS")
-	}
-	if usernameChanged {
-		if _, err := s.sqlite.Exec("UPDATE users SET username = ? WHERE username = ?", newUsername, actor); err != nil {
-			s.handleError(w, r, "Failed to rename administrator: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Keep every live session for this admin valid (the session cookie maps to a
-		// sessions row keyed by username), so the rename doesn't log the operator out.
-		if _, err := s.sqlite.Exec("UPDATE sessions SET username = ? WHERE username = ?", newUsername, actor); err != nil {
-			log.Printf("[settings] renamed user but failed to update sessions: %v", err)
-		}
-		_ = s.sqlite.LogAudit(newUsername, "CHANGE_USERNAME", actor+" -> "+newUsername, "", "", "SUCCESS")
-		actor = newUsername
-	}
 
+	actor := s.getActor(r)
 	_ = s.sqlite.LogAudit(actor, "UPDATE_SETTINGS", "settings", "", "", "SUCCESS")
 	if upChanged {
 		_ = s.sqlite.LogAudit(actor, "UPDATE_UPLINK", upTarget, "", "", "SUCCESS")
@@ -260,6 +182,16 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 
 	// Live convergence is only safe pre-ACTIVE - never bounce links during a
 	// live show. In ACTIVE the saved values take effect on the next apply/reset.
+	if state == db.StateConfiguring {
+		// An apply/switch is mid-flight (the route stays reachable in CONFIGURING).
+		// The values are persisted but no reconcile can run now, and whether the
+		// in-flight apply picks them up depends on where it happened to be - so
+		// give the same honest deferred message the guard-busy paths use instead
+		// of a success flash that implies the change is live.
+		s.setFlash(w, r, settingsDeferredMsg, "info")
+		s.redirectHTMX(w, r, "/settings")
+		return
+	}
 	if state == db.StateOnboarding || state == db.StateFactory {
 		ipChanged := newCIDR != "" && newCIDR != oldCIDR
 		delay := time.Duration(0)
@@ -272,7 +204,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// yet live and to save again once the in-flight change completes (rather than
 		// implying an automatic retry that never comes).
 		if !s.beginReconcile() {
-			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, settingsDeferredMsg, "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}
@@ -296,7 +228,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			// persisted but the reconcile did NOT run - tell the operator, don't let
 			// the success flash imply the change is live.
 			log.Printf("[settings] soft reconcile deferred - a configuration change is in progress")
-			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, settingsDeferredMsg, "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}

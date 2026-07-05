@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/a-h/templ"
 )
 
 func TestZZPreviewPoolPlan(t *testing.T) {
@@ -281,6 +283,88 @@ func TestZZPreviewNetSignals(t *testing.T) {
 	}
 }
 
+// TestZZPreviewConfirmDialogs renders the three pages whose destructive actions
+// moved from native confirm() popups to the styled in-app dialogs (issue #9):
+// Leases (release + remove reservation), Pinning (unpin), and the dashboard
+// Manage menu (activate + delete profile). The dialogs open in a browser from
+// the real row buttons - no server needed. Preview-only; cleaned up before
+// make pi.
+func TestZZPreviewConfirmDialogs(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	active := PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Username: "operator"}
+
+	write := func(name string, c templ.Component) {
+		t.Helper()
+		var b strings.Builder
+		if err := c.Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/"+name, []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	leases := active
+	leases.CurrentPath = "/leases"
+	write("_preview_confirm_leases.html", Leases(LeasesView{Page: leases, CanReserve: true, Leases: []LeaseRow{
+		{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:aa:bb:cc", Hostname: "bpx-19666", Class: "GGO-BPX", ExpiresIn: "30m", ExpiresAt: 1893456000, Presence: "online"},
+		{IPAddress: "10.0.0.9", HWAddress: "00:1f:80:11:22:33", Hostname: "foh-panel", Class: "GGO-WP-X", Reserved: true, SubnetID: 1},
+	}}))
+
+	pinning := active
+	pinning.CurrentPath = "/pinning"
+	write("_preview_confirm_pinning.html", Pinning(PinningView{Page: pinning,
+		Pinned:    []PortRow{{PortIdentity: "1/2", RemoteID: "core-sw1", CircuitID: "Gi1/0/8", Label: "FOH rack", IPAddress: "10.0.0.9", HWAddress: "00:1f:80:20:aa:bb", SubnetID: 1, Pinned: true}},
+		Learnable: []PortRow{{PortIdentity: "1/3", RemoteID: "core-sw1", CircuitID: "Gi1/0/9", IPAddress: "10.0.0.12", HWAddress: "00:1f:80:44:55:66", LastSeenText: "3m ago"}},
+	}))
+
+	dash := active
+	dash.CurrentPath = "/dashboard"
+	write("_preview_confirm_dashboard.html", Dashboard(DashboardView{Page: dash,
+		ProfileName: "Show_Bootstrap", Preset: "Green-GO Intercom", Interface: "eth0", TotalScopes: 1,
+		Profiles: []ProfileOption{
+			{ID: 1, Name: "Show_Bootstrap", Active: true, ScopeCount: 1},
+			{ID: 2, Name: "Tour B", ScopeCount: 2},
+		},
+	}))
+}
+
+// TestZZPreviewReboot renders the reboot-to-apply offer (issue #10): the Leases page
+// with a flash device set, so the reboot dialog auto-opens on load via data-init, and
+// a second Leases page with no offer (dialog present but closed). Screenshot the first
+// to see the dialog prefilled with a named online Green-GO device. Preview-only;
+// cleaned up before make pi.
+func TestZZPreviewReboot(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	active := PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Username: "operator", CurrentPath: "/leases"}
+	leases := []LeaseRow{
+		{IPAddress: "10.0.0.20", HWAddress: "00:1f:80:aa:bb:cc", Hostname: "bpx-19666", Class: "GGO-BPX", ExpiresIn: "58m", ExpiresAt: 1893456000, Presence: "online"},
+		{IPAddress: "10.0.0.9", HWAddress: "00:1f:80:11:22:33", Hostname: "foh-panel", Class: "GGO-WP-X", Reserved: true, SubnetID: 1},
+	}
+
+	write := func(name string, c templ.Component) {
+		var b strings.Builder
+		if err := c.Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/"+name, []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	offered := active
+	offered.Flash = &Flash{Message: "Reserved 10.0.0.20 for 00:1f:80:aa:bb:cc - the device adopts it on its next DHCP renewal.", Type: "success",
+		Device: &FlashDevice{MAC: "00:1f:80:aa:bb:cc", IP: "10.0.0.20", Name: "bpx-19666"}}
+	write("_preview_reboot_offer.html", Leases(LeasesView{Page: offered, CanReserve: true, Leases: leases}))
+	write("_preview_reboot_plain.html", Leases(LeasesView{Page: active, CanReserve: true, Leases: leases}))
+}
+
 // TestZZPreviewStatTiles renders the four live stat tiles with example sparkline
 // series (rising ok, warn, offline-no-sparkline, flat) so they can be screenshotted
 // without running the appliance. Preview-only; cleaned up before make pi.
@@ -308,4 +392,145 @@ func TestZZPreviewStatTiles(t *testing.T) {
 	if err := os.WriteFile("../static/_preview_stattiles.html", []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestZZPreviewShieldBadge renders the setup wizard once per shield state
+// (Active / Detected with a named rogue server / Unverified when the probe is
+// blind-or-stopped / Suspended) so the badge can be screenshotted in page
+// context. Preview-only; cleaned up before make pi.
+func TestZZPreviewShieldBadge(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	cases := []struct {
+		file, shield, detail, link string
+	}{
+		{"active", "Active", "", "Flat"},
+		{"detected", "Detected", "10.0.0.250", "Flat"},
+		{"unverified", "Unverified", "", "Flat"},
+		{"suspended", "Suspended", "", "Disconnected"},
+	}
+	for _, c := range cases {
+		v := SetupView{
+			Page:        PageData{State: "ONBOARDING", Authenticated: true, CSRFToken: "tok", CurrentPath: "/setup", Title: "Setup Wizard"},
+			ShieldState: c.shield, ShieldDetail: c.detail,
+			LinkState: c.link, Interface: "eth0",
+		}
+		var b strings.Builder
+		if err := Setup(v).Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/_preview_shield_"+c.file+".html", []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestZZPreviewDNSToggle renders the two surfaces carrying the per-scope Local
+// DNS toggle: the /pools scope card (server-rendered checked state, DHCP Options
+// forced open for the screenshot) and the wizard in edit mode with a local_dns
+// prefill (the page JS restores the toggle when opened in a browser).
+// Preview-only; cleaned up before make pi.
+func TestZZPreviewDNSToggle(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	pv := PoolsView{
+		Page: PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", CurrentPath: "/pools"},
+		Scopes: []PoolScopeView{{
+			Title: "Green-GO Intercom · 10.0.0.0/24",
+			Plan: PoolPlanView{
+				Mode: "simple", Subnet: "10.0.0.0/24", Gateway: "10.0.0.1", ShowUtil: true,
+				Heading: "Address Pools", RegionID: "poolplan-0", FieldPrefix: "scopes[0][pool]",
+				EditAction: "/pools/edit", SaveAction: "/pools/save?s=0&mode=simple",
+				Rows: []PoolPlanRow{
+					{Name: "Beltpacks", Key: "GGO-BPX", Icon: "bpx", Elastic: true, Weight: 1, Size: 235, Range: "10.0.0.20 - 10.0.0.254"},
+				},
+			},
+			Services: ScopeServicesView{RegionID: "svc-0", DerivedGateway: "10.0.0.1", GlobalLease: 1800, LocalDNS: true},
+		}},
+	}
+	var b strings.Builder
+	if err := Pools(pv).Render(context.Background(), &b); err != nil {
+		t.Fatal(err)
+	}
+	html := strings.ReplaceAll(b.String(), "/static/", "")
+	html = strings.ReplaceAll(html, `<details class="scope-services"`, `<details open class="scope-services"`)
+	if err := os.WriteFile("../static/_preview_dnstoggle_pools.html", []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prefill := `{"name":"Tour A","scopes":[{"preset":"greengo","vlan_id":0,"cidr":"10.0.0.0/24","uplink":{"enabled":false},` +
+		`"services":{"local_dns":true},` +
+		`"pool_plan":[{"kind":"reserve","name":"Static reserve","count":18},` +
+		`{"kind":"elastic","class":"GGO-BPX","name":"Beltpacks","weight":2,"icon":"bpx"}]}]}`
+	sv := SetupView{
+		Page:        PageData{State: "ACTIVE", Authenticated: true, CSRFToken: "tok", Title: "Edit configuration"},
+		Editing:     true,
+		PrefillJSON: prefill,
+		ShieldState: "Active", LinkState: "Untagged", Interface: "eth0",
+	}
+	b.Reset()
+	if err := Setup(sv).Render(context.Background(), &b); err != nil {
+		t.Fatal(err)
+	}
+	html = strings.ReplaceAll(b.String(), "/static/", "")
+	if err := os.WriteFile("../static/_preview_dnstoggle_wizard.html", []byte(html), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestZZPreviewRogueBanner(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	ctx := context.Background()
+
+	css, err := os.ReadFile("../static/style.css")
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
+	}
+
+	rogue := []AlertRow{{
+		Severity:  "err",
+		Title:     "Rogue DHCP server detected",
+		Detail:    "192.0.2.7 (9c:1f:80:de:ad:be) on eth0 is answering DHCP - devices may lease from the wrong server. Standing our DHCP down pauses this appliance's serving; it does not remove the rogue.",
+		Action:    "standdown",
+		LeaseHint: "about 30 minutes",
+	}}
+	held := []AlertRow{{
+		Severity: "warn",
+		Title:    "DHCP stood down by operator",
+		Detail:   "This appliance is not handing out or renewing DHCP leases. The rogue server is not stopped, and devices will lose their address as each current lease expires (about 30 minutes). Resume once the rogue server is disconnected.",
+		Action:   "resume",
+	}}
+
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="preview"><title>Rogue stand-down banner preview</title><style>`)
+	b.Write(css)
+	b.WriteString(`</style></head><body><main class="container"><h2>Rogue detected (Stand Down control)</h2>`)
+	_ = BackendAlert(rogue).Render(ctx, &b)
+	b.WriteString(`<h2>Stood down by operator (Resume control)</h2>`)
+	_ = BackendAlert(held).Render(ctx, &b)
+	// Force the real confirm dialog open non-modally (.show(), not showModal) so it
+	// renders inline in the page flow - the styled replacement for the old native
+	// confirm() is captured in the same screenshot without a backdrop hiding the banners.
+	b.WriteString(`<h2>Stand Down confirm dialog (styled, replaces native confirm)</h2>`)
+	b.WriteString(`<script>document.getElementById('dlg-standdown').show()</script>`)
+	b.WriteString(`<h2>Stand-down failure toast (reload failed, still serving)</h2>`)
+	b.WriteString(`<div id="toast-container">`)
+	_ = StandDownFailToast(true).Render(ctx, &b)
+	b.WriteString(`</div>`)
+	b.WriteString(`</main></body></html>`)
+
+	dir := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd-r3"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir preview: %v", err)
+	}
+	out := dir + "/preview_rogue_banner.html"
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write preview: %v", err)
+	}
+	t.Logf("wrote %s", out)
 }

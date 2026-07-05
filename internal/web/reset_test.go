@@ -24,6 +24,7 @@ func TestRoutineResetDB(t *testing.T) {
 	_, _ = s.sqlite.Exec("INSERT INTO profiles (name, active) VALUES ('venue', 1)")
 	_, _ = s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES ('00aa', 'Camera 1')")
 	_ = s.sqlite.SetStates(map[string]string{"uplink_ssid": "VenueWiFi", "uplink_pass": "secret123", "uplink_enabled": "1"})
+	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
 
 	if err := s.routineResetDB(); err != nil {
@@ -34,6 +35,11 @@ func TestRoutineResetDB(t *testing.T) {
 	// stale uplink creds can't apply and must not prefill the setup wizard.
 	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "" {
 		t.Errorf("routine reset must clear the WiFi uplink, got ssid %q", v)
+	}
+	// A stale stand-down would render the holdoff on the next job's apply - ACTIVE but
+	// serving nothing. A reset is a clean slate; the flag must be gone.
+	if s.dhcpStoodDown() {
+		t.Error("routine reset must clear the DHCP stand-down flag")
 	}
 
 	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateOnboarding {
@@ -50,6 +56,47 @@ func TestRoutineResetDB(t *testing.T) {
 	}
 }
 
+// TestResetClearsUpdateState proves both reset paths drop the self-update
+// record. A leftover update_latest_* would light the footer badge in ONBOARDING
+// with a dead /settings#update anchor (the update card is ACTIVE-gated).
+func TestResetClearsUpdateState(t *testing.T) {
+	seed := func(s *Server) {
+		_ = s.sqlite.SetStates(map[string]string{
+			stateUpdateVersion:       "9.9.9",
+			stateUpdateSHA256:        "deadbeef",
+			stateUpdateNotified:      "9.9.9",
+			stateUpdateBackoffUntil:  "2099-01-01T00:00:00Z",
+			"update_applied_version": "9.9.9",
+		})
+	}
+	assertCleared := func(t *testing.T, s *Server) {
+		t.Helper()
+		if n := count(t, s, "SELECT COUNT(*) FROM app_state WHERE key LIKE 'update\\_%' ESCAPE '\\'"); n != 0 {
+			t.Errorf("reset left %d update_* app_state row(s)", n)
+		}
+	}
+
+	t.Run("routine", func(t *testing.T) {
+		s, _ := newTestServer(t)
+		seed(s)
+		_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+		if err := s.routineResetDB(); err != nil {
+			t.Fatalf("routineResetDB: %v", err)
+		}
+		assertCleared(t, s)
+	})
+
+	t.Run("factory", func(t *testing.T) {
+		s, _ := newTestServer(t)
+		seed(s)
+		_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+		if err := s.factoryWipeDB(); err != nil {
+			t.Fatalf("factoryWipeDB: %v", err)
+		}
+		assertCleared(t, s)
+	})
+}
+
 // TestFactoryWipeDB verifies the factory reset wipes the admin, profiles, scopes, and
 // port labels, and drops to FACTORY.
 func TestFactoryWipeDB(t *testing.T) {
@@ -58,6 +105,7 @@ func TestFactoryWipeDB(t *testing.T) {
 	_, _ = s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES ('00aa', 'Camera 1')")
 	_, _ = s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')")
 	_ = s.sqlite.SetStates(map[string]string{"uplink_ssid": "VenueWiFi", "uplink_pass": "secret123", "uplink_enabled": "1"})
+	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
 
 	if err := s.factoryWipeDB(); err != nil {
@@ -69,6 +117,9 @@ func TestFactoryWipeDB(t *testing.T) {
 	}
 	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "" {
 		t.Errorf("factory reset must clear the WiFi uplink, got ssid %q", v)
+	}
+	if s.dhcpStoodDown() {
+		t.Error("factory reset must clear the DHCP stand-down flag")
 	}
 	for _, tbl := range []string{"profiles", "scopes", "port_labels", "users"} {
 		if n := count(t, s, "SELECT COUNT(*) FROM "+tbl); n != 0 {

@@ -26,20 +26,22 @@ type SettingsView struct {
 	UplinkPassword string
 	// LeaseLifetime is the active-profile DHCP lease lifetime in seconds.
 	LeaseLifetime int
-	// Username is the current administrator's name (the rename field's value).
-	Username string
+	// Update is the Software Update card (mounted outside #settings-form,
+	// ACTIVE only - like the danger zone).
+	Update UpdateView
 }
 
 // --- Setup wizard ---
 
 type SetupView struct {
-	Page        PageData
-	ShieldState string // "Active" | suspended
-	LinkState   string // "Disconnected" | "Trunk" | "Access"
-	Interface   string
-	LinkDetail  string // e.g. "tagged VLANs seen: 1, 200" - the Trunk badge tooltip
-	Editing     bool   // true when reopened to edit the active profile (vs new)
-	PrefillJSON string // active profile as wizard-import JSON when Editing
+	Page         PageData
+	ShieldState  string // "Active" | "Detected" | "Suspended"
+	ShieldDetail string // the foreign DHCP server's IP when Detected
+	LinkState    string // "Disconnected" | "Trunk" | "Access"
+	Interface    string
+	LinkDetail   string // e.g. "tagged VLANs seen: 1, 200" - the Trunk badge tooltip
+	Editing      bool   // true when reopened to edit the active profile (vs new)
+	PrefillJSON  string // active profile as wizard-import JSON when Editing
 	// Box-level WiFi uplink (one wlan0), shown in the Profile card. Per-scope is just
 	// a toggle; these credentials are box-wide.
 	UplinkEnabled  bool

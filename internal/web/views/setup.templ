@@ -100,17 +100,47 @@ templ Setup(v SetupView) {
 // row is busy enough with the status badges.
 templ setupHeadActions(v SetupView) {
 	<div class="setup-status">
-		@shieldBadge(v.ShieldState, v.Interface)
+		@ShieldBadge(v.ShieldState, v.Interface, v.ShieldDetail)
 		@LinkBadge(v.LinkState, v.Interface, v.LinkDetail)
 	</div>
 }
 
-templ shieldBadge(state, iface string) {
-	if state == "Active" {
-		<span class="badge badge-ok" title={ "Rogue-DHCP shield active on " + iface }>@Icon("shield") Shield: Active</span>
-	} else {
-		<span class="badge badge-warn" title={ "Shield suspended - no carrier on " + iface }>@Icon("shield-off") Shield: Suspended</span>
-	}
+// ShieldBadge reflects the onboarding rogue-DHCP watch (RogueProbe): Active while no
+// foreign DHCP answer was seen, Detected when another server answered (detail is its
+// IP, named in the badge so the operator sees it before Apply), Unverified when the
+// probe is not actually watching (stopped on the ACTIVE edit page, or blind without
+// CAP_NET_RAW) so the operator knows the shield has confirmed nothing, and Suspended
+// while the port has no carrier. #shield-status is an aria-live region so a server
+// that speaks up mid-setup is announced to screen readers, not just morphed silently;
+// the fuller explanation rides an info-tip (focusable, tap-open) so it is not hover-
+// only for keyboard and touch operators (DESIGN §9/§10: no critical cue behind hover).
+templ ShieldBadge(state, iface, detail string) {
+	<span id="shield-status" class="shield-badge" aria-live="polite">
+		switch state {
+			case "Detected":
+				<span class="badge badge-err">@Icon("shield-alert") Rogue DHCP: { detail }</span>
+				@shieldTip("DHCP server " + detail + " is already answering on " + iface + " - stop it before applying, or clients will get addresses from both servers")
+			case "Active":
+				<span class="badge badge-ok">@Icon("shield") Shield: Active</span>
+				@shieldTip("Watching " + iface + " for competing DHCP servers - none seen")
+			case "Unverified":
+				<span class="badge badge-info">@Icon("shield-off") Shield: Unverified</span>
+				@shieldTip("Not watching " + iface + " for competing DHCP servers - the passive probe is not running here, so no all-clear has been confirmed")
+			default:
+				<span class="badge badge-warn">@Icon("shield-off") Shield: Suspended</span>
+				@shieldTip("Shield suspended - no carrier on " + iface)
+		}
+	</span>
+}
+
+// shieldTip renders the shield's explanation as a focusable, tap-open info-tip
+// (the same pattern as the pools/pinning tips) so its meaning is reachable without
+// hover. The full text is the aria-label so screen readers get it on focus.
+templ shieldTip(text string) {
+	<span class="info-tip shield-tip" tabindex="0" role="note" aria-label={ text }>
+		@Icon("info")
+		<span class="info-tip-text">{ text }</span>
+	</span>
 }
 
 // LinkBadge reflects the eth0 link: Disconnected (no carrier), VLAN Trunk (tagged VLANs -
@@ -196,7 +226,7 @@ templ scopeTemplate() {
 						</span>
 					</label>
 					<label class="switch scope-mcast-toggle">
-						<input type="checkbox" name="scopes[__ID__][multicast_sniff]" value="true"/>
+						<input type="checkbox" aria-label="Multicast inspect" name="scopes[__ID__][multicast_sniff]" value="true"/>
 						<span class="track"></span>
 						<span class="thumb"></span>
 						<span class="scope-mcast-text mc-on">Enabled</span>
@@ -209,7 +239,7 @@ templ scopeTemplate() {
 			// the pool-plan footer must cover this card). FieldPrefix "scopes[__ID__]"
 			// matches the wizard's cloned names; no SaveAction (saved through the big
 			// /setup/apply form). Edit Configuration restores values via ggoApplyImported.
-			@ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]"})
+			@ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]", RegionID: "svc-__ID__"})
 			<div class="scope-pools">
 				// data-init (NOT data-on:load) is what fires when this node is CLONED
 				// into the DOM: data-on:load only runs during Datastar's initial page

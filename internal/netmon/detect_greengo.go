@@ -119,9 +119,9 @@ func newGreengoDetector(iface string, leases LeaseSnapshotFunc, absence time.Dur
 	}
 }
 
-// Consume tracks Evenution devices from BOTH their ARP frames AND their UDP-5810 'h'
+// Consume tracks Evenution devices from BOTH their ARP frames AND their UDP-5810
 // broadcast (every ~5s). ARP is sporadic - a link-local device may barely ARP - so the
-// 'h' heartbeat is the reliable presence signal that lets detection survive a restart
+// 5810 heartbeat is the reliable presence signal that lets detection survive a restart
 // without waiting for the next ARP. Each carries the source MAC + IP + VLAN.
 func (d *greengoDetector) Consume(f Frame, now time.Time) {
 	et, off, vid, ok := etherInfo(f.Data)
@@ -155,9 +155,9 @@ func (d *greengoDetector) consumeARP(b []byte, off, vlan int, now time.Time) {
 	d.see(sha, ip4ToU32(spa), ipString(spa), vlan, now)
 }
 
-// consumeH records presence from an Evenution UDP-5810 'h' broadcast (source MAC + IP).
-// The BPF guarantees a 5810 frame on a Green-GO interface is an 'h'; decoding the config
-// itself is greengoHDetector's job, so this only needs the headers for presence.
+// consumeH records presence from an Evenution UDP-5810 broadcast (source MAC + IP).
+// Decoding the config itself is greengoHDetector's job, so this only needs the headers
+// for presence.
 func (d *greengoDetector) consumeH(b []byte, off, vlan int, now time.Time) {
 	var sha [6]byte
 	copy(sha[:], b[6:12]) // ethernet source MAC
@@ -175,7 +175,7 @@ func (d *greengoDetector) consumeH(b []byte, off, vlan int, now time.Time) {
 	d.see(sha, ip4ToU32(src), ipString(src), vlan, now)
 }
 
-// see folds one sighting (from ARP or 'h') into the device census.
+// see folds one sighting (from ARP or the 5810 broadcast) into the device census.
 func (d *greengoDetector) see(sha [6]byte, ip uint32, ipStr string, vlan int, now time.Time) {
 	mac := macString(sha)
 	dev := d.devices[mac]

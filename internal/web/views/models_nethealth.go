@@ -59,6 +59,25 @@ type AlertRow struct {
 	Severity string
 	Title    string
 	Detail   string
+	// Action, when non-empty, renders an inline operator control at the end of the
+	// row: "standdown" (a red "Stand Down DHCP" button) or "resume" (a "Resume DHCP"
+	// button). The control is a native POST form whose CSRF token is read from the
+	// page <meta> at submit time, since the live-broadcast strip carries no token.
+	Action string
+	// LeaseHint is the human lease-lifetime phrase (e.g. "about 30 minutes") for the
+	// stand-down confirm dialog, so it can state honestly when devices lose their
+	// addresses. Empty when the lifetime is unknown - the copy then omits it.
+	LeaseHint string
+}
+
+// leaseParen wraps a lease-lifetime hint as a leading " (…)" for inline use in the
+// stand-down dialog copy, or "" when the hint is unknown - inline so templ inserts no
+// stray space before the following comma.
+func leaseParen(hint string) string {
+	if hint == "" {
+		return ""
+	}
+	return " (" + hint + ")"
 }
 
 // alertClass maps an AlertRow severity ("err"/"warn") to its .alert variant class.
@@ -67,6 +86,15 @@ func alertClass(sev string) string {
 		return "alert-err"
 	}
 	return "alert-warn"
+}
+
+// toastRole is "alert" (assertive) for an error toast so a screen reader
+// interrupts to announce it, and "status" (polite) for success/info.
+func toastRole(typ string) string {
+	if typ == "error" {
+		return "alert"
+	}
+	return "status"
 }
 
 // PTPRow is one PTP-domain clock signal for the PTP panel.

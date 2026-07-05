@@ -112,3 +112,17 @@ func TestStorm_STPChurn(t *testing.T) {
 		t.Fatalf("expected one stabilized event, got %v", ev)
 	}
 }
+
+// RSTP/MSTP BPDUs are type 0x02 (not the legacy 0x80 TCN / 0x00 config); a modern
+// switch reconverging emits only these, so the detector must count them too.
+func TestStorm_STPChurnRSTP(t *testing.T) {
+	d := newStormDetector("eth0", 100000, nil)
+
+	for i := 0; i < stpChurnThreshold; i++ {
+		d.Consume(rstpTCFrame(), at(time.Duration(i)*time.Second))
+	}
+	ev := d.Tick(at(time.Duration(stpChurnThreshold) * time.Second))
+	if len(ev) != 1 || ev[0].Severity != SevWarn {
+		t.Fatalf("expected one STP churn warn from RSTP BPDUs, got %v", ev)
+	}
+}

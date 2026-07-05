@@ -50,6 +50,9 @@ templ Base(d PageData) {
 				// toast into on the Kea down-edge (the persistent state lives in the
 				// #backend-alert strip; this is just the "it just broke" nudge).
 				@KeaToastSlot(false)
+				// Stable morph target for the one-shot "stand down failed - still
+				// serving" toast the live hub pushes when a stand-down reload fails.
+				@StandDownFailToast(false)
 			</div>
 			if d.Authenticated {
 				<div id="live" hidden aria-hidden="true" data-init="@get('/sse/live?page=' + encodeURIComponent(location.pathname), {openWhenHidden: true})"></div>
@@ -71,9 +74,15 @@ templ Base(d PageData) {
 // reservations/pinning unavailable, dynamic leases keep serving), or the Wi-Fi
 // uplink (warning). The wrapper is always present as an empty morph target and
 // renders rows only when something is wrong, so a healthy box shows nothing
-// (#backend-alert:empty{display:none}). Netmon signals go to the header pill, not here.
+// (#backend-alert:empty{display:none}). Netmon signals go to the header pill, not here -
+// with one deliberate exception: a rogue DHCP server is loud enough to earn a row here
+// too, carrying the operator's Stand Down / Resume control (see rogueAlertRows).
 templ BackendAlert(rows []AlertRow) {
-	<div id="backend-alert">
+	// aria-live assertive so a screen-reader operator hears a row appear when the SSE
+	// hub morphs a row in (a rogue server showing up, Kea going down) - the strip is a
+	// stable, always-present live region, more reliable than relying on a freshly
+	// inserted role="alert" node. Matches DESIGN.md S10 (assertive for errors).
+	<div id="backend-alert" aria-live="assertive" aria-atomic="false">
 		for _, a := range rows {
 			<div class={ "alert", alertClass(a.Severity) } role="alert">
 				@Icon("triangle-alert")
@@ -83,9 +92,51 @@ templ BackendAlert(rows []AlertRow) {
 						<span class="alert-detail">{ a.Detail }</span>
 					}
 				</div>
+				switch a.Action {
+					case "standdown":
+						@standDownForm(a.LeaseHint)
+					case "resume":
+						@resumeForm()
+				}
 			</div>
 		}
 	</div>
+}
+
+// standDownForm is the "Stand Down DHCP" control shown inside the rogue-server alert.
+// Standing down stops DHCP on every scope, so the accidental click is guarded by the
+// styled confirm <dialog> (native <dialog>.showModal, framework-free - free focus-trap /
+// Escape / return-focus, same pattern as the reset danger zone) instead of a native
+// confirm(). Native POST (not a Datastar action) so it survives any morph; the CSRF
+// token is read from the page <meta> at submit time because the live-broadcast strip
+// carries an empty token (same pattern as the pinning forms). The dialog rides inside
+// #backend-alert so it travels with the row when the strip is morphed in.
+templ standDownForm(leaseHint string) {
+	<button class="btn btn-sm btn-danger alert-action" type="button" onclick="document.getElementById('dlg-standdown').showModal()">@Icon("power") Stand Down DHCP</button>
+	<dialog id="dlg-standdown" aria-labelledby="dlg-standdown-title">
+		<form method="post" action="/rogue/standdown" data-busy onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+			<input type="hidden" name="csrf_token" value=""/>
+			<div class="dialog-head" id="dlg-standdown-title">Stand down DHCP?</div>
+			<div class="dialog-body">
+				<p>This stops this appliance from handing out or renewing DHCP leases on every scope. It does <strong>not</strong> stop the rogue server - that segment is left to it.</p>
+				<p>Devices keep their current address until their lease expires{ leaseParen(leaseHint) }, then lose it: renewal fails around halfway through the lease and the address is dropped at expiry. Resume as soon as the rogue server is disconnected.</p>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-danger-solid">Stand Down DHCP</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+// resumeForm is the "Resume DHCP" control shown while DHCP is stood down. Same
+// native-POST + meta-CSRF pattern as standDownForm; no confirm - resuming service
+// is the safe, intended recovery.
+templ resumeForm() {
+	<form class="alert-action" method="post" action="/rogue/resume" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+		<input type="hidden" name="csrf_token" value=""/>
+		<button class="btn btn-sm btn-primary" type="submit">@Icon("radio-tower") Resume DHCP</button>
+	</form>
 }
 
 // KeaToastSlot is the morph target (#kea-toast-slot) the live hub patches on a Kea
@@ -98,6 +149,23 @@ templ KeaToastSlot(show bool) {
 			<div class="toast toast-error" role="alert" data-init__delay.8s="el.remove()">
 				@toastIcon("error")
 				<div class="toast-content">DHCP server just went offline - new leases are not being served.</div>
+				<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
+			</div>
+		}
+	</div>
+}
+
+// StandDownFailToast is the morph target (#standdown-toast) the live hub patches when a
+// stand-down background reload fails: Kea is still serving, so the operator must not be
+// left thinking the box stood down. show=true renders a self-dismissing error toast;
+// show=false leaves the slot empty. Edge-driven only (never in the connect snapshot),
+// mirroring KeaToastSlot - a client joining later doesn't get a stale failure toast.
+templ StandDownFailToast(show bool) {
+	<div id="standdown-toast">
+		if show {
+			<div class="toast toast-error" role="alert" data-init__delay.8s="el.remove()">
+				@toastIcon("error")
+				<div class="toast-content">Stand down failed - the appliance is still serving DHCP. Retry from the rogue-server banner.</div>
 				<button type="button" class="toast-close" aria-label="Dismiss" onclick="this.closest('.toast').remove()">@Icon("x")</button>
 			</div>
 		}
@@ -288,6 +356,7 @@ templ appFooter(d PageData) {
 	<footer class="app-footer">
 		<div class="app-footer-inner">
 			<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
+			@UpdateBadge(d.Update)
 			<div class="btn-row">
 				if d.CurrentPath == "/settings" {
 					<button class="btn btn-primary" type="submit" form="settings-form">@Icon("check") Save Settings</button>
@@ -414,8 +483,9 @@ templ navLink(l link, currentPath string) {
 }
 
 // accountMenu is a native-<details> dropdown (framework-free, like the theme
-// toggle): an account icon opens a small menu showing who's signed in and a
-// clear "Sign Out" action - instead of an ambiguous bare icon in the header.
+// toggle): an account icon opens a small menu showing who's signed in, the
+// Account credentials dialog, and a clear "Sign Out" action - instead of an
+// ambiguous bare icon in the header.
 templ accountMenu(d PageData) {
 	<details class="account-menu">
 		<summary class="icon-btn" aria-label="Account menu" title="Account">@Icon("circle-user")</summary>
@@ -423,12 +493,86 @@ templ accountMenu(d PageData) {
 			if d.Username != "" {
 				<div class="account-who">Signed in as <strong>{ d.Username }</strong></div>
 			}
+			if d.State == "ACTIVE" {
+				<button type="button" class="account-item" onclick="this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()">@Icon("key") Account</button>
+			}
 			<form method="post" action="/logout">
 				<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
-				<button type="submit" class="account-item">@Icon("log-out") Sign Out</button>
+				<button type="submit" class="account-item is-danger">@Icon("log-out") Sign Out</button>
 			</form>
 		</div>
 	</details>
+	if d.State == "ACTIVE" {
+		@accountDialog(d)
+		@pwStrengthScript()
+	}
+}
+
+// accountDialog renames the administrator and/or sets a new password - the flow
+// that used to be the Settings "Administrator Account" card, relocated here so
+// personal credentials live under the account icon, not among appliance settings.
+// A native <dialog> + native POST form (like confirmDialog); Datastar drives only
+// the in-form reveal/strength/match hints. Either change re-auths with the
+// current password server-side.
+templ accountDialog(d PageData) {
+	<dialog id="dlg-account" aria-labelledby="dlg-account-title">
+		<form method="post" action="/account/save" data-busy data-signals="{showacctpw: false, anp: '', anp2: ''}">
+			<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
+			<div class="dialog-head" id="dlg-account-title">Account</div>
+			<div class="dialog-body">
+				<p class="help">Enter your current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p>
+				<div class="form-group">
+					<label class="form-label" for="acct-username">Username</label>
+					<input class="form-control" id="acct-username" name="username" type="text" value={ d.Username } autocomplete="username"/>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-current">Current password</label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-current" name="current_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" autocomplete="current-password" required/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-new">New password <span class="help-inline">(min 12 characters)</span></label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-new" name="new_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp" autocomplete="new-password"/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+					<div class="pw-meter-row" data-show="$anp.length > 0">
+						<div class="pw-meter">
+							<div
+								class="pw-meter-fill"
+								data-style="{width: (window.ggoStrength($anp) * 25) + '%'}"
+								data-class="{'is-weak': window.ggoStrength($anp) <= 1, 'is-fair': window.ggoStrength($anp) === 2, 'is-good': window.ggoStrength($anp) >= 3}"
+							></div>
+						</div>
+						<span class="pw-strength-label" data-text="window.ggoStrengthLabel($anp)"></span>
+					</div>
+				</div>
+				<div class="form-group">
+					<label class="form-label" for="acct-confirm">Confirm new password</label>
+					<div class="pw-field">
+						<input class="form-control" id="acct-confirm" name="confirm_password" type="password" data-attr:type="$showacctpw ? 'text' : 'password'" data-bind="anp2" autocomplete="new-password" aria-describedby="acct-np-mismatch" data-attr:aria-invalid="$anp2 !== '' && $anp !== $anp2"/>
+						<button type="button" class="pw-reveal" data-on:click="$showacctpw = !$showacctpw" data-attr:aria-pressed="$showacctpw" aria-label="Show passwords" title="Show passwords">
+							<span data-show="!$showacctpw">@Icon("eye")</span>
+							<span data-show="$showacctpw">@Icon("eye-off")</span>
+						</button>
+					</div>
+					<div id="acct-np-mismatch" class="help help-err" role="alert" data-show="$anp2 !== '' && $anp !== $anp2">Passwords do not match.</div>
+				</div>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-primary">Save Changes</button>
+			</div>
+		</form>
+	</dialog>
 }
 
 templ themeToggle() {
@@ -442,7 +586,7 @@ templ themeToggle() {
 templ Toast(msg, typ string) {
 	<div
 		class={ "toast", "toast-" + typ }
-		role="status"
+		role={ toastRole(typ) }
 		if typ != "error" {
 			data-init__delay.5s="el.remove()"
 		}

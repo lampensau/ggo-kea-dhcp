@@ -21,6 +21,14 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFactorySetup(w http.ResponseWriter, r *http.Request) {
+	// Only meaningful on a factory-fresh box: it creates the first admin and mints a
+	// session with no re-auth. In ACTIVE that would let a live session mint a rogue
+	// admin and bounce the box back to ONBOARDING. The middleware redirects /factory
+	// away outside FACTORY; this guard closes it independently of the routing table.
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateFactory {
+		s.handleError(w, r, "The appliance is already configured.", http.StatusForbidden)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		s.handleError(w, r, "invalid form data", http.StatusBadRequest)
 		return
@@ -96,6 +104,27 @@ func (s *Server) linkTrunkState(configState string) (state, detail string) {
 	return
 }
 
+// shieldStatus upgrades the carrier-derived shield state with the onboarding
+// rogue-DHCP probe's observation: no carrier stays "Suspended" (nothing to
+// guard); when the probe is not actually watching - stopped (the ACTIVE-era edit
+// page, where the probe runs only during onboarding) or blind (no CAP_NET_RAW /
+// dev sandbox) - it is "Unverified", an honest neutral state rather than a false
+// all-clear; a foreign DHCP server seen answering makes it "Detected" (detail is
+// that server's IP, so the wizard names it before the operator applies); else the
+// probe is live and quiet, "Active".
+func (s *Server) shieldStatus(carrierState string) (state, detail string) {
+	if carrierState != "Active" {
+		return carrierState, ""
+	}
+	if s.rogueProbe == nil || !s.rogueProbe.Watching() {
+		return "Unverified", ""
+	}
+	if ip, _, ok := s.rogueProbe.Server(); ok {
+		return "Detected", ip
+	}
+	return "Active", ""
+}
+
 // joinInts renders an int slice as "1, 200".
 func joinInts(xs []int) string {
 	parts := make([]string, len(xs))
@@ -106,14 +135,16 @@ func joinInts(xs []int) string {
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	shield := s.net.GetLinkStatus("eth0")
-	state, detail := s.linkTrunkState(shield.LinkState)
+	link := s.net.GetLinkStatus("eth0")
+	state, detail := s.linkTrunkState(link.LinkState)
+	shieldState, shieldDetail := s.shieldStatus(link.ShieldState)
 	upEn, upSSID, upPass := s.uplinkSettings()
 	v := views.SetupView{
 		Page:           s.pageData(w, r, "Setup Wizard"),
-		ShieldState:    shield.ShieldState,
+		ShieldState:    shieldState,
+		ShieldDetail:   shieldDetail,
 		LinkState:      state,
-		Interface:      shield.Interface,
+		Interface:      link.Interface,
 		LinkDetail:     detail,
 		UplinkEnabled:  upEn,
 		UplinkSSID:     upSSID,
@@ -224,7 +255,7 @@ func parseSetupScopes(r *http.Request) ([]ScopeConfig, error) {
 		// options). Shared with the /pools editor via parseScopeServices. Option rows
 		// arrive as repeated scopes[i][opt_name][]/[opt_data][] fields.
 		svc, serr := parseScopeServices(
-			field("gateway", i), field("dns", i), field("lease", i),
+			field("gateway", i), field("dns", i), field("lease", i), field("local_dns", i),
 			r.Form[fmt.Sprintf("scopes[%d][opt_name][]", i)],
 			r.Form[fmt.Sprintf("scopes[%d][opt_data][]", i)],
 		)

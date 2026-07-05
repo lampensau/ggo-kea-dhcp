@@ -63,6 +63,7 @@ func (s *Server) handleResetRoutine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.sqlite.LogAudit(s.getActor(r), "RESET_ONBOARDING", "routine_reset", "", "", "SUCCESS")
+	s.clearStagedUpdate()
 
 	s.scheduleReconcileHeld("reset-routine", 1*time.Second, ModeApply, 0)
 
@@ -94,8 +95,15 @@ func (s *Server) routineResetDB() error {
 	// client uplink, so these credentials can't apply and must not prefill the setup
 	// wizard. Saved profiles keep their own uplink, so re-applying one restores it.
 	_, e2 := tx.Exec("DELETE FROM app_state WHERE key IN ('uplink_enabled','uplink_ssid','uplink_pass','uplink_dns')")
-	_, e3 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
-	if err := errors.Join(e1, e2, e3); err != nil {
+	// Drop the self-update record too: ONBOARDING has no ACTIVE-gated update card,
+	// so a leftover update_latest_* would light the footer badge with a dead
+	// /settings#update anchor. LIKE-escape so only the update_* keys match.
+	_, e3 := tx.Exec(`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`)
+	// Clear any DHCP stand-down: it's per-job serving state. Inheriting it into the next
+	// job's apply would render the holdoff config - ACTIVE but serving no leases.
+	_, e5 := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey)
+	_, e4 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
+	if err := errors.Join(e1, e2, e3, e4, e5); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -129,6 +137,7 @@ func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
 
 	// The caller's session row is gone - clear its cookie too.
 	clearSessionCookie(w, r)
+	s.clearStagedUpdate()
 
 	s.scheduleReconcileHeld("reset-factory", 1*time.Second, ModeApply, 0)
 
@@ -167,7 +176,9 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM config_snapshots",
 		"DELETE FROM sessions",
 		"DELETE FROM users",
-		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass')",
+		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass','dhcp_standdown')",
+		// The self-update record (badge/card state) must not survive a factory reset.
+		`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`,
 	} {
 		if _, err := tx.Exec(q); err != nil {
 			wipeErr = errors.Join(wipeErr, fmt.Errorf("%s: %w", q, err))

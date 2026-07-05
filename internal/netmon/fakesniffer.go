@@ -289,6 +289,16 @@ func bpduFrame(tcn bool) Frame {
 	return Frame{Iface: "eth0", TS: base, Data: buildEth(macSTP, macTestSwitch, uint16(len(body)), body)}
 }
 
+// rstpTCFrame builds an RSTP/MSTP BPDU (type 0x02) carrying the topology-change
+// flag - what a modern switch emits on reconvergence instead of a legacy TCN.
+func rstpTCFrame() Frame {
+	body := make([]byte, 46)
+	body[0], body[1], body[2] = 0x42, 0x42, 0x03 // LLC DSAP/SSAP/control
+	body[6] = 0x02                               // RSTP/MSTP BPDU type
+	body[7] = 0x01                               // topology-change flag
+	return Frame{Iface: "eth0", TS: base, Data: buildEth(macSTP, macTestSwitch, uint16(len(body)), body)}
+}
+
 // ptpAnnounce builds a PTP Announce message for domain advertising clockIdentity
 // and priorities. viaUDP selects the UDP/320 transport (multicast) over L2 0x88F7.
 func ptpAnnounce(domain uint8, clockIdentity uint64, priority1, priority2 uint8, viaUDP bool) Frame {
@@ -337,13 +347,43 @@ func lldpFrame(sysName, portID string, nativeVLAN int) Frame {
 }
 
 // dhcpFrame builds a server→client DHCP frame (UDP sport 67 dport 68) from
-// serverID with the given DHCP message type (2 OFFER, 5 ACK, 4 DECLINE…).
+// serverID with the given DHCP message type (2 OFFER, 5 ACK, 4 DECLINE…). The
+// source MAC is macTestSwitch; use dhcpFrameFrom to set it (rogue self-suppression
+// keys on the source MAC).
 func dhcpFrame(sport uint16, serverID [4]byte, msgType byte) Frame {
+	f := dhcpFrameFrom(macTestSwitch, serverID, msgType)
+	if sport != 67 {
+		// Rebuild with the requested source port (only the BPF-filter test exercises
+		// a non-67 sport); the detector path always uses 67.
+		chaddr := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
+		dhcp := buildDHCP(2, chaddr, serverID, msgType)
+		udp := buildUDP(sport, 68, dhcp)
+		ip := buildIPv4(ipProtoUDP, serverID, [4]byte{255, 255, 255, 255}, udp)
+		f.Data = buildEth(macBroadcast, macTestSwitch, etherTypeIPv4, ip)
+	}
+	return f
+}
+
+// dhcpFrameFrom builds a broadcast server→client OFFER/ACK (UDP sport 67) carrying
+// serverID, stamped with an explicit source MAC so the rogue detector's
+// source-MAC self-suppression can be exercised.
+func dhcpFrameFrom(srcMAC [6]byte, serverID [4]byte, msgType byte) Frame {
 	chaddr := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}
 	dhcp := buildDHCP(2, chaddr, serverID, msgType)
-	udp := buildUDP(sport, 68, dhcp)
+	udp := buildUDP(67, 68, dhcp)
 	ip := buildIPv4(ipProtoUDP, serverID, [4]byte{255, 255, 255, 255}, udp)
-	return Frame{Iface: "eth0", TS: base, Data: buildEth(macBroadcast, macTestSwitch, etherTypeIPv4, ip)}
+	return Frame{Iface: "eth0", TS: base, Data: buildEth(macBroadcast, srcMAC, etherTypeIPv4, ip)}
+}
+
+// taggedDHCPOfferFrom builds a server OFFER on a single in-band 802.1Q VLAN tag
+// with an explicit source MAC (the box's own per-VLAN OFFER shares the physical
+// NIC MAC across every served scope).
+func taggedDHCPOfferFrom(srcMAC [6]byte, vid int, serverID [4]byte) Frame {
+	chaddr := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x03}
+	dhcp := buildDHCP(2, chaddr, serverID, 2)
+	udp := buildUDP(67, 68, dhcp)
+	ip := buildIPv4(ipProtoUDP, serverID, [4]byte{255, 255, 255, 255}, udp)
+	return Frame{Iface: "eth0", TS: base, Data: buildEthVLAN(macBroadcast, srcMAC, vid, etherTypeIPv4, ip)}
 }
 
 // declineFrame builds a client→server DHCPDECLINE (UDP sport 68 dport 67) whose

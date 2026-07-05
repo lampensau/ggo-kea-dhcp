@@ -8,8 +8,8 @@ import (
 // vlanDetector compares the 802.1Q VIDs actually seen on the raw trunk against the VIDs the
 // active profile configured, surfacing *unexpected* VIDs. It is informational only - seeing
 // extra VLANs on a trunk is common and not necessarily wrong - and proposes no config
-// change. Needs promiscuous to see frames not destined for us (gated by MulticastSniff via
-// the VLAN-reality path). Listens on eth0 only, never wlan0.
+// change. Needs promiscuous to see frames not destined for us - which in ACTIVE is the
+// steady-state default at full fidelity (see Monitor.onTick). Listens on eth0 only, never wlan0.
 //
 // A VLAN observed on a trunk is a stable config fact, not a transient, so a seen VID
 // LATCHES: it is announced once and stays reported even when its traffic is sparse (a VLAN

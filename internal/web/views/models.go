@@ -41,9 +41,9 @@ func setupSignals(v SetupView) string {
 }
 
 // settingsSignals is the initial Datastar signal set for the settings form
-// (WiFi-uplink-enabled toggle, new-password match check, password-reveal toggle).
+// (the WiFi-uplink-enabled toggle).
 func settingsSignals(v SettingsView) string {
-	return "{uplink: " + strconv.FormatBool(v.UplinkEnabled) + ", np: '', np2: '', showpw: false}"
+	return "{uplink: " + strconv.FormatBool(v.UplinkEnabled) + "}"
 }
 
 // orDash shows an em dash for empty optional fields (hostname, etc.).
@@ -62,13 +62,13 @@ func pluralize(n int, one, many string) string {
 	return many
 }
 
-// releaseExpr builds the Datastar @delete expression for the lease release
-// button: a native confirm gates the delete, which carries the CSRF header. ip
-// is an IPv4 string. The CSRF token is read dynamically from the DOM (not passed
-// in) so the live ticker can rebroadcast the row without a session CSRF token.
-func releaseExpr(ip string) string {
-	return "confirm('Release lease for " + ip + "?') && @delete('/leases/release?ip=" + ip +
-		"', {headers: {'X-CSRF-Token': document.querySelector('meta[name=\"csrf-token\"]').content}})"
+// releaseConfirmExpr builds the Datastar @delete expression for the release
+// dialog's confirm button: close the dialog, then release the IP that
+// ggoReleaseOpen stashed on it. The CSRF token is read from the page <meta> at
+// click time so the live ticker can rebroadcast rows without a session token.
+func releaseConfirmExpr() string {
+	return "el.closest('dialog').close(); @delete('/leases/release?ip=' + el.closest('dialog').dataset.ip, " +
+		"{headers: {'X-CSRF-Token': document.querySelector('meta[name=\"csrf-token\"]').content}})"
 }
 
 // Page view models. These are plain data the web handlers populate; the views

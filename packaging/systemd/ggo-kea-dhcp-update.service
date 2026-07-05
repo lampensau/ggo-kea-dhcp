@@ -1,0 +1,17 @@
+[Unit]
+Description=Green-GO Kea DHCP appliance self-update
+Documentation=https://github.com/lampensau/ggo-kea-dhcp
+# On-demand only: the control plane triggers this via its sudoers-scoped
+# `systemctl start --no-block` after staging and verifying the new .deb. No
+# [Install] section - never enabled, never started at boot.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ggo-kea-dhcp/updater.sh
+# A system-scope release runs a full apt update + dependency upgrade.
+TimeoutStartSec=20min
+# Runs as root with none of the main unit's sandboxing: it drives apt/dpkg,
+# which need the whole filesystem.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ggo-kea-dhcp-update

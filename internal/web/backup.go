@@ -240,6 +240,14 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 
+	// A restore is a clean slate: never inherit a DHCP stand-down. Leaving it set would
+	// have the post-restore reconcile render the holdoff config - ACTIVE but serving no
+	// leases, with no rogue in sight to explain it. Cleared regardless of which sections
+	// were selected, since the flag belongs to no backup section.
+	if _, err := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey); err != nil {
+		return "", fmt.Errorf("clear stand-down: %w", err)
+	}
+
 	// Each selected section clears then re-inserts its own tables. Unselected sections
 	// are left alone, so a profiles-only restore keeps the current admins, and vice versa.
 	if sel["users"] {
@@ -341,23 +349,30 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			log.Printf("[restore] clearing MariaDB hosts failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
-		hosts := make([]db.HostReservation, 0, len(b.Reservations))
-		for _, h := range b.Reservations {
-			hosts = append(hosts, db.HostReservation{
-				Identifier:     h.Identifier,
-				IdentifierType: h.IdentifierType,
-				SubnetID:       h.SubnetID,
-				IPv4Address:    h.IPv4Address,
-				Hostname:       h.Hostname,
-			})
-		}
-		if err := s.mariadb.InsertReservations(context.Background(), hosts); err != nil {
+		if err := s.mariadb.InsertReservations(context.Background(), restoreHosts(b.Reservations)); err != nil {
 			log.Printf("[restore] inserting reservations failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
 	}
 
 	return lifecycle, nil
+}
+
+// restoreHosts converts the bundle's hosts rows for insert, slugifying each
+// hostname on the way in: bundles round-trip reservation hostnames verbatim, so
+// one exported before sanitization existed still carries raw names.
+func restoreHosts(hosts []BackupHost) []db.HostReservation {
+	out := make([]db.HostReservation, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, db.HostReservation{
+			Identifier:     h.Identifier,
+			IdentifierType: h.IdentifierType,
+			SubnetID:       h.SubnetID,
+			IPv4Address:    h.IPv4Address,
+			Hostname:       slugifyHostname(h.Hostname),
+		})
+	}
+	return out
 }
 
 // handleBackupExport serves the full appliance backup as a downloadable JSON file.
@@ -433,6 +448,15 @@ func parseUploadedBackup(r *http.Request) (*Backup, error) {
 // profiles, and reservations without re-onboarding. Reachable only in FACTORY,
 // pre-auth (there is no admin yet); it must carry one in the bundle.
 func (s *Server) handleFactoryRestore(w http.ResponseWriter, r *http.Request) {
+	// Defense in depth: this handler carries no current-password re-auth (there is no
+	// admin in FACTORY), so it must never run once the box is configured - an ACTIVE
+	// session reaching it would replace every admin hash without the operator's password.
+	// The lifecycle middleware already redirects /factory paths away outside FACTORY;
+	// this guard closes the same door independently of the routing table.
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateFactory {
+		s.handleError(w, r, "This recovery path is only available on a factory-fresh appliance.", http.StatusForbidden)
+		return
+	}
 	// This route is pre-auth (FACTORY has no admin yet) and installs the admin hash
 	// from the uploaded bundle verbatim - so it is also a takeover primitive for
 	// anyone who can reach the box during the FACTORY window. True auth is impossible

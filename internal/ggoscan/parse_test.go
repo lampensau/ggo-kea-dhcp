@@ -66,7 +66,7 @@ func TestParseScanReplyFirmwareMissing(t *testing.T) {
 // to model=whole, version="" (strings.Cut without separator).
 func TestParseScanReplyFirmwareNoSpace(t *testing.T) {
 	mac := [6]byte{0, 0x1f, 0x80, 0, 0, 1}
-	dev, ok := parseScanReply(reply0x11("dev", mac, "MONOLITH"), "10.0.0.10")
+	dev, ok := parseScanReply(deviceReply("dev", mac, "MONOLITH"), "10.0.0.10")
 	if !ok {
 		t.Fatal("parse failed")
 	}
@@ -79,20 +79,20 @@ func TestParseScanReplyFirmwareNoSpace(t *testing.T) {
 // and a body too short to hold name+MAC.
 func TestParseScanReplyRejects(t *testing.T) {
 	mac := [6]byte{0, 0x1f, 0x80, 0, 0, 1}
-	good := reply0x11("d", mac, "X 1")
+	good := deviceReply("d", mac, "X 1")
 
-	// Corrupt the 4th magic byte (must be 0x00).
+	// Corrupt the 4th header byte (must be 0x00).
 	badMagic := append([]byte(nil), good...)
 	badMagic[3] = 0xff
 	if _, ok := parseScanReply(badMagic, "x"); ok {
-		t.Error("accepted a frame with a bad magic byte")
+		t.Error("accepted a frame with a bad header byte")
 	}
 
-	// Opcode 0x12 (not the 0x11 reply).
+	// A wrong opcode is rejected.
 	badOp := append([]byte(nil), good...)
 	badOp[5] = 0x12
 	if _, ok := parseScanReply(badOp, "x"); ok {
-		t.Error("accepted a non-0x11 opcode")
+		t.Error("accepted a wrong opcode")
 	}
 
 	// Valid header but body shorter than 0x18.

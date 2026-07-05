@@ -190,7 +190,8 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 }
 
 // reconcileOnboarding brings up the onboarding environment: eth0 management IP,
-// wlan0 SoftAP, captive DNS, torn-down NAT, and the ungrouped dynamic Kea scope.
+// wlan0 SoftAP, torn-down NAT, and the ungrouped dynamic Kea scope. No captive DNS
+// redirector runs here - it is only stopped (see the no-DNS note below).
 func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	var errs []error
 	cidr := s.onboardingCIDR()
@@ -229,13 +230,20 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if s.trunkProbe != nil {
 		s.trunkProbe.Start("eth0")
 	}
+	// Onboarding-only: watch eth0 for a DHCP server already answering, so the wizard's
+	// shield badge names it before the operator applies. Best-effort like the trunk probe.
+	// The box serves its own onboarding pool on eth0; Start reads eth0's MAC and suppresses
+	// the box's own OFFERs by source MAC, so the probe never flags the appliance itself.
+	if s.rogueProbe != nil {
+		s.rogueProbe.Start("eth0")
+	}
 
 	// Onboarding never routes - make sure no NAT state leaks in from a prior gig.
 	_ = s.net.SetIPForwarding(false)
 	_ = s.net.ApplyMasquerade("wlan0", false)
 	_ = s.net.ClearPortForwards()
 
-	// No captive DNS redirector and no DHCP gateway/DNS handout during onboarding: that
+	// No captive DNS redirect and no DHCP gateway/DNS handout during onboarding: that
 	// made connected PCs route their (non-existent) internet through the box and tripped
 	// the OS captive-portal assistant into a self-signed-cert loop. Clients reach the box
 	// on its own same-subnet address. wlanIP is still needed for the onboarding Kea scope.
@@ -243,7 +251,11 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if _, err := net.InterfaceByName("wlan0"); err == nil {
 		wlanIP = softAPWlanIP
 	}
-	s.dns.Stop() // idempotent: ensure no redirector lingers from a prior onboarding pass
+	// Leaving ACTIVE (or re-entering onboarding): the port-53 owner goes quiet, per
+	// the no-DNS-during-onboarding intent above.
+	if s.dns != nil {
+		s.dns.Stop()
+	}
 
 	// Onboarding Kea config. Deliberately carries NO MariaDB backend (see
 	// RenderOnboarding): eth0 DHCP must come up regardless of MariaDB state.
@@ -275,10 +287,14 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	var errs []error
 
-	// Leaving onboarding: the trunk probe is an onboarding-only hint, and ACTIVE has the
-	// full passive monitor for VLAN reality. (Its last-seen VLANs are snapshotted at apply.)
+	// Leaving onboarding: the trunk and rogue-DHCP probes are onboarding-only hints, and
+	// ACTIVE has the full passive monitor for VLAN reality and rogue servers. (The trunk
+	// probe's last-seen VLANs are snapshotted at apply.)
 	if s.trunkProbe != nil {
 		s.trunkProbe.Stop()
+	}
+	if s.rogueProbe != nil {
+		s.rogueProbe.Stop()
 	}
 
 	scopes, err := s.loadScopeConfigs(profileID)
@@ -323,15 +339,17 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	boxUplinkEnabled, upSSID, upPass := s.uplinkSettings()
 	hasUplink := boxUplinkEnabled && anyScopeUplink && upSSID != ""
 
-	// Active mode: tear down onboarding-only services.
+	// Active mode: tear down onboarding-only services. (The port-53 server is
+	// rebound below via StartZone, which stops any prior listeners itself.)
 	_ = s.net.StopSoftAP()
 	_ = s.net.SetInterfaceManaged("wlan0", true)
-	s.dns.Stop()
 
 	// Render + write + reload Kea from the scopes already loaded above (no second
-	// DB load / JSON unmarshal).
+	// DB load / JSON unmarshal). keaConfigForState honors a persisted operator
+	// stand-down: while stood down it renders the holdoff config (Kea reachable but
+	// serving no subnet), so a reboot mid-conflict does not silently resume serving.
 	reloadOK := false
-	cfgStr, _, rerr := s.renderKeaForScopes(scopes)
+	cfgStr, rerr := s.keaConfigForState(scopes)
 	if rerr != nil {
 		errs = append(errs, fmt.Errorf("render profile: %w", rerr))
 	} else if werr := s.writeAndReloadKea(cfgStr); werr != nil {
@@ -359,8 +377,9 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// (e.g. a beltpack that earlier landed in a catch-all) into its own device-class
 	// pool when that pool has room - by releasing the stale lease so it re-DHCPs.
 	// Best-effort; gated on a successful reload so we never act against a config Kea
-	// did not accept.
-	if reloadOK {
+	// did not accept. Skipped while stood down - the holdoff config serves no pool,
+	// so there is nothing to rebalance into.
+	if reloadOK && !s.dhcpStoodDown() {
 		s.rebalanceLeases(context.Background(), scopes)
 	}
 
@@ -371,6 +390,32 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	s.startNetmon(scopes)
 	s.startArpProber(scopes)
 	s.startGgoScan(scopes)
+	// ACTIVE-only: the port-53 owner serves the device zones, one socket per served
+	// scope's own address (never wlan0) so each apex answer names the address that
+	// segment can reach. Best-effort like the monitors; the zone primes in the
+	// background and then follows the dashboard cadence (rebuildDNSZone).
+	if s.dns != nil {
+		var bindIPs, cidrs []string
+		for _, sc := range scopes {
+			if _, ipnet, e := net.ParseCIDR(sc.CIDR); e == nil {
+				bindIPs = append(bindIPs, kea.IncIP(ipnet.IP, 1).String())
+				cidrs = append(cidrs, sc.CIDR)
+			}
+		}
+		// Served subnets first, so a PTR that arrives the instant a listener binds
+		// is already answered authoritatively rather than forwarded.
+		s.dns.SetServedSubnets(cidrs)
+		// StartZone runs inline (single-attempt binds, no sleeps), so it is ordered
+		// with respect to this and every other reconcile - a stale background start
+		// can never clobber a newer listener set. A bind that fails because its
+		// address is not up yet is audited and left to healDNSBinds (the sampler's
+		// self-heal). Only the zone prime, which hits Kea for leases, is backgrounded
+		// so it never stalls the reconcile; it just swaps zone content atomically.
+		for _, ip := range s.dns.StartZone(bindIPs) {
+			_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed, retrying on the sampler tick", "WARNING")
+		}
+		go s.primeDNSZone()
+	}
 
 	return errors.Join(errs...)
 }
@@ -439,6 +484,9 @@ func (s *Server) connectUplink(ssid, pwd string) {
 	if s.uplink.observe(true) {
 		_ = s.sqlite.LogAudit("SYSTEM", "UPLINK_UP", ssid, "", "connected", "OK")
 	}
+	// The box just gained internet - the one moment a release check is worth
+	// kicking rather than waiting out the 30-min ticker.
+	s.kickUpdateCheck()
 	s.health.setUplinkDown(false, "") // connected - clear the banner
 	s.publishBackendAlert()
 }

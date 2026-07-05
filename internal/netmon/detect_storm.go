@@ -71,7 +71,10 @@ func (d *stormDetector) Consume(f Frame, now time.Time) {
 	}
 	bpduType := f.Data[bpduOff+3]
 	flags := f.Data[bpduOff+4]
-	if bpduType == 0x80 || (bpduType == 0x00 && flags&0x01 != 0) { // TCN or TC flag
+	// TCN (0x80), or a Config (0x00) / RSTP+MSTP (0x02) BPDU carrying the TC flag.
+	// Modern switches default to RSTP and emit type 0x02 with no TCNs, so counting
+	// only 0x80/0x00 misses topology churn on every current managed fabric.
+	if bpduType == 0x80 || ((bpduType == 0x00 || bpduType == 0x02) && flags&0x01 != 0) {
 		d.tcnTimes = append(d.tcnTimes, now)
 	}
 }

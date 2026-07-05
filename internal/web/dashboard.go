@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -129,6 +130,7 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
 	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)
+	sanitizeLeaseHostnames(recent)
 
 	return views.DashboardView{
 		Page:         pd,
@@ -248,7 +250,6 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = datastar.ReadSignals(r, &sig)
 
-	_, csrf, _ := s.sessionInfo(r)
 	leases, err := s.kea.GetLeases(r.Context(), 1000)
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
@@ -261,7 +262,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 
 	filtered := filterLeases(s.unifiedLeaseRows(r.Context(), leases), sig.Search)
 	sse := datastar.NewSSE(w, r)
-	_ = sse.PatchElementTempl(views.LeasesBody(filtered, csrf, s.mariadb != nil))
+	_ = sse.PatchElementTempl(views.LeasesBody(filtered, s.mariadb != nil))
 }
 
 func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
@@ -280,12 +281,27 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	// list, but patching here makes the release feel immediate. On a re-fetch
 	// error leave the table untouched: repainting from a failed query would show
 	// an empty table under the green toast, indistinguishable from a real wipe.
-	_, csrf, _ := s.sessionInfo(r)
 	if leases, err := s.kea.GetLeases(r.Context(), 1000); err != nil {
 		log.Printf("[Leases] post-release refresh failed (table left as-is): %v", err)
 	} else {
-		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), csrf, s.mariadb != nil))
+		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), s.mariadb != nil))
 	}
 	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
 		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+
+	// Release completes over SSE (no page reload), so the flash-context auto-open path
+	// can't fire here. If the released device is a Green-GO client online now, open the
+	// reboot-to-apply dialog directly via a one-shot ExecuteScript that calls the page's
+	// opener (the dialog + opener are mounted on /leases). ExecuteScript self-removes the
+	// script node after it runs, so repeated releases don't accumulate dead nodes. The
+	// device is still physically at ip - releasing only drops the Kea lease - so it can
+	// be reached and rebooted to re-request DHCP immediately. The MAC rides along as the
+	// freshness anchor the reboot handler matches against.
+	if dev, ok := s.rebootOfferForIP(ip); ok {
+		ipArg, _ := json.Marshal(dev.IP)
+		nameArg, _ := json.Marshal(dev.Name)
+		macArg, _ := json.Marshal(dev.MAC)
+		_ = sse.ExecuteScript(
+			"window.ggoRebootOpen&&window.ggoRebootOpen(" + string(ipArg) + "," + string(nameArg) + "," + string(macArg) + ")")
+	}
 }

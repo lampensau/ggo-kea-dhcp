@@ -10,7 +10,7 @@ import (
 type Level int
 
 const (
-	// LevelFull (L0): full fidelity, promiscuous duty-cycle allowed.
+	// LevelFull (L0): full fidelity, promiscuous capture on (steady-state in ACTIVE).
 	LevelFull Level = iota
 	// LevelNoPromisc (L1): promiscuous dropped - the high-value non-promiscuous
 	// detectors (IGMP, rogue-DHCP, LLDP, BPDU) keep running on the narrow BPF.

@@ -106,3 +106,43 @@ func TestSettingsSaveActiveGuardHeld(t *testing.T) {
 		t.Errorf("guard-held save flashed %q (%s), want the not-yet-applied notice", f.Message, f.Type)
 	}
 }
+
+// A save while an apply is mid-flight (CONFIGURING) persists the values but can
+// schedule no reconcile - it must flash the deferred notice, not plain success,
+// and must not claim the reconcile guard (issue #19).
+func TestSettingsSaveConfiguringDefers(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	form := url.Values{"lease_lifetime": {"3600"}}
+	if s.leaseLifetime() == 3600 {
+		form.Set("lease_lifetime", "7200")
+	}
+	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.handleSettingsSave(rr, req)
+
+	c := flashCookie(rr)
+	if c == nil {
+		t.Fatal("no flash cookie set")
+	}
+	req2 := httptest.NewRequest("GET", "/settings", nil)
+	req2.AddCookie(&http.Cookie{Name: "ggo_flash", Value: c.Value})
+	f := s.getFlash(httptest.NewRecorder(), req2)
+	if f == nil {
+		t.Fatal("flash did not decode")
+	}
+	if f.Message != settingsDeferredMsg || f.Type != "info" {
+		t.Errorf("CONFIGURING save flashed %q (%s), want the deferred notice", f.Message, f.Type)
+	}
+	// The handler must not have claimed the guard on this path: the in-flight
+	// apply owns it. If the save took it, this begin would fail.
+	if !s.beginReconcile() {
+		t.Error("guard left claimed after a CONFIGURING save")
+	} else {
+		s.endReconcile()
+	}
+}

@@ -12,12 +12,12 @@ import (
 // gateway/DNS, lease bounds, free-form option rows, and dropping blank/half rows.
 func TestParseScopeServices(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		svc, err := parseScopeServices("10.0.0.254", "10.0.0.53, 10.0.0.54", "600",
+		svc, err := parseScopeServices("10.0.0.254", "10.0.0.53, 10.0.0.54", "600", "true",
 			[]string{"ntp-servers", "", "domain-name"}, []string{"10.0.0.1", "", "intercom.local"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if svc.Gateway != "10.0.0.254" || svc.DNS != "10.0.0.53, 10.0.0.54" || svc.LeaseLifetime != 600 {
+		if svc.Gateway != "10.0.0.254" || svc.DNS != "10.0.0.53, 10.0.0.54" || svc.LeaseLifetime != 600 || !svc.LocalDNS {
 			t.Errorf("fields: %+v", svc)
 		}
 		// The blank middle row is dropped; two real options remain.
@@ -26,11 +26,11 @@ func TestParseScopeServices(t *testing.T) {
 		}
 	})
 	t.Run("empty is zero", func(t *testing.T) {
-		svc, err := parseScopeServices("", "", "", nil, nil)
+		svc, err := parseScopeServices("", "", "", "", nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if svc.Gateway != "" || svc.DNS != "" || svc.LeaseLifetime != 0 || len(svc.Options) != 0 {
+		if svc.Gateway != "" || svc.DNS != "" || svc.LocalDNS || svc.LeaseLifetime != 0 || len(svc.Options) != 0 {
 			t.Errorf("want zero ScopeServices, got %+v", svc)
 		}
 	})
@@ -43,7 +43,7 @@ func TestParseScopeServices(t *testing.T) {
 		{"lease too high", "", "", "99999"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := parseScopeServices(tc.gw, tc.dns, tc.lease, nil, nil); err == nil {
+			if _, err := parseScopeServices(tc.gw, tc.dns, tc.lease, "", nil, nil); err == nil {
 				t.Errorf("%s: expected an error", tc.name)
 			}
 		})

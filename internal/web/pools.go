@@ -61,6 +61,7 @@ func (s *Server) scopeServicesView(sc ScopeConfig, idx int) views.ScopeServicesV
 		RegionID:       "svc-" + strconv.Itoa(idx),
 		Gateway:        sc.Services.Gateway,
 		DNS:            sc.Services.DNS,
+		LocalDNS:       sc.Services.LocalDNS,
 		Lease:          lease,
 		DerivedGateway: derived,
 		GlobalLease:    s.leaseLifetime(),
@@ -189,7 +190,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	// same per-scope form, so this single handler persists both. A services parse error
 	// (bad gateway/DNS/lease) aborts the whole save - the scope is saved atomically.
 	svc, serr := parseScopeServices(
-		r.FormValue("gateway"), r.FormValue("dns"), r.FormValue("lease"),
+		r.FormValue("gateway"), r.FormValue("dns"), r.FormValue("lease"), r.FormValue("local_dns"),
 		r.Form["opt_name[]"], r.Form["opt_data[]"],
 	)
 	if serr != nil {

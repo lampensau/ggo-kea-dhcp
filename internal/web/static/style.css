@@ -147,7 +147,8 @@ a.status-pill:hover { filter:brightness(1.08); }
 .account-who { padding:8px 10px 9px; font-size:12.5px; color:var(--text-secondary); border-bottom:1px solid var(--border); margin-bottom:4px; }
 .account-who strong { color:var(--text); }
 .account-item { display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:none; background:none; color:var(--text); font:inherit; font-size:13.5px; text-align:left; border-radius:var(--r-sm); cursor:pointer; }
-.account-item:hover { background:var(--err-tint); color:var(--err); }
+.account-item:hover { background:var(--surface-2); }
+.account-item.is-danger:hover { background:var(--err-tint); color:var(--err); }
 .account-item .lucide { width:16px; height:16px; }
 
 .count-badge { display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:18px; padding:0 6px; margin-left:7px; border-radius:var(--r-full); background:var(--surface-3); color:var(--text-secondary); font-size:11px; font-weight:600; font-feature-settings:"tnum" 1; vertical-align:middle; }
@@ -543,7 +544,6 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .config-divider { height:1px; background:var(--border); margin:5px 0; }
 .config-row { display:flex; align-items:center; gap:2px; }
 .config-row .config-item { flex:1; }
-.config-row form { margin:0; }
 .config-del { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; flex:none; border:none; background:none; color:var(--text-muted); border-radius:var(--r-sm); cursor:pointer; }
 .config-del:hover { background:var(--err-tint); color:var(--err); }
 .config-del .lucide { width:15px; height:15px; }
@@ -602,6 +602,12 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .setup-head { display:flex; justify-content:space-between; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-2); }
 .setup-head-actions { display:flex; align-items:center; gap:var(--sp-4); flex-wrap:wrap; }
 .setup-status { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
+/* Shield badge + its focusable info-tip sit inline as one live region. */
+.shield-badge { display:inline-flex; align-items:center; }
+/* The shield tip lives at the top of the page, so open it downward (not upward,
+   which would clip past the viewport top) and right-align it under the badge. */
+.shield-tip .info-tip-text { bottom:auto; top:calc(100% + 7px); left:auto; right:0; transform:none; }
+.shield-tip .info-tip-text::after { top:auto; bottom:100%; left:auto; right:9px; transform:none; border-top-color:transparent; border-bottom-color:var(--border-strong); }
 .section-heading { margin:var(--sp-6) 0 var(--sp-3); }
 .scope-card-head { display:flex; justify-content:space-between; align-items:center; gap:var(--sp-5); flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:var(--sp-3); margin-bottom:var(--sp-4); }
 
@@ -897,6 +903,12 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 /* --text-secondary, not --text-muted: muted is ~3:1 on the err/warn tint (below AA).
    Secondary clears AA on both themes while keeping the title louder than the detail. */
 #backend-alert .alert-detail { color:var(--text-secondary); font-size:12px; }
+/* The rogue-server / stand-down rows carry an inline operator control (Stand Down /
+   Resume): center the row and push the button to the trailing edge so it reads as the
+   row's action, not part of the message. */
+#backend-alert .alert { align-items:center; }
+#backend-alert .alert-body { flex:1 1 auto; }
+#backend-alert .alert-action { margin-left:auto; flex:none; }
 
 .diag-status { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 
@@ -908,3 +920,18 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .scope-name-input:focus { border-color:var(--accent); background:var(--surface); outline:none; }
 .scope-name-input::placeholder { color:var(--text-muted); font-weight:600; }
 
+
+/* Software update: footer badge (#update-badge is a live region - empty when
+   current or dismissed) + the Settings card meta line + the release-notes dialog. */
+#update-badge { display:inline-flex; margin-right:auto; }
+#update-badge:empty { display:none; }
+.update-badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:var(--r-full); font-size:11.5px; font-weight:600; line-height:1.5; background:var(--accent-tint); border:1px solid var(--ok-border); color:var(--accent); text-decoration:none; }
+.update-badge .lucide { width:12px; height:12px; }
+.update-badge:hover { border-color:var(--accent); }
+.update-meta { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-3); }
+dialog.update-notes { width:min(560px, calc(100vw - 32px)); }
+dialog.update-notes .dialog-body { max-height:min(60vh, 480px); overflow-y:auto; }
+.note-h { display:block; margin:var(--sp-3) 0 var(--sp-1); font-size:13px; }
+.note-h:first-child { margin-top:0; }
+.note-list { margin:0 0 var(--sp-2); padding-left:var(--sp-4); }
+.note-list li { margin:2px 0; }

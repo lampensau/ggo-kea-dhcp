@@ -1,13 +1,16 @@
 package ggoscan
 
 import (
+	"bytes"
 	"net"
+	"os"
+	"regexp"
 	"testing"
 )
 
-// reply0x11 builds a G-G device-info reply: header + body with name@0, MAC@0x12,
+// deviceReply builds a G-G device-info reply: header + body with name@0, MAC@0x12,
 // firmware@0x2e.
-func reply0x11(name string, mac [6]byte, fw string) []byte {
+func deviceReply(name string, mac [6]byte, fw string) []byte {
 	body := make([]byte, 0x2e+0x40)
 	copy(body, name) // NUL-padded by the zeroed buffer
 	copy(body[0x12:], mac[:])
@@ -17,9 +20,9 @@ func reply0x11(name string, mac [6]byte, fw string) []byte {
 
 func TestParseScanReply(t *testing.T) {
 	mac := [6]byte{0x00, 0x1f, 0x80, 0x22, 0x51, 0x30}
-	dev, ok := parseScanReply(reply0x11("TestingMCXD", mac, "MCXi 5.0.7.9165"), "10.0.0.50")
+	dev, ok := parseScanReply(deviceReply("TestingMCXD", mac, "MCXi 5.0.7.9165"), "10.0.0.50")
 	if !ok {
-		t.Fatal("parse failed on a valid 0x11 reply")
+		t.Fatal("parse failed on a valid reply")
 	}
 	if dev.Name != "TestingMCXD" {
 		t.Errorf("name = %q, want TestingMCXD", dev.Name)
@@ -69,23 +72,93 @@ func TestReleaseMismatchWithinFamily(t *testing.T) {
 	}
 }
 
-// TestOnlyEmitsScan is the safety guard: the single frame this package can transmit
-// is the read-only device-scan request (type 0x10), never a mutating opcode.
-func TestOnlyEmitsScan(t *testing.T) {
-	want := []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
-	if len(scanFrame) != len(want) {
-		t.Fatalf("scanFrame len = %d, want %d", len(scanFrame), len(want))
+// TestOnlyEmitsScanAndReboot is the safety guard: this package builds exactly two
+// frames - the read-only scan request and the reboot request SendReboot uses - and
+// no third emitter. The scan frame is pinned byte-for-byte, and the reboot frame is
+// held to the same fixed shape differing in exactly one request byte, so a new frame
+// can't be introduced here unnoticed.
+func TestOnlyEmitsScanAndReboot(t *testing.T) {
+	wantScan := []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
+	if !bytes.Equal(scanFrame, wantScan) {
+		t.Fatalf("scanFrame = % x, want % x", scanFrame, wantScan)
 	}
-	for i, b := range want {
-		if scanFrame[i] != b {
-			t.Fatalf("scanFrame[%d] = 0x%02x, want 0x%02x", i, scanFrame[i], b)
+	if len(rebootHeader) != len(scanFrame) {
+		t.Fatalf("rebootHeader len = %d, want %d", len(rebootHeader), len(scanFrame))
+	}
+	diff := 0
+	for i := range scanFrame {
+		if rebootHeader[i] != scanFrame[i] {
+			diff++
 		}
 	}
-	// The opcode byte (index 5) must be 0x10. Mutating opcodes (0x90 reboot, 0xa0
-	// memory-clear, 0x20/0x30/0x140/0x250 firmware, 0x310 save-default) must never
-	// appear in the only frame builder.
-	if scanFrame[5] != 0x10 {
-		t.Fatalf("scan opcode = 0x%02x, want 0x10 (read-only)", scanFrame[5])
+	if diff != 1 {
+		t.Fatalf("reboot header differs from scan in %d byte(s), want exactly 1", diff)
+	}
+	got := rebootFrameFor(net.IPv4(10, 0, 0, 22).To4())
+	want := append(append([]byte{}, rebootHeader...), 10, 0, 0, 22)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("rebootFrameFor = % x, want % x", got, want)
+	}
+}
+
+// frameDeclRe matches a package-level fixed frame literal declaration.
+var frameDeclRe = regexp.MustCompile(`(?m)^var (\w+) = \[\]byte\{`)
+
+// sendCallRe matches a WriteToUDP call whose payload is a bare identifier.
+var sendCallRe = regexp.MustCompile(`WriteToUDP\((\w+),`)
+
+// rebootLocalRe pins the reboot payload local to the header+IP builder.
+var rebootLocalRe = regexp.MustCompile(`(\w+) := rebootFrameFor\(`)
+
+// TestNoUndeclaredEmitter is a best-effort source tripwire, not a proof. It scans
+// scan.go and checks that exactly two frame literals are declared (scanFrame,
+// rebootHeader) and that every WriteToUDP call it can see transmits one of them. This
+// catches the common accidental mistake - a new frame variable sent from a new
+// WriteToUDP call site. Because it is a regex over one file, it does NOT rule out an
+// inline []byte{...} payload, a send through another method (Write/WriteMsgUDP), or a
+// call added in a different file in the package. It narrows the gap, it does not close
+// it; the byte-pinned frame checks above remain the real guarantee about frame content.
+func TestNoUndeclaredEmitter(t *testing.T) {
+	raw, err := os.ReadFile("scan.go")
+	if err != nil {
+		t.Fatalf("read scan.go: %v", err)
+	}
+
+	src := string(raw)
+	declared := map[string]bool{}
+	for _, m := range frameDeclRe.FindAllStringSubmatch(src, -1) {
+		declared[m[1]] = true
+	}
+	if len(declared) != 2 || !declared["scanFrame"] || !declared["rebootHeader"] {
+		t.Fatalf("declared frame literals = %v, want exactly {scanFrame, rebootHeader}", declared)
+	}
+
+	rb := rebootLocalRe.FindStringSubmatch(src)
+	if rb == nil {
+		t.Fatal("no `<name> := rebootFrameFor(` found - reboot frame no longer built from the pinned header")
+	}
+	rebootLocal := rb[1]
+	allowed := map[string]bool{"scanFrame": true, rebootLocal: true}
+
+	sends := sendCallRe.FindAllStringSubmatch(src, -1)
+	if len(sends) == 0 {
+		t.Fatal("found no send call sites - the matcher is stale, tighten it before trusting this guard")
+	}
+	sentScan, sentReboot := false, false
+	for _, m := range sends {
+		payload := m[1]
+		if !allowed[payload] {
+			t.Errorf("send call transmits %q, which is neither scanFrame nor the reboot frame", payload)
+		}
+		switch payload {
+		case "scanFrame":
+			sentScan = true
+		case rebootLocal:
+			sentReboot = true
+		}
+	}
+	if !sentScan || !sentReboot {
+		t.Errorf("expected both frames to be sent (scan=%v reboot=%v)", sentScan, sentReboot)
 	}
 }
 

@@ -14,7 +14,7 @@ The WiFi uplink is optional: the appliance can join a venue WiFi (scan, pick the
 
 A scope is one network the appliance serves: either the single untagged network on eth0, or a tagged VLAN stacked on eth0 as a trunk. Add as many VLAN scopes as the show needs; duplicate an existing scope to clone its settings.
 
-The two badges at the top of the page tell you what the wire actually looks like before you commit: the link badge shows whether eth0 sees untagged traffic, tagged VLANs (with the VLAN IDs it observed) or no cable at all, and the shield badge reads Suspended while the port has no cable - with no link there is nothing to guard.
+The two badges at the top of the page tell you what the wire actually looks like before you commit: the link badge shows whether eth0 sees untagged traffic, tagged VLANs (with the VLAN IDs it observed) or no cable at all, and the shield badge watches for another DHCP server answering on the wire while you set up. It reads Active while none has answered; if one speaks up, the badge names that server's IP - stop it before applying, or clients will get addresses from both servers. It reads Suspended while the port has no cable, since with no link there is nothing to watch, and Unverified when the probe cannot run (no capture privilege) or cannot read the port's own address - in that state it makes no claim either way. Active means none was seen answering, not a hard guarantee of none present: the shield catches broadcast offers and answers aimed at the appliance, but on a switched network a rogue that only unicasts to other clients can stay out of view.
 
 Per scope you set:
 
@@ -24,7 +24,7 @@ Per scope you set:
 - **Subnet CIDR** - the scope's address space; the wizard auto-sizes it to fit the pool plan and widens it if the plan outgrows it
 - **Multicast inspect** - off by default; enables a low-rate multicast sample on this scope so the dashboard can show PTP grandmaster and sACN health (see [Network health](network-health.md))
 
-Each scope also has a DHCP options section for the less common knobs: gateway and DNS overrides, a lease-time override, and arbitrary extra DHCP options.
+Each scope also has a DHCP options section for the less common knobs: gateway and DNS overrides, a lease-time override, arbitrary extra DHCP options, and the Local DNS switch that hands the appliance out as the scope's DNS server so device names resolve on the network (see [Local DNS](dns.md)).
 
 ## Preset roles
 

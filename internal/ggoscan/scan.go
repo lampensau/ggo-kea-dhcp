@@ -4,9 +4,10 @@
 // into an inventory of {name, MAC, IP, firmware} - the source for the firmware
 // inventory, firmware-mismatch warning, and friendly-hostname assignment.
 //
-// SAFETY: this package transmits exactly ONE frame type - the read-only scan request
-// (type 0x10). The mutating G-G opcodes (reboot, memory-clear, firmware update,
-// save-default) are never constructed here. See scanFrame and TestOnlyEmitsScan.
+// SAFETY: this package transmits two frames only - the read-only scan request, and,
+// solely on an explicit operator action, a device-reboot request (SendReboot). No
+// other device-mutating operation is ever constructed here. See scanFrame,
+// rebootHeader, and TestOnlyEmitsScanAndReboot.
 //
 // Like arpscan it is best-effort and runs ACTIVE-only: a socket that won't open
 // (dev sandbox / no privilege) disables the scanner with a log line, never fatal.
@@ -14,6 +15,7 @@ package ggoscan
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net"
 	"sort"
@@ -33,11 +35,23 @@ const (
 	deviceTTL = 15 * time.Minute
 )
 
-// scanFrame is the ONLY frame this package ever sends: G-G magic "G-G\0" + type
-// 0x10 (device scan, read-only) + reserved. Never parameterized by opcode, so a
-// mutating command (reboot 0x90, memory-clear 0xa0, firmware 0x20/0x30/0x140/0x250,
-// save-default 0x310) cannot be emitted.
+// scanFrame is the read-only device-scan request. It is a fixed 8-byte constant,
+// never parameterized, so nothing device-mutating can be built from it.
 var scanFrame = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
+
+// rebootHeader is the fixed prefix of the reboot request SendReboot sends on an explicit
+// operator action; rebootFrameFor appends the target address. It shares scanFrame's shape
+// and differs in one byte. This and scanFrame are the only frames this package emits (see
+// TestOnlyEmitsScanAndReboot).
+var rebootHeader = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x90, 0x00, 0x00}
+
+// rebootFrameFor returns the reboot request addressed to ip4. A fresh slice each call, so
+// the shared header is never aliased or mutated.
+func rebootFrameFor(ip4 net.IP) []byte {
+	f := make([]byte, 0, len(rebootHeader)+net.IPv4len)
+	f = append(f, rebootHeader...)
+	return append(f, ip4...)
+}
 
 // Spec is one Green-GO scope to scan: the subnet-directed broadcast address for its
 // periodic sweep, and a closure yielding the current lease IPs to unicast-scan. The
@@ -47,7 +61,7 @@ type Spec struct {
 	LeaseIPs  func() []string
 }
 
-// Device is one Green-GO device learned from a 0x11 scan reply.
+// Device is one Green-GO device learned from a scan reply.
 type Device struct {
 	MAC      string
 	Name     string
@@ -127,6 +141,36 @@ func (s *Scanner) Stop() {
 	close(quit)
 	_ = conn.Close() // unblocks recvLoop's ReadFromUDP
 	s.wg.Wait()
+}
+
+// SendReboot asks the device at ip to reboot, so a just-changed address takes effect
+// now instead of at the device's next DHCP renewal. It unicasts one request over the
+// same transport as the scan (UDP port ggoPort), reusing the live scan socket when the
+// scanner is running and otherwise opening a one-shot socket. Best-effort: it returns
+// any send error to the caller (which audits the outcome) but changes no local state.
+func (s *Scanner) SendReboot(ip string) error {
+	addr := net.ParseIP(ip)
+	if addr == nil || addr.To4() == nil {
+		return fmt.Errorf("ggoscan: invalid device address %q", ip)
+	}
+	dst := &net.UDPAddr{IP: addr.To4(), Port: ggoPort}
+	frame := rebootFrameFor(addr.To4())
+
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn != nil {
+		_, err := conn.WriteToUDP(frame, dst)
+		return err
+	}
+	// Scanner idle (no served Green-GO scope, or dev sandbox): one-shot socket.
+	c, err := s.open()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	_, err = c.WriteToUDP(frame, dst)
+	return err
 }
 
 // Snapshot returns the current inventory (TTL-pruned) and availability.
@@ -227,13 +271,9 @@ func (s *Scanner) recvLoop() {
 	}
 }
 
-// parseScanReply decodes a G-G device-scan reply (type 0x11). srcIP is the UDP
-// source (the device's address). Field offsets are within the reply body (payload
-// after the 8-byte G-G header): name @0, MAC @0x12, then a 0x55aa marker @0x2e
-// with the firmware string @0x30 (verified against live BPX replies; reading the
-// string at 0x2e swallows the marker as "U\xaa" text). A reply without the marker
-// is read at 0x2e. The reply carries no config id. Returns ok=false for any
-// non-0x11 / too-short frame.
+// parseScanReply decodes a device-scan reply into a Device (name, MAC, firmware).
+// srcIP is the UDP source, i.e. the device's address. The offsets below were fixed
+// against live replies. Returns ok=false for a frame that isn't a well-formed reply.
 func parseScanReply(payload []byte, srcIP string) (Device, bool) {
 	if len(payload) < 8 || payload[0] != 0x47 || payload[1] != 0x2d || payload[2] != 0x47 || payload[3] != 0x00 {
 		return Device{}, false

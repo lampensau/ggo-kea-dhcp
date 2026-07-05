@@ -5,10 +5,8 @@ import (
 	"time"
 )
 
-// g5Encrypt is the inverse of g5DecryptPayload, used only to synthesize test 'h'
-// frames. The key schedule is driven by the plaintext word sum (acc), identical on
-// both sides, so encryption is the same transform with ct = ror(K)^p. checksum is
-// chosen so the decoder's (checksum+acc)==0 gate passes. plain must be 16-aligned.
+// g5Encrypt is the inverse of g5DecryptPayload, used only to synthesize test frames.
+// checksum is chosen so the decoder's validation gate passes. plain must be 16-aligned.
 func g5Encrypt(plain []byte, seed uint32) (cipher []byte, checksum uint32) {
 	nblocks := len(plain) / 16
 	out := make([]byte, nblocks*16)
@@ -28,23 +26,21 @@ func g5Encrypt(plain []byte, seed uint32) (cipher []byte, checksum uint32) {
 	return out, -acc
 }
 
-// hVector is a reference 'h' TLV plaintext: t1 configId 06da8e3d14e247a0, t2
-// multicast 239.1.95.231 (ef015fe7), t4 name "abba".
+// hVector is a reference TLV plaintext used to synthesize test frames (name "abba").
 var hVector = []byte{
-	0x81, 0x06, 0xda, 0x8e, 0x3d, 0x14, 0xe2, 0x47, 0xa0, // t1 configId (8B)
-	0x41, 0xef, 0x01, 0x5f, 0xe7, // t2 multicast group (4B)
-	0x42, 0x61, 0x62, 0x62, 0x61, // t4 "abba"
+	0x81, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02,
+	0x41, 0xef, 0x01, 0x5f, 0xe7,
+	0x42, 0x61, 0x62, 0x62, 0x61,
 }
 
-// g5HFrame wraps a TLV plaintext into a full encrypted 'h' (0x68) frame inside
-// UDP:5810 → IPv4 → Ethernet.
+// g5HFrame wraps a TLV plaintext into a full encrypted frame inside UDP:5810 → IPv4 → Ethernet.
 func g5HFrame(seed uint32, tlv []byte) []byte {
 	plen := (len(tlv) + 15) &^ 15
 	plain := make([]byte, plen)
 	copy(plain, tlv)
 	cipher, cksum := g5Encrypt(plain, seed)
 	g5 := make([]byte, 14+len(cipher))
-	g5[0], g5[1], g5[2], g5[3] = 0x47, 0x35, 0x68, 0x81 // "G5", subtype 'h', flags encrypted
+	g5[0], g5[1], g5[2], g5[3] = 0x47, 0x35, 0x68, 0x81
 	putLEu32(g5, 6, seed)
 	putLEu32(g5, 10, cksum)
 	copy(g5[14:], cipher)
@@ -80,8 +76,8 @@ func TestG5DecryptAndTLV(t *testing.T) {
 			name = asciiTrim(r.value)
 		}
 	}
-	if id != "06da8e3d14e247a0" {
-		t.Errorf("configId = %q, want 06da8e3d14e247a0", id)
+	if id != "aabbccddeeff0102" {
+		t.Errorf("id = %q, want aabbccddeeff0102", id)
 	}
 	if group != "239.1.95.231" {
 		t.Errorf("group = %q, want 239.1.95.231", group)
@@ -111,9 +107,9 @@ func TestGreengoHDetector(t *testing.T) {
 	// A second, distinct config on the same segment must raise the multiple-configs
 	// warning with one audit event.
 	tlv2 := []byte{
-		0x81, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // t1 different configId
-		0x41, 0xef, 0x01, 0x6e, 0x69, // t2 group 239.1.110.105
-		0x42, 0x62, 0x62, 0x62, 0x62, // t4 "bbbb"
+		0x81, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // a different value
+		0x41, 0xef, 0x01, 0x6e, 0x69,
+		0x42, 0x62, 0x62, 0x62, 0x62,
 	}
 	d.Consume(Frame{Data: g5HFrame(0xabcdef01, tlv2)}, now)
 	ev := d.Tick(now)

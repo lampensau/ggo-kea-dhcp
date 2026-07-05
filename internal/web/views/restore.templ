@@ -63,7 +63,7 @@ templ restoreSection(value, label string) {
 // restoreScript wires the styled file picker (filename readout + enable Restore once a
 // file is chosen), framework-free. The destructive-action confirmation is the styled
 // <dialog> itself (its warning body + the red "Restore Backup" button), matching the
-// reset/factory-wipe dialogs - no native confirm() on top.
+// reset/factory-wipe dialogs - no native browser confirmation on top.
 templ restoreScript() {
 	<script>
 		window.ggoRestorePick = function (input) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// FuzzParseNibbleTLV exercises the Green-GO 'h'-heartbeat nibble-TLV decoder, which
+// FuzzParseNibbleTLV exercises the Green-GO nibble-TLV decoder, which
 // walks variable-length type/length headers from untrusted multicast bytes. The
 // length accumulators (length<<8 | ...) and the pos+length bound are the panic risk.
 // Invariants: never panic, and decoding is deterministic - the doc warns the input

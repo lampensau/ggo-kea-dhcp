@@ -67,6 +67,9 @@ templ setupScript() {
 				var sm = src.querySelector("[name='scopes[" + srcId + "][multicast_sniff]']");
 				var dm = dst.querySelector("[name='scopes[" + newId + "][multicast_sniff]']");
 				if (sm && dm) dm.checked = sm.checked;
+				var sd = src.querySelector("[name='scopes[" + srcId + "][local_dns]']");
+				var dd = dst.querySelector("[name='scopes[" + newId + "][local_dns]']");
+				if (sd && dd) dd.checked = sd.checked;
 				var oNames = src.querySelectorAll("[name='scopes[" + srcId + "][opt_name][]']");
 				var oDatas = src.querySelectorAll("[name='scopes[" + srcId + "][opt_data][]']");
 				var opts = [];
@@ -174,9 +177,13 @@ templ setupScript() {
 					// Restore per-scope DHCP network services (gateway/DNS/lease override +
 					// extra options). The two static option rows in the template are filled
 					// first, then any extras are appended so a >2-option scope round-trips.
+					var mc = c.querySelector("[name='scopes[" + id + "][multicast_sniff]']");
+					if (mc) mc.checked = !!sc.multicast_sniff;
 					var svc = sc.services || {};
 					set("gateway", svc.gateway); set("dns", svc.dns);
 					set("lease", svc.lease_lifetime ? svc.lease_lifetime : "");
+					var ld = c.querySelector("[name='scopes[" + id + "][local_dns]']");
+					if (ld) ld.checked = !!svc.local_dns;
 					ggoWriteOptions(id, svc.options);
 					// Restore the EXACT saved pool plan: write it as hidden fields the
 					// data-init seed will post (op=seed prefers posted fields over a
