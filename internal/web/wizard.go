@@ -98,18 +98,21 @@ func (s *Server) linkTrunkState(configState string) (state, detail string) {
 
 // shieldStatus upgrades the carrier-derived shield state with the onboarding
 // rogue-DHCP probe's observation: no carrier stays "Suspended" (nothing to
-// guard), a foreign DHCP server seen answering makes it "Detected" (detail is
-// that server's IP, so the wizard names it before the operator applies), else
-// "Active". The probe runs only during onboarding, so an ACTIVE-era edit page
-// falls back to the carrier bit alone.
+// guard); when the probe is not actually watching - stopped (the ACTIVE-era edit
+// page, where the probe runs only during onboarding) or blind (no CAP_NET_RAW /
+// dev sandbox) - it is "Unverified", an honest neutral state rather than a false
+// all-clear; a foreign DHCP server seen answering makes it "Detected" (detail is
+// that server's IP, so the wizard names it before the operator applies); else the
+// probe is live and quiet, "Active".
 func (s *Server) shieldStatus(carrierState string) (state, detail string) {
 	if carrierState != "Active" {
 		return carrierState, ""
 	}
-	if s.rogueProbe != nil {
-		if ip, _, ok := s.rogueProbe.Server(); ok {
-			return "Detected", ip
-		}
+	if s.rogueProbe == nil || !s.rogueProbe.Watching() {
+		return "Unverified", ""
+	}
+	if ip, _, ok := s.rogueProbe.Server(); ok {
+		return "Detected", ip
 	}
 	return "Active", ""
 }

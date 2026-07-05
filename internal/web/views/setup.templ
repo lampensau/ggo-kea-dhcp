@@ -107,15 +107,19 @@ templ setupHeadActions(v SetupView) {
 
 // ShieldBadge reflects the onboarding rogue-DHCP watch (RogueProbe): Active while no
 // foreign DHCP answer was seen, Detected when another server answered (detail is its
-// IP, named in the badge so the operator sees it before Apply), Suspended while the
-// port has no carrier. Live-morphed via the shield-status region while the wizard is
-// open, so a server that speaks up mid-setup flips the badge without a reload.
+// IP, named in the badge so the operator sees it before Apply), Unverified when the
+// probe is not actually watching (stopped on the ACTIVE edit page, or blind without
+// CAP_NET_RAW) so the operator knows the shield has confirmed nothing, and Suspended
+// while the port has no carrier. Live-morphed via the shield-status region while the
+// wizard is open, so a server that speaks up mid-setup flips the badge without a reload.
 templ ShieldBadge(state, iface, detail string) {
 	switch state {
 		case "Detected":
 			<span id="shield-status" class="badge badge-err" title={ "DHCP server " + detail + " is already answering on " + iface + " - stop it before applying, or clients will get addresses from both servers" }>@Icon("shield-alert") Rogue DHCP: { detail }</span>
 		case "Active":
 			<span id="shield-status" class="badge badge-ok" title={ "Watching " + iface + " for competing DHCP servers - none seen" }>@Icon("shield") Shield: Active</span>
+		case "Unverified":
+			<span id="shield-status" class="badge badge-info" title={ "Not watching " + iface + " for competing DHCP servers - the passive probe is not running here, so no all-clear has been confirmed" }>@Icon("shield-off") Shield: Unverified</span>
 		default:
 			<span id="shield-status" class="badge badge-warn" title={ "Shield suspended - no carrier on " + iface }>@Icon("shield-off") Shield: Suspended</span>
 	}

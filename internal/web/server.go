@@ -124,6 +124,9 @@ type Server struct {
 type rogueProber interface {
 	Start(iface string, selfIPs [][4]byte)
 	Stop()
+	// Watching is false when the probe is stopped or blind (no CAP_NET_RAW), so
+	// the shield can report "unverified" instead of a false all-clear.
+	Watching() bool
 	Server() (ip, mac string, ok bool)
 }
 

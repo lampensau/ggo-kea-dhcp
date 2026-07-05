@@ -143,38 +143,48 @@ func TestBuildRenderScopesGatewayPrefersUntagged(t *testing.T) {
 	}
 }
 
-// fakeRogueProbe satisfies rogueProber without a capture socket.
+// fakeRogueProbe satisfies rogueProber without a capture socket. watching mirrors
+// a real, non-blind capture being live; a foreign OFFER is only credible when it is.
 type fakeRogueProbe struct {
-	ip, mac string
-	found   bool
+	ip, mac  string
+	found    bool
+	watching bool
 }
 
 func (f *fakeRogueProbe) Start(string, [][4]byte) {}
 func (f *fakeRogueProbe) Stop()                   {}
+func (f *fakeRogueProbe) Watching() bool          { return f.watching }
 func (f *fakeRogueProbe) Server() (string, string, bool) {
 	return f.ip, f.mac, f.found
 }
 
-// TestShieldStatus covers the wizard badge's three states: no carrier stays
-// Suspended regardless of the probe, a quiet probe (or none - the ACTIVE edit
-// page) yields Active, and a foreign DHCP answer flips to Detected naming the
-// server's IP.
+// TestShieldStatus covers the wizard badge's states: no carrier stays Suspended
+// regardless of the probe; a carrier-up link with no live probe (nil probe, or the
+// ACTIVE edit page where the probe is stopped, or a blind no-CAP_NET_RAW probe)
+// reports the honest Unverified rather than a false all-clear; a live quiet probe
+// yields Active; and a foreign DHCP answer flips to Detected naming the server's IP.
 func TestShieldStatus(t *testing.T) {
 	s := &Server{}
 
 	if st, d := s.shieldStatus("Suspended"); st != "Suspended" || d != "" {
 		t.Errorf("no carrier: got %q/%q, want Suspended with no detail", st, d)
 	}
-	if st, d := s.shieldStatus("Active"); st != "Active" || d != "" {
-		t.Errorf("no probe: got %q/%q, want Active", st, d)
+	if st, d := s.shieldStatus("Active"); st != "Unverified" || d != "" {
+		t.Errorf("no probe: got %q/%q, want Unverified", st, d)
 	}
 
-	s.rogueProbe = &fakeRogueProbe{}
-	if st, d := s.shieldStatus("Active"); st != "Active" || d != "" {
-		t.Errorf("quiet probe: got %q/%q, want Active", st, d)
+	// A probe present but not watching (stopped in ACTIVE, or blind) is Unverified.
+	s.rogueProbe = &fakeRogueProbe{watching: false}
+	if st, d := s.shieldStatus("Active"); st != "Unverified" || d != "" {
+		t.Errorf("blind/stopped probe: got %q/%q, want Unverified", st, d)
 	}
 
-	s.rogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true}
+	s.rogueProbe = &fakeRogueProbe{watching: true}
+	if st, d := s.shieldStatus("Active"); st != "Active" || d != "" {
+		t.Errorf("quiet live probe: got %q/%q, want Active", st, d)
+	}
+
+	s.rogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true, watching: true}
 	if st, d := s.shieldStatus("Active"); st != "Detected" || d != "10.0.0.250" {
 		t.Errorf("foreign OFFER: got %q/%q, want Detected/10.0.0.250", st, d)
 	}

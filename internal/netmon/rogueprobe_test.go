@@ -97,6 +97,34 @@ func TestRogueProbe_SuppressesOwnOffers(t *testing.T) {
 	}
 }
 
+func TestRogueProbe_WatchingReflectsRealCapture(t *testing.T) {
+	p := NewRogueProbe()
+	// Inert (never started): not watching, so the shield stays honestly unverified.
+	if p.Watching() {
+		t.Fatal("inert probe reports Watching")
+	}
+
+	// A real (non-nop) capture is watching.
+	p.begin("eth0", NewFakeSniffer(), nil)
+	if !p.Watching() {
+		t.Fatal("live capture does not report Watching")
+	}
+	p.Stop()
+
+	// A nop sniffer (no CAP_NET_RAW / dev sandbox) is blind - not watching even
+	// though the read loop runs, because it can never see a frame.
+	p.begin("eth0", newNopSniffer(), nil)
+	if p.Watching() {
+		t.Fatal("blind nop sniffer reports Watching")
+	}
+
+	// Stopped: not watching (the ACTIVE edit-page case).
+	p.Stop()
+	if p.Watching() {
+		t.Fatal("stopped probe reports Watching")
+	}
+}
+
 func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	p := NewRogueProbe()
 	// Never started: quiet, and Stop is safe.

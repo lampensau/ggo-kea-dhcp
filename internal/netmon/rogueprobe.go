@@ -155,6 +155,19 @@ func (p *RogueProbe) Stop() {
 	p.mu.Unlock()
 }
 
+// Watching reports whether the probe is actually capturing frames: a real
+// AF_PACKET socket is open and its read loop is live. It is false when the probe
+// is stopped (not running - e.g. the ACTIVE edit page) OR when the capture fell
+// back to a nop sniffer (no CAP_NET_RAW / dev sandbox), in which case Server()
+// will always answer "none" not because the link is clear but because nothing is
+// being observed. Callers use this to render an honest "unverified" shield rather
+// than a confident all-clear when the probe is blind.
+func (p *RogueProbe) Watching() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sniffer != nil && !isNop(p.sniffer)
+}
+
 // Server reports the foreign DHCP server currently seen answering on the link
 // (the lowest IP when several are), or ok=false when none is present or the
 // probe is inert. A server unseen for the detector's absence window clears.
