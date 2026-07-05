@@ -37,6 +37,6 @@ Each row shows the pool's effective range and its size in addresses; rows can be
 
 ## Editing on a running appliance
 
-On the Pools page, Save Changes applies the plan immediately: the DHCP configuration is re-rendered and reloaded without interrupting the appliance's address or your session. Existing leases are not revoked by the save; devices whose address falls outside the new layout migrate to it as their leases come up for renewal.
+On the Pools page, Save Changes applies the plan immediately: the DHCP configuration is re-rendered and reloaded without interrupting the appliance's address or your session. Existing leases are not revoked by the save; devices whose address falls outside the new layout migrate to it as their leases come up for renewal. The same save also covers the scope's DHCP Options section, including the Local DNS handout switch (see [Local DNS](dns.md)).
 
 Changing subnets or VLANs is a bigger operation than pool sizing and lives in [Edit Configuration](setup-wizard.md), not here.
