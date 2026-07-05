@@ -224,7 +224,12 @@ func (s *Server) startLiveTicker() {
 	go func() {
 		t := time.NewTicker(liveTickInterval)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-t.C:
+			case <-s.done:
+				return
+			}
 			if s.live.clientCount() == 0 {
 				continue
 			}

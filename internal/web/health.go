@@ -176,7 +176,12 @@ func (s *Server) startBackendHealthProbe() {
 		runRecovered("mariadb-probe", s.probeMariaDB) // establish baseline promptly
 		t := time.NewTicker(backendProbeInterval)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-t.C:
+			case <-s.done:
+				return
+			}
 			runRecovered("mariadb-probe", s.probeMariaDB)
 		}
 	}()

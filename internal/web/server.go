@@ -151,6 +151,11 @@ type Server struct {
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
+	// done is closed on shutdown to end the background ticker loops (live ticker,
+	// metrics sampler, MariaDB probe, update check) before main's deferred
+	// sqlite.Close runs - otherwise they keep querying a closing database on
+	// every service restart and self-update.
+	done chan struct{}
 	// preflight holds the latest prerequisite-probe result for the diagnostics UI.
 	// Set once at boot and refreshed by the live ticker so a fixed prerequisite
 	// clears without a restart.
@@ -247,6 +252,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
 	s.health = newBackendHealth()
+	s.done = make(chan struct{})
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = map[string]int64{}
@@ -465,7 +471,37 @@ func (s *Server) Start() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
+		s.stopBackground()
 		return nil
+	}
+}
+
+// stopBackground halts every background service and ticker loop before Start
+// returns, so main's deferred sqlite.Close never races goroutines still issuing
+// queries. Closing done ends the ticker loops at their next select; a loop
+// already mid-work finishes its in-flight queries (database/sql.Close waits for
+// those) - only that narrow window remains, versus loops running forever after
+// Close today. The service Stops are idempotent, matching the reconciler's own
+// teardown paths.
+func (s *Server) stopBackground() {
+	close(s.done)
+	if s.netmon != nil {
+		s.netmon.Stop()
+	}
+	if s.arp != nil {
+		s.arp.Stop()
+	}
+	if s.ggoscan != nil {
+		s.ggoscan.Stop()
+	}
+	if s.dns != nil {
+		s.dns.Stop()
+	}
+	if s.trunkProbe != nil {
+		s.trunkProbe.Stop()
+	}
+	if s.rogueProbe != nil {
+		s.rogueProbe.Stop()
 	}
 }
 

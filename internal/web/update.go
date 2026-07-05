@@ -151,7 +151,12 @@ func (s *Server) startUpdateCheckLoop() {
 	go func() {
 		t := time.NewTicker(updateCheckInterval)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-t.C:
+			case <-s.done:
+				return
+			}
 			s.updateCheckSafe(false)
 		}
 	}()

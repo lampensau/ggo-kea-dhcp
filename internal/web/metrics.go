@@ -146,12 +146,21 @@ func (s *Server) startMetricsSampler() {
 		// steady cadence so the trend line fills in ~15s rather than ~2 min.
 		s.sampleOnceSafe()
 		for i := 0; i < metricsWarmupSamples; i++ {
-			time.Sleep(metricsWarmupInterval)
+			select {
+			case <-time.After(metricsWarmupInterval):
+			case <-s.done:
+				return // shutdown during the boot warmup (e.g. a fast self-update restart)
+			}
 			s.sampleOnceSafe()
 		}
 		t := time.NewTicker(metricsSampleInterval)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-t.C:
+			case <-s.done:
+				return
+			}
 			s.sampleOnceSafe()
 		}
 	}()
