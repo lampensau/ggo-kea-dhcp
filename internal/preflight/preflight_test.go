@@ -63,6 +63,10 @@ func TestClockStatus(t *testing.T) {
 			t.Errorf("clockStatus(rtc=%v, synced=%v)=%v want %v", c.rtc, c.synced, got.Status, c.want)
 		}
 	}
+	// The one risky verdict carries its operator-facing remediation hint.
+	if got := clockStatus(false, false); !strings.Contains(got.Detail, "no RTC and not time-synced") {
+		t.Errorf("warn detail = %q, want the no-RTC remediation text", got.Detail)
+	}
 }
 
 func TestCapCheck(t *testing.T) {

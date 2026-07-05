@@ -167,6 +167,13 @@ type Server struct {
 	// multi-statement work into the closing database.
 	done chan struct{}
 	bgWG sync.WaitGroup
+	// bgMu + bgStopping order bgWG.Add against stopBackground's Wait: a
+	// registration racing shutdown (kickUpdateCheck fires from reconcile
+	// goroutines the join does not cover) must either land before the Wait or
+	// be refused - Add concurrent with a zero-counter Wait is the documented
+	// WaitGroup misuse. bgStopping also makes stopBackground idempotent.
+	bgMu       sync.Mutex
+	bgStopping bool
 	// lastMaint is when the storage-maintenance pass (snapshot/audit/session
 	// pruning) last ran. Touched only by the metrics sampler goroutine.
 	lastMaint time.Time
@@ -536,6 +543,20 @@ func (s *Server) Start() error {
 	}
 }
 
+// addBackground registers one goroutine with the shutdown join, refusing once
+// shutdown has begun. Callers reachable from goroutines the join does not cover
+// (kickUpdateCheck, fired by reconciles) must use this instead of a bare
+// bgWG.Add - see bgMu.
+func (s *Server) addBackground() bool {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	if s.bgStopping {
+		return false
+	}
+	s.bgWG.Add(1)
+	return true
+}
+
 // stopBackground halts every background service and ticker loop before Start
 // returns, so main's deferred sqlite.Close never races goroutines still issuing
 // queries. Closing done ends the loops at their next select, and the Wait joins
@@ -544,7 +565,14 @@ func (s *Server) Start() error {
 // bounded too, well inside systemd's stop timeout. The service Stops are
 // idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
+	s.bgMu.Lock()
+	if s.bgStopping {
+		s.bgMu.Unlock()
+		return // idempotent: a second caller must not close(done) again
+	}
+	s.bgStopping = true
 	close(s.done)
+	s.bgMu.Unlock()
 	s.bgWG.Wait()
 	if s.netmon != nil {
 		s.netmon.Stop()

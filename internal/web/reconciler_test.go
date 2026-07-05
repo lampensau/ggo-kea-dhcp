@@ -248,3 +248,29 @@ func TestZeroScopesRescueOnlyOnFirstConverge(t *testing.T) {
 		t.Errorf("RESCUE_ONBOARDING fired outside the boot window (%d rows)", n)
 	}
 }
+
+// TestZeroScopesRescueConsumedByAnyBoot pins the window to the BOOT reconcile
+// regardless of state: a box that boots into ONBOARDING consumes the window on
+// that first reconcile, so after a later apply a settings converge that finds
+// zero scopes (rows lost post-boot) surfaces the error instead of demoting a
+// serving box - the gap the ACTIVE-only consume left open.
+func TestZeroScopesRescueConsumedByAnyBoot(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.rescueArmed.Store(true)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	_ = s.ReconcileApplianceState(ModeConverge, 0) // the boot reconcile, in ONBOARDING
+
+	// Later: ACTIVE with zero scopes (no active profile row at all).
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("flip state: %v", err)
+	}
+	err := s.ReconcileApplianceState(ModeConverge, 0)
+	if !errors.Is(err, errNoScopes) {
+		t.Fatalf("want errNoScopes surfaced, got %v", err)
+	}
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive {
+		t.Fatalf("post-boot converge must not rescue: state = %q, want ACTIVE", st)
+	}
+}
