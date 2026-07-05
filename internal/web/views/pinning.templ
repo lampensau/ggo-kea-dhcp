@@ -211,7 +211,7 @@ templ pinButton(p PortRow) {
 		data-portlabel={ portLabel(p) }
 		data-ip={ p.IPAddress }
 		data-subnet={ itoa(p.SubnetID) }
-		data-hostname={ p.Hostname }
+		data-hostname={ p.RawHostname }
 		data-label={ p.Label }
 		data-mac={ p.HWAddress }
 		onclick="ggoPinPrep(this)"
