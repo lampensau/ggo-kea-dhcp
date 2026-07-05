@@ -35,7 +35,7 @@ func TestPoolDataForScopeDante(t *testing.T) {
 		{IPAddress: "10.0.0.50"}, // in the elastic pool (.20 - .254)
 		{IPAddress: "10.0.0.5"},  // inside the static reserve, below the pool
 	}
-	data := poolDataForScope(ds, leases)
+	data := poolDataForScope(ds, parseLeases(leases))
 	if len(data) != 1 {
 		t.Fatalf("got %d pools want 1 (reserve is not a DHCP pool)", len(data))
 	}
@@ -70,7 +70,7 @@ func TestPoolDataForScopeGreengoByClass(t *testing.T) {
 	// inside the WAA (antenna) pool's numeric range, the trap the old code fell in.
 	leases := []kea.ActiveLease{{IPAddress: "10.0.0.100", HWAddress: "00:1f:80:20:00:01"}}
 
-	rows := poolDataForScope(sc, leases)
+	rows := poolDataForScope(sc, parseLeases(leases))
 	var bpx, waa *views.PoolRow
 	for i := range rows {
 		switch rows[i].ClassName {

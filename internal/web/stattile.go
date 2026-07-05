@@ -12,9 +12,10 @@ import (
 // build); the sparklines are the always-on sampler's history.
 func buildStatTiles(leaseCount int, pools []views.PoolRow, snap metricsSnapshot, ptp []views.PTPRow) []views.StatTileView {
 	// (a) Active leases + churn over the sampled window.
+	leasePts := views.SparklinePoints(snap.LeaseCount)
 	leasesT := views.StatTileView{
 		Icon: "network", Label: "Active leases", Value: strconv.Itoa(leaseCount), Dot: "ok",
-		Points: views.SparklinePoints(snap.LeaseCount), Area: views.SparklineArea(snap.LeaseCount),
+		Points: leasePts, Area: views.AreaFromPoints(leasePts),
 		Tips: pointTips(snap.LeaseCount, ""),
 	}
 	if n := len(snap.LeaseCount); n > 1 {
@@ -28,9 +29,10 @@ func buildStatTiles(leaseCount int, pools []views.PoolRow, snap metricsSnapshot,
 
 	// (b) Pool utilization % (leased / capacity across DHCP pools).
 	pct := overallPoolUtil(pools)
+	utilPts := views.SparklinePoints(snap.PoolPct)
 	utilT := views.StatTileView{
 		Icon: "gauge", Label: "Pool utilization", Value: strconv.Itoa(pct), Unit: "%", Dot: utilDot(pct),
-		Points: views.SparklinePoints(snap.PoolPct), Area: views.SparklineArea(snap.PoolPct),
+		Points: utilPts, Area: views.AreaFromPoints(utilPts),
 		Tips: pointTips(snap.PoolPct, "%"),
 	}
 
@@ -49,7 +51,8 @@ func buildStatTiles(leaseCount int, pools []views.PoolRow, snap metricsSnapshot,
 	uplinkT := buildUplinkTile(snap.Uplink, ms)
 
 	// (d) Kea control-socket RTT ("lease processing").
-	rttT := views.StatTileView{Icon: "clock", Label: "Lease processing", Dot: "ok", Points: ms.points(snap.KeaRTT), Area: ms.area(snap.KeaRTT), Tips: pointTips(snap.KeaRTT, "ms")}
+	rttPts := ms.points(snap.KeaRTT)
+	rttT := views.StatTileView{Icon: "clock", Label: "Lease processing", Dot: "ok", Points: rttPts, Area: views.AreaFromPoints(rttPts), Tips: pointTips(snap.KeaRTT, "ms")}
 	if rtt := lastSample(snap.KeaRTT, -1); rtt < 0 {
 		rttT.Value = "—"
 	} else {
@@ -82,9 +85,10 @@ func buildPTPTile(p views.PTPRow, series []int) views.StatTileView {
 	if p.Severity == "warn" {
 		dot = "warn" // presence trouble (lost/contention) overrides a nominally-fine class
 	}
+	pts := views.SparklinePoints(series)
 	return views.StatTileView{
 		Icon: "radio-tower", Label: "PTP grandmaster", Value: val, Unit: p.Domain, Dot: dot,
-		Points: views.SparklinePoints(series), Area: views.SparklineArea(series), Tips: ptpTips(series),
+		Points: pts, Area: views.AreaFromPoints(pts), Tips: ptpTips(series),
 	}
 }
 
@@ -95,7 +99,8 @@ func buildUplinkTile(series []int, ms msScale) views.StatTileView {
 	t := views.StatTileView{Icon: "globe", Label: "Uplink", EditHref: "/settings#wifi-uplink", EditLabel: "Configure WiFi uplink"}
 	if last := lastSample(series, -1); last >= 0 {
 		t.Value, t.Unit, t.Dot = strconv.Itoa(last), "ms", "ok"
-		t.Points, t.Area = ms.points(series), ms.area(series)
+		t.Points = ms.points(series)
+		t.Area = views.AreaFromPoints(t.Points)
 		t.Tips = uplinkTips(series)
 	} else {
 		t.Value = "Offline"
@@ -141,13 +146,6 @@ func (sc msScale) points(series []int) string {
 		return views.SparklinePoints(series)
 	}
 	return views.SparklinePointsScaled(series, sc.lo, sc.hi)
-}
-
-func (sc msScale) area(series []int) string {
-	if !sc.ok {
-		return views.SparklineArea(series)
-	}
-	return views.SparklineAreaScaled(series, sc.lo, sc.hi)
 }
 
 // pointTips formats a value series into pipe-joined per-sample hover labels

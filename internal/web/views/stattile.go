@@ -94,6 +94,9 @@ func SparklinePointsScaled(series []int, lo, hi int) string {
 // SparklineArea returns the polygon points for the filled area under the trend
 // line: the line points plus the two baseline corners (bottom-right, bottom-left),
 // which the <polygon> auto-closes back to the first point. "" for an empty series.
+// No production caller remains - the tile builds compute the points once and call
+// AreaFromPoints - but this and SparklineAreaScaled stay as the byte-identity
+// oracle the golden tests assert AreaFromPoints against.
 func SparklineArea(series []int) string {
 	lo, hi := seriesRange(series)
 	return SparklineAreaScaled(series, lo, hi)
@@ -102,7 +105,14 @@ func SparklineArea(series []int) string {
 // SparklineAreaScaled is SparklineArea against a caller-supplied lo/hi range
 // (see SparklinePointsScaled).
 func SparklineAreaScaled(series []int, lo, hi int) string {
-	line := SparklinePointsScaled(series, lo, hi)
+	return AreaFromPoints(SparklinePointsScaled(series, lo, hi))
+}
+
+// AreaFromPoints closes an already-built polyline points string into the filled
+// area polygon: the line plus the two baseline corners. Tile builds that already
+// hold the points string use this instead of SparklineArea, so the 90-sample
+// polyline is built once per tile, not twice.
+func AreaFromPoints(line string) string {
 	if line == "" {
 		return ""
 	}

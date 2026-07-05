@@ -64,6 +64,7 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	var pools []views.PoolRow
 	var activeIfaces []string
 	uplinkActive := false
+	parsed := parseLeases(leases) // once per build - poolDataForScope runs per scope
 	for _, ds := range dbScopes {
 		if ds.VlanID == 0 {
 			activeIfaces = append(activeIfaces, "eth0")
@@ -73,7 +74,7 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 		if ds.Uplink.Enabled {
 			uplinkActive = true
 		}
-		pools = append(pools, poolDataForScope(ds, leases)...)
+		pools = append(pools, poolDataForScope(ds, parsed)...)
 	}
 
 	ifacesLabel := strings.Join(activeIfaces, ", ")
@@ -185,7 +186,7 @@ func dashboardPresetLabel(scopes []ScopeConfig) string {
 // Every scope carries a Plan (loadScopeConfigs seeds legacy rows), so this is the
 // single occupancy path. Reserve entries are not DHCP pools, so they are omitted
 // from the table; a malformed CIDR yields no rows.
-func poolDataForScope(sc ScopeConfig, leases []kea.ActiveLease) []views.PoolRow {
+func poolDataForScope(sc ScopeConfig, leases []parsedLease) []views.PoolRow {
 	pv := buildPoolPlanView(sc, leases, true, planMode(sc.Plan))
 	var data []views.PoolRow
 	for _, r := range pv.Rows {

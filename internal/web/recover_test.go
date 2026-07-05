@@ -3,6 +3,9 @@ package web
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"ggo-kea-dhcp/internal/db"
 )
 
 // A panic inside a detached reconcile goroutine must not kill the process: the
@@ -64,5 +67,39 @@ func TestRunRecoveredAuditedCleanRun(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("clean run wrote %d PANIC_RECOVERED rows, want 0", n)
+	}
+}
+
+// A recovered panic in a transition-owning goroutine must kick one converge:
+// the box is stranded in persisted CONFIGURING, and the converge dispatches
+// into resumeInterruptedApply, which (with nothing to complete here) reverts
+// to ONBOARDING - the self-healing a process crash used to get from systemd.
+func TestRunRecoveredReconcileKicksConverge(t *testing.T) {
+	s, _ := newTestServer(t)
+	defer withResumeBackoff(0)()
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+		t.Fatal(err)
+	}
+
+	s.runRecoveredReconcile("finish-apply", func() {
+		defer s.endReconcile() // finishApply's own defer shape
+		panic("boom mid-apply")
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st == db.StateOnboarding {
+			break
+		}
+		if time.Now().After(deadline) {
+			st, _ := s.sqlite.GetState(db.LifecycleStateKey)
+			t.Fatalf("state = %q after recovery kick, want ONBOARDING via resumeInterruptedApply", st)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var n int
+	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'PANIC_RECOVERED'").Scan(&n)
+	if n != 1 {
+		t.Errorf("PANIC_RECOVERED rows = %d, want 1", n)
 	}
 }

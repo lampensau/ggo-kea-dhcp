@@ -21,7 +21,8 @@ import (
 // targeted by its index so an op/save posts only that scope's fields.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	_, _, scopes, _ := s.activeProfileScopes() // id-ordered so the edit index is stable
-	leases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
+	leases := parseLeases(rawLeases)
 
 	boxUplink, _, _ := s.uplinkSettings()
 	v := views.PoolsView{Page: s.pageData(w, r, "DHCP Pools"), Profiles: s.listProfiles()}
@@ -88,7 +89,7 @@ func planMode(plan PoolPlan) string {
 // the /pools page: the computed plan (ranges + live utilization) wired to the
 // /pools op + save endpoints, addressed by the scope's id-order index. Unlike the
 // wizard it has no size-preset tabs (full per-pool editing on the live scopes).
-func poolsEditView(sc ScopeConfig, idx int, leases []kea.ActiveLease, mode string) views.PoolPlanView {
+func poolsEditView(sc ScopeConfig, idx int, leases []parsedLease, mode string) views.PoolPlanView {
 	v := buildPoolPlanView(sc, leases, true, mode)
 	v.Heading = "Address Pools"
 	v.Scope = idx
@@ -143,7 +144,8 @@ func (s *Server) handlePoolsPlanOp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	leases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
+	leases := parseLeases(rawLeases)
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
 }
 
@@ -254,9 +256,9 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	if !reloaded {
 		msg = "Scope saved - it will take effect on the next reload."
 	}
-	leases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
 	_ = sse.PatchElementTempl(views.ScopeServices(s.scopeServicesView(sc, sIdx)))
-	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
+	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, parseLeases(rawLeases), mode)))
 	toast(sse, msg, "success")
 }
 
@@ -326,7 +328,33 @@ func poolRowIcon(e PoolPlanEntry) string {
 	return e.Icon
 }
 
-func buildPoolPlanView(sc ScopeConfig, leases []kea.ActiveLease, showUtil bool, mode string) views.PoolPlanView {
+// parsedLease is one lease pre-digested for pool-occupancy math: the IPv4 as a
+// uint32 plus the device class. parseLeases runs ONCE per build; the per-scope
+// subnet filter and per-pool range tests are then plain integer compares. The
+// always-on 12s sampler (samplePoolUtil) walks every scope of the active profile
+// viewer-independently, so re-running net.ParseIP/ClassifyMAC per lease per scope
+// multiplies the per-sample cost by the scope count on a trunk.
+type parsedLease struct {
+	ip    uint32
+	class string
+}
+
+// parseLeases digests the lease list for buildPoolPlanView/poolDataForScope.
+// Leases with an unparseable address are dropped - they can't fall inside any
+// subnet or pool, so no occupancy path could count them anyway.
+func parseLeases(leases []kea.ActiveLease) []parsedLease {
+	out := make([]parsedLease, 0, len(leases))
+	for _, l := range leases {
+		ip := net.ParseIP(l.IPAddress).To4()
+		if ip == nil {
+			continue
+		}
+		out = append(out, parsedLease{ip: kea.IPToUint32(ip), class: classifyMAC(l.HWAddress)})
+	}
+	return out
+}
+
+func buildPoolPlanView(sc ScopeConfig, leases []parsedLease, showUtil bool, mode string) views.PoolPlanView {
 	mode = orDefault(mode, "simple")
 	plan := sc.Plan
 	if len(plan) == 0 {
@@ -362,17 +390,26 @@ func buildPoolPlanView(sc ScopeConfig, leases []kea.ActiveLease, showUtil bool, 
 		v.Issue = perr.Error()
 	}
 
-	// Filter leases that belong to this scope's subnet
-	var scopeLeases []kea.ActiveLease
+	// Filter leases that belong to this scope's subnet (integer compare against the
+	// subnet bounds - the leases were parsed once by parseLeases). A CIDR that is
+	// not plain IPv4 (both the base and the mask must convert) gets the empty
+	// range lo=1,hi=0 so no lease matches - the rows still render and LayoutPools'
+	// error surfaces in the foot alert, same as before the pre-parse.
+	subLo, subHi := uint32(1), uint32(0)
+	if ip4, m4 := ipnet.IP.To4(), net.IP(ipnet.Mask).To4(); ip4 != nil && m4 != nil {
+		subLo = kea.IPToUint32(ip4)
+		subHi = subLo | ^kea.IPToUint32(m4)
+	}
+	var scopeLeases []parsedLease
 	for _, l := range leases {
-		if ip := net.ParseIP(l.IPAddress).To4(); ip != nil && ipnet.Contains(ip) {
+		if l.ip >= subLo && l.ip <= subHi {
 			scopeLeases = append(scopeLeases, l)
 		}
 	}
 
 	classCounts := map[string]int{}
 	for _, l := range scopeLeases {
-		classCounts[classifyMAC(l.HWAddress)]++
+		classCounts[l.class]++
 	}
 
 	allocated := 0
@@ -458,10 +495,8 @@ func buildPoolPlanView(sc ScopeConfig, leases []kea.ActiveLease, showUtil bool, 
 				used = classCounts[e.Class]
 			} else if lo, hi, ok := kea.ParsePoolRange(rng); ok {
 				for _, l := range scopeLeases {
-					if ip := net.ParseIP(l.IPAddress).To4(); ip != nil {
-						if u := kea.IPToUint32(ip); u >= lo && u <= hi {
-							used++
-						}
+					if l.ip >= lo && l.ip <= hi {
+						used++
 					}
 				}
 			}
