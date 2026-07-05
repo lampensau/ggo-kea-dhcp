@@ -554,12 +554,20 @@ func appFooter(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "</span><div class=\"btn-row\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "</span>")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = UpdateBadge(d.Update).Render(ctx, templ_7745c5c3_Buffer)
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<div class=\"btn-row\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if d.CurrentPath == "/settings" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<button class=\"btn btn-primary\" type=\"submit\" form=\"settings-form\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<button class=\"btn btn-primary\" type=\"submit\" form=\"settings-form\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -567,13 +575,13 @@ func appFooter(d PageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "Save Settings</button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "Save Settings</button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if d.CurrentPath == "/setup" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "     <button type=\"button\" class=\"btn btn-secondary\" onclick=\"ggoAddScope()\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "     <button type=\"button\" class=\"btn btn-secondary\" onclick=\"ggoAddScope()\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -581,17 +589,17 @@ func appFooter(d PageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "Add VLAN Scope</button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "Add VLAN Scope</button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if d.State == "ACTIVE" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "<a class=\"btn btn-secondary\" href=\"/dashboard\">Cancel</a>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<a class=\"btn btn-secondary\" href=\"/dashboard\">Cancel</a>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, " <button class=\"btn btn-primary\" type=\"submit\" form=\"setup-form\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, " <button class=\"btn btn-primary\" type=\"submit\" form=\"setup-form\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -599,12 +607,12 @@ func appFooter(d PageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "Apply Profile &amp; Activate DHCP</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "Apply Profile &amp; Activate DHCP</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "</div></div></footer>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "</div></div></footer>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -633,7 +641,7 @@ func themeToggleScript() templ.Component {
 			templ_7745c5c3_Var19 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "<script>\n\t\t(function () {\n\t\t\tvar KEY = 'ggo-theme';\n\t\t\tfunction current() { try { return localStorage.getItem(KEY) || 'os'; } catch (e) { return 'os'; } }\n\t\t\tfunction apply(mode) {\n\t\t\t\tvar el = document.documentElement;\n\t\t\t\tif (mode === 'light' || mode === 'dark') el.setAttribute('data-theme', mode);\n\t\t\t\telse el.removeAttribute('data-theme');\n\t\t\t\tdocument.querySelectorAll('[data-theme-icon]').forEach(function (i) { i.hidden = i.getAttribute('data-theme-icon') !== mode; });\n\t\t\t}\n\t\t\twindow.__ggoCycleTheme = function () {\n\t\t\t\tvar next = { os: 'light', light: 'dark', dark: 'os' }[current()] || 'light';\n\t\t\t\ttry { next === 'os' ? localStorage.removeItem(KEY) : localStorage.setItem(KEY, next); } catch (e) {}\n\t\t\t\tapply(next);\n\t\t\t};\n\t\t\tdocument.addEventListener('DOMContentLoaded', function () { apply(current()); });\n\t\t})();\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "<script>\n\t\t(function () {\n\t\t\tvar KEY = 'ggo-theme';\n\t\t\tfunction current() { try { return localStorage.getItem(KEY) || 'os'; } catch (e) { return 'os'; } }\n\t\t\tfunction apply(mode) {\n\t\t\t\tvar el = document.documentElement;\n\t\t\t\tif (mode === 'light' || mode === 'dark') el.setAttribute('data-theme', mode);\n\t\t\t\telse el.removeAttribute('data-theme');\n\t\t\t\tdocument.querySelectorAll('[data-theme-icon]').forEach(function (i) { i.hidden = i.getAttribute('data-theme-icon') !== mode; });\n\t\t\t}\n\t\t\twindow.__ggoCycleTheme = function () {\n\t\t\t\tvar next = { os: 'light', light: 'dark', dark: 'os' }[current()] || 'light';\n\t\t\t\ttry { next === 'os' ? localStorage.removeItem(KEY) : localStorage.setItem(KEY, next); } catch (e) {}\n\t\t\t\tapply(next);\n\t\t\t};\n\t\t\tdocument.addEventListener('DOMContentLoaded', function () { apply(current()); });\n\t\t})();\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -667,7 +675,7 @@ func busySubmitScript() templ.Component {
 			templ_7745c5c3_Var20 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "<script>\n\t\tdocument.addEventListener('submit', function (e) {\n\t\t\tif (e.defaultPrevented) return;\n\t\t\tvar f = e.target;\n\t\t\tif (!f || !f.matches || !f.hasAttribute('data-busy')) return;\n\t\t\tvar btn = e.submitter;\n\t\t\tif (btn) {\n\t\t\t\tbtn.classList.add('is-busy');\n\t\t\t\tbtn.setAttribute('aria-busy', 'true');\n\t\t\t\t// Defer disabling so the in-flight native submit still carries the button.\n\t\t\t\tsetTimeout(function () { btn.disabled = true; }, 0);\n\t\t\t}\n\t\t}, false);\n\n\t\t// ggoScanBusy toggles the same busy treatment on an ordinary async-action button\n\t\t// (the WiFi Scan buttons: an onclick fetch, not a form submit). Called with on=true\n\t\t// at the start of the scan and on=false in the fetch's finally, so the button spins\n\t\t// and is unclickable for the several seconds a scan takes. On restore the button's\n\t\t// own data-attr:disabled (bound to the uplink toggle) governs again.\n\t\twindow.ggoScanBusy = function (btn, on) {\n\t\t\tif (!btn) return;\n\t\t\tif (on) {\n\t\t\t\tbtn.classList.add('is-busy');\n\t\t\t\tbtn.setAttribute('aria-busy', 'true');\n\t\t\t\tbtn.disabled = true;\n\t\t\t} else {\n\t\t\t\tbtn.classList.remove('is-busy');\n\t\t\t\tbtn.removeAttribute('aria-busy');\n\t\t\t\tbtn.disabled = false;\n\t\t\t}\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<script>\n\t\tdocument.addEventListener('submit', function (e) {\n\t\t\tif (e.defaultPrevented) return;\n\t\t\tvar f = e.target;\n\t\t\tif (!f || !f.matches || !f.hasAttribute('data-busy')) return;\n\t\t\tvar btn = e.submitter;\n\t\t\tif (btn) {\n\t\t\t\tbtn.classList.add('is-busy');\n\t\t\t\tbtn.setAttribute('aria-busy', 'true');\n\t\t\t\t// Defer disabling so the in-flight native submit still carries the button.\n\t\t\t\tsetTimeout(function () { btn.disabled = true; }, 0);\n\t\t\t}\n\t\t}, false);\n\n\t\t// ggoScanBusy toggles the same busy treatment on an ordinary async-action button\n\t\t// (the WiFi Scan buttons: an onclick fetch, not a form submit). Called with on=true\n\t\t// at the start of the scan and on=false in the fetch's finally, so the button spins\n\t\t// and is unclickable for the several seconds a scan takes. On restore the button's\n\t\t// own data-attr:disabled (bound to the uplink toggle) governs again.\n\t\twindow.ggoScanBusy = function (btn, on) {\n\t\t\tif (!btn) return;\n\t\t\tif (on) {\n\t\t\t\tbtn.classList.add('is-busy');\n\t\t\t\tbtn.setAttribute('aria-busy', 'true');\n\t\t\t\tbtn.disabled = true;\n\t\t\t} else {\n\t\t\t\tbtn.classList.remove('is-busy');\n\t\t\t\tbtn.removeAttribute('aria-busy');\n\t\t\t\tbtn.disabled = false;\n\t\t\t}\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -698,7 +706,7 @@ func header(d PageData) templ.Component {
 			templ_7745c5c3_Var21 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<header class=\"app-header\"><div class=\"app-header-top\"><div class=\"brand\"><span class=\"brand-mark\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<header class=\"app-header\"><div class=\"app-header-top\"><div class=\"brand\"><span class=\"brand-mark\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -706,7 +714,7 @@ func header(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "</span>Green-GO Kea DHCP</div><div class=\"app-header-actions\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</span>Green-GO Kea DHCP</div><div class=\"app-header-actions\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -728,12 +736,12 @@ func header(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "</div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if hasNav(d) {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<nav class=\"app-nav\" aria-label=\"Primary\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "<nav class=\"app-nav\" aria-label=\"Primary\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -743,12 +751,12 @@ func header(d PageData) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "</nav>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</nav>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</header>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</header>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -786,20 +794,20 @@ func StatusPill(v StatusPillView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<a id=\"state-badge\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<a id=\"state-badge\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var24 templ.SafeURL
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(pillHref(v)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 403, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 404, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "\" class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "\" class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -812,33 +820,33 @@ func StatusPill(v StatusPillView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "\" title=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.ResolveAttributeValue(pillTitle(v))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 403, Col: 121}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 404, Col: 121}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var26)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "\" aria-live=\"polite\" aria-atomic=\"true\"><span class=\"dot\" aria-hidden=\"true\"></span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "\" aria-live=\"polite\" aria-atomic=\"true\"><span class=\"dot\" aria-hidden=\"true\"></span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(pillLabel(v))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 404, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 405, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</a>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "</a>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -868,20 +876,20 @@ func navLink(l link, currentPath string) templ.Component {
 		}
 		ctx = templ.ClearChildren(ctx)
 		if l.Path == currentPath {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<a class=\"nav-link\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<a class=\"nav-link\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var29 templ.SafeURL
 			templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(l.Path))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 410, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 411, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "\" aria-current=\"page\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "\" aria-current=\"page\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -889,38 +897,38 @@ func navLink(l link, currentPath string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "<span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var30 string
 			templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(l.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 410, Col: 102}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 411, Col: 102}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</span></a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "</span></a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "<a class=\"nav-link\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "<a class=\"nav-link\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var31 templ.SafeURL
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(l.Path))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 412, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 413, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -928,20 +936,20 @@ func navLink(l link, currentPath string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "<span>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "<span>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var32 string
 			templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(l.Label)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 412, Col: 82}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 413, Col: 82}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "</span></a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "</span></a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -975,7 +983,7 @@ func accountMenu(d PageData) templ.Component {
 			templ_7745c5c3_Var33 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "<details class=\"account-menu\"><summary class=\"icon-btn\" aria-label=\"Account menu\" title=\"Account\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "<details class=\"account-menu\"><summary class=\"icon-btn\" aria-label=\"Account menu\" title=\"Account\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -983,31 +991,31 @@ func accountMenu(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 69, "</summary><div class=\"account-dropdown\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "</summary><div class=\"account-dropdown\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if d.Username != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 70, "<div class=\"account-who\">Signed in as <strong>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "<div class=\"account-who\">Signed in as <strong>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var34 string
 			templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(d.Username)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 425, Col: 62}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 426, Col: 62}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 71, "</strong></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</strong></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if d.State == "ACTIVE" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "<button type=\"button\" class=\"account-item\" onclick=\"this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "<button type=\"button\" class=\"account-item\" onclick=\"this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1015,25 +1023,25 @@ func accountMenu(d PageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 73, "Account</button>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "Account</button>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 74, "<form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 75, "<form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var35 string
 		templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.CSRFToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 431, Col: 62}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 432, Col: 62}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var35)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 75, "\"> <button type=\"submit\" class=\"account-item is-danger\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 76, "\"> <button type=\"submit\" class=\"account-item is-danger\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1041,7 +1049,7 @@ func accountMenu(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 76, "Sign Out</button></form></div></details> ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, "Sign Out</button></form></div></details> ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1050,7 +1058,7 @@ func accountMenu(d PageData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, " ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1090,33 +1098,33 @@ func accountDialog(d PageData) templ.Component {
 			templ_7745c5c3_Var36 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, "<dialog id=\"dlg-account\" aria-labelledby=\"dlg-account-title\"><form method=\"post\" action=\"/account/save\" data-busy data-signals=\"{showacctpw: false, anp: '', anp2: ''}\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, "<dialog id=\"dlg-account\" aria-labelledby=\"dlg-account-title\"><form method=\"post\" action=\"/account/save\" data-busy data-signals=\"{showacctpw: false, anp: '', anp2: ''}\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var37 string
 		templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.CSRFToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 451, Col: 61}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 452, Col: 61}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var37)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 79, "\"><div class=\"dialog-head\" id=\"dlg-account-title\">Account</div><div class=\"dialog-body\"><p class=\"help\">Enter your current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p><div class=\"form-group\"><label class=\"form-label\" for=\"acct-username\">Username</label> <input class=\"form-control\" id=\"acct-username\" name=\"username\" type=\"text\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "\"><div class=\"dialog-head\" id=\"dlg-account-title\">Account</div><div class=\"dialog-body\"><p class=\"help\">Enter your current password to change the username or set a new password. Leave the new-password fields blank to keep the current password.</p><div class=\"form-group\"><label class=\"form-label\" for=\"acct-username\">Username</label> <input class=\"form-control\" id=\"acct-username\" name=\"username\" type=\"text\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var38 string
 		templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.ResolveAttributeValue(d.Username)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 457, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 458, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var38)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 80, "\" autocomplete=\"username\"></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-current\">Current password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-current\" name=\"current_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" autocomplete=\"current-password\" required> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 81, "\" autocomplete=\"username\"></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-current\">Current password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-current\" name=\"current_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" autocomplete=\"current-password\" required> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1124,7 +1132,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 81, "</span> <span data-show=\"$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "</span> <span data-show=\"$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1132,7 +1140,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 82, "</span></button></div></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-new\">New password <span class=\"help-inline\">(min 12 characters)</span></label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-new\" name=\"new_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" data-bind=\"anp\" autocomplete=\"new-password\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "</span></button></div></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-new\">New password <span class=\"help-inline\">(min 12 characters)</span></label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-new\" name=\"new_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" data-bind=\"anp\" autocomplete=\"new-password\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1140,7 +1148,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "</span> <span data-show=\"$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "</span> <span data-show=\"$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1148,7 +1156,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 84, "</span></button></div><div class=\"pw-meter-row\" data-show=\"$anp.length > 0\"><div class=\"pw-meter\"><div class=\"pw-meter-fill\" data-style=\"{width: (window.ggoStrength($anp) * 25) + '%'}\" data-class=\"{'is-weak': window.ggoStrength($anp) <= 1, 'is-fair': window.ggoStrength($anp) === 2, 'is-good': window.ggoStrength($anp) >= 3}\"></div></div><span class=\"pw-strength-label\" data-text=\"window.ggoStrengthLabel($anp)\"></span></div></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-confirm\">Confirm new password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-confirm\" name=\"confirm_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" data-bind=\"anp2\" autocomplete=\"new-password\" aria-describedby=\"acct-np-mismatch\" data-attr:aria-invalid=\"$anp2 !== '' && $anp !== $anp2\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 85, "</span></button></div><div class=\"pw-meter-row\" data-show=\"$anp.length > 0\"><div class=\"pw-meter\"><div class=\"pw-meter-fill\" data-style=\"{width: (window.ggoStrength($anp) * 25) + '%'}\" data-class=\"{'is-weak': window.ggoStrength($anp) <= 1, 'is-fair': window.ggoStrength($anp) === 2, 'is-good': window.ggoStrength($anp) >= 3}\"></div></div><span class=\"pw-strength-label\" data-text=\"window.ggoStrengthLabel($anp)\"></span></div></div><div class=\"form-group\"><label class=\"form-label\" for=\"acct-confirm\">Confirm new password</label><div class=\"pw-field\"><input class=\"form-control\" id=\"acct-confirm\" name=\"confirm_password\" type=\"password\" data-attr:type=\"$showacctpw ? 'text' : 'password'\" data-bind=\"anp2\" autocomplete=\"new-password\" aria-describedby=\"acct-np-mismatch\" data-attr:aria-invalid=\"$anp2 !== '' && $anp !== $anp2\"> <button type=\"button\" class=\"pw-reveal\" data-on:click=\"$showacctpw = !$showacctpw\" data-attr:aria-pressed=\"$showacctpw\" aria-label=\"Show passwords\" title=\"Show passwords\"><span data-show=\"!$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1156,7 +1164,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 85, "</span> <span data-show=\"$showacctpw\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "</span> <span data-show=\"$showacctpw\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1164,7 +1172,7 @@ func accountDialog(d PageData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 86, "</span></button></div><div id=\"acct-np-mismatch\" class=\"help help-err\" role=\"alert\" data-show=\"$anp2 !== '' && $anp !== $anp2\">Passwords do not match.</div></div></div><div class=\"dialog-foot\"><button type=\"button\" class=\"btn btn-secondary\" onclick=\"this.closest('dialog').close()\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\">Save Changes</button></div></form></dialog>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "</span></button></div><div id=\"acct-np-mismatch\" class=\"help help-err\" role=\"alert\" data-show=\"$anp2 !== '' && $anp !== $anp2\">Passwords do not match.</div></div></div><div class=\"dialog-foot\"><button type=\"button\" class=\"btn btn-secondary\" onclick=\"this.closest('dialog').close()\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\">Save Changes</button></div></form></dialog>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1193,7 +1201,7 @@ func themeToggle() templ.Component {
 			templ_7745c5c3_Var39 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 87, "<button type=\"button\" class=\"theme-toggle\" onclick=\"__ggoCycleTheme()\" aria-label=\"Toggle color theme\" title=\"Switch color theme (system, light, or dark)\"><span class=\"ic\" data-theme-icon=\"os\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "<button type=\"button\" class=\"theme-toggle\" onclick=\"__ggoCycleTheme()\" aria-label=\"Toggle color theme\" title=\"Switch color theme (system, light, or dark)\"><span class=\"ic\" data-theme-icon=\"os\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1201,7 +1209,7 @@ func themeToggle() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 88, "</span> <span class=\"ic\" data-theme-icon=\"light\" hidden>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "</span> <span class=\"ic\" data-theme-icon=\"light\" hidden>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1209,7 +1217,7 @@ func themeToggle() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 89, "</span> <span class=\"ic\" data-theme-icon=\"dark\" hidden>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "</span> <span class=\"ic\" data-theme-icon=\"dark\" hidden>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1217,7 +1225,7 @@ func themeToggle() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 90, "</span></button>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "</span></button>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1251,7 +1259,7 @@ func Toast(msg, typ string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 91, "<div class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 92, "<div class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1264,30 +1272,30 @@ func Toast(msg, typ string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 92, "\" role=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 93, "\" role=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var43 string
 		templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.ResolveAttributeValue(toastRole(typ))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 520, Col: 23}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 521, Col: 23}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var43)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 93, "\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, "\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if typ != "error" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 94, " data-init__delay.5s=\"el.remove()\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 95, " data-init__delay.5s=\"el.remove()\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 95, ">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 96, ">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1295,20 +1303,20 @@ func Toast(msg, typ string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 96, "<div class=\"toast-content\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 97, "<div class=\"toast-content\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var44 string
 		templ_7745c5c3_Var44, templ_7745c5c3_Err = templ.JoinStringErrs(msg)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 526, Col: 34}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/base.templ`, Line: 527, Col: 34}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var44))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 97, "</div><button type=\"button\" class=\"toast-close\" aria-label=\"Dismiss\" onclick=\"this.closest('.toast').remove()\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, "</div><button type=\"button\" class=\"toast-close\" aria-label=\"Dismiss\" onclick=\"this.closest('.toast').remove()\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1316,7 +1324,7 @@ func Toast(msg, typ string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 98, "</button></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 99, "</button></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1345,7 +1353,7 @@ func toastIcon(typ string) templ.Component {
 			templ_7745c5c3_Var45 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 99, "<span class=\"toast-icon\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "<span class=\"toast-icon\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1366,7 +1374,7 @@ func toastIcon(typ string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "</span>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 101, "</span>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

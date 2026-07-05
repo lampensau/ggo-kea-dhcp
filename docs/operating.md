@@ -68,6 +68,7 @@ Settings collects the appliance-wide knobs:
 - **Onboarding Network** - the management address and access point name/passphrase the box will use after its next factory reset, so recovery comes up the way you want
 - **DHCP Defaults** - the default lease lifetime and DNS servers handed to every scope; individual scopes can override them. Shorter leases make pool changes and reservations take effect sooner, at the cost of more renewal traffic.
 - **Backup and Restore** - see [Backup, restore and reset](backup-restore.md)
+- **Software Update** - when the WiFi uplink has internet access, the appliance checks for new releases on its own and offers them here (and as a notice in the footer), with the release notes readable inline; installing one requires your password and never happens automatically. See [Installation](install.md) for the details of both update paths.
 
 Your own username and password are not appliance settings: they are set once when you create the administrator at first boot, and changed later from the account menu at the right end of the header (the person icon) once the appliance is active, where the Account dialog asks for your current password before saving.
 

@@ -47,8 +47,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	showUplink := state == db.StateActive
 	upEnabled, upSSID, upPass := s.uplinkSettings()
 
+	page := s.pageData(w, r, "Settings")
 	s.renderTempl(w, r, views.Settings(views.SettingsView{
-		Page:           s.pageData(w, r, "Settings"),
+		Page:           page,
 		OnboardingIP:   s.onboardingCIDR(),
 		SoftAPSSID:     ssid,
 		SoftAPPass:     pass,
@@ -59,6 +60,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		UplinkSSID:     upSSID,
 		UplinkPassword: upPass,
 		LeaseLifetime:  s.leaseLifetime(),
+		Update:         s.buildUpdateView(page.CSRFToken),
 	}))
 }
 

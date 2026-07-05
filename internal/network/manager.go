@@ -55,6 +55,16 @@ func (m *Manager) PowerOff() error {
 	return err
 }
 
+// TriggerUpdate starts the root self-update oneshot, which installs the .deb
+// the control plane staged and verified. --no-block: the unit must outlive
+// this very process (the package's postinstall restarts the control plane
+// mid-install). The exact invocation has its own line in the sudoers drop-in;
+// apt/dpkg themselves run inside the root unit, never through sudo here.
+func (m *Manager) TriggerUpdate() error {
+	_, err := m.cmd.Run("systemctl", "start", "--no-block", "ggo-kea-dhcp-update.service")
+	return err
+}
+
 // SetInterfaceStatic configures an ethernet interface to manual mode with a static IP.
 func (m *Manager) SetInterfaceStatic(iface, ipNet string) error {
 	conName := fmt.Sprintf("ggo-%s", iface)

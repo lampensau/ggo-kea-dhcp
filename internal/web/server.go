@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -130,6 +131,18 @@ type Server struct {
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
 	applying atomic.Bool
+	// updating guards the self-update install path: claimed by POST /update/install
+	// (alongside the applying guard) and held until the updater reports a result or
+	// the control plane restarts onto the new binary.
+	updating atomic.Bool
+	// updateHTTP is the dedicated outbound client for GitHub release checks and the
+	// .deb download - separate from the Kea client so a wedged remote can never
+	// contend with control-socket traffic. updateAPIBase is the API origin
+	// (overridden by tests to an httptest server); updateDir is the .deb staging
+	// directory (the StateDirectory's update/ subdir in production).
+	updateHTTP    *http.Client
+	updateAPIBase string
+	updateDir     string
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
@@ -224,6 +237,9 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.rogueProbe = netmon.NewRogueProbe()
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
+	s.updateHTTP = newUpdateHTTPClient()
+	s.updateAPIBase = "https://api.github.com"
+	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
 	s.health = newBackendHealth()
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
@@ -269,6 +285,10 @@ func (s *Server) Start() error {
 	// the boot reconcile reads them.
 	s.migrateUplinkToBoxLevel()
 
+	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
+	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.
+	s.reconcileUpdateResult()
+
 	// Bring runtime state in line with the persisted lifecycle state on boot.
 	// Run it in the background so the web UI binds immediately - network/SoftAP
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
@@ -305,6 +325,10 @@ func (s *Server) Start() error {
 	// Probe MariaDB reachability so a runtime outage (and its recovery) surfaces in
 	// the UI and audit log. Kea health rides the metrics sampler.
 	s.startBackendHealthProbe()
+
+	// Release checks: every 30 min while ACTIVE (each successful uplink connect
+	// also kicks one). Notify-only - installing is always a deliberate operator action.
+	s.startUpdateCheckLoop()
 
 	mux := http.NewServeMux()
 
@@ -366,6 +390,10 @@ func (s *Server) Start() error {
 
 	mux.HandleFunc("POST /system/reboot", s.handleSystemReboot)
 	mux.HandleFunc("POST /system/poweroff", s.handleSystemPowerOff)
+
+	mux.HandleFunc("POST /update/check", s.handleUpdateCheck)
+	mux.HandleFunc("POST /update/dismiss", s.handleUpdateDismiss)
+	mux.HandleFunc("POST /update/install", s.handleUpdateInstall)
 
 	// The dedicated CaptiveRedirectMiddleware was dropped: lifecycleMiddleware is
 	// the outer wrapper and already 302s unauthenticated onboarding probes to
@@ -430,6 +458,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request, title string) 
 		d.CSRFToken = csrf
 		d.SysHealth = s.buildSysHealthView(state)
 		d.HealthPill = s.buildStatusPill(state)
+		d.Update = s.updateBadgeView() // first paint of the footer #update-badge
 		if s.health != nil {
 			d.BackendAlerts = s.backendAlertRows() // first paint of the #backend-alert strip (health + preflight)
 		}

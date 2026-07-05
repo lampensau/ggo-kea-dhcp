@@ -50,6 +50,47 @@ func TestRoutineResetDB(t *testing.T) {
 	}
 }
 
+// TestResetClearsUpdateState proves both reset paths drop the self-update
+// record. A leftover update_latest_* would light the footer badge in ONBOARDING
+// with a dead /settings#update anchor (the update card is ACTIVE-gated).
+func TestResetClearsUpdateState(t *testing.T) {
+	seed := func(s *Server) {
+		_ = s.sqlite.SetStates(map[string]string{
+			stateUpdateVersion:       "9.9.9",
+			stateUpdateSHA256:        "deadbeef",
+			stateUpdateNotified:      "9.9.9",
+			stateUpdateBackoffUntil:  "2099-01-01T00:00:00Z",
+			"update_applied_version": "9.9.9",
+		})
+	}
+	assertCleared := func(t *testing.T, s *Server) {
+		t.Helper()
+		if n := count(t, s, "SELECT COUNT(*) FROM app_state WHERE key LIKE 'update\\_%' ESCAPE '\\'"); n != 0 {
+			t.Errorf("reset left %d update_* app_state row(s)", n)
+		}
+	}
+
+	t.Run("routine", func(t *testing.T) {
+		s, _ := newTestServer(t)
+		seed(s)
+		_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+		if err := s.routineResetDB(); err != nil {
+			t.Fatalf("routineResetDB: %v", err)
+		}
+		assertCleared(t, s)
+	})
+
+	t.Run("factory", func(t *testing.T) {
+		s, _ := newTestServer(t)
+		seed(s)
+		_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+		if err := s.factoryWipeDB(); err != nil {
+			t.Fatalf("factoryWipeDB: %v", err)
+		}
+		assertCleared(t, s)
+	})
+}
+
 // TestFactoryWipeDB verifies the factory reset wipes the admin, profiles, scopes, and
 // port labels, and drops to FACTORY.
 func TestFactoryWipeDB(t *testing.T) {
