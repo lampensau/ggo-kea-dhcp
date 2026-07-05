@@ -346,9 +346,18 @@ func TestZZPreviewRogueBanner(t *testing.T) {
 	_ = BackendAlert(rogue).Render(ctx, &b)
 	b.WriteString(`<h2>Stood down by operator (Resume control)</h2>`)
 	_ = BackendAlert(held).Render(ctx, &b)
+	// Force the real confirm dialog open non-modally (.show(), not showModal) so it
+	// renders inline in the page flow - the styled replacement for the old native
+	// confirm() is captured in the same screenshot without a backdrop hiding the banners.
+	b.WriteString(`<h2>Stand Down confirm dialog (styled, replaces native confirm)</h2>`)
+	b.WriteString(`<script>document.getElementById('dlg-standdown').show()</script>`)
 	b.WriteString(`</main></body></html>`)
 
-	out := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd/preview_rogue_banner.html"
+	dir := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd-r2"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir preview: %v", err)
+	}
+	out := dir + "/preview_rogue_banner.html"
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
 		t.Fatalf("write preview: %v", err)
 	}

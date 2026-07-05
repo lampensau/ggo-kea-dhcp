@@ -75,7 +75,11 @@ templ Base(d PageData) {
 // with one deliberate exception: a rogue DHCP server is loud enough to earn a row here
 // too, carrying the operator's Stand Down / Resume control (see rogueAlertRows).
 templ BackendAlert(rows []AlertRow) {
-	<div id="backend-alert">
+	// aria-live assertive so a screen-reader operator hears a row appear when the SSE
+	// hub morphs a row in (a rogue server showing up, Kea going down) - the strip is a
+	// stable, always-present live region, more reliable than relying on a freshly
+	// inserted role="alert" node. Matches DESIGN.md S10 (assertive for errors).
+	<div id="backend-alert" aria-live="assertive" aria-atomic="false">
 		for _, a := range rows {
 			<div class={ "alert", alertClass(a.Severity) } role="alert">
 				@Icon("triangle-alert")
@@ -96,16 +100,29 @@ templ BackendAlert(rows []AlertRow) {
 	</div>
 }
 
-// standDownForm is the "Stand Down DHCP" control shown inside the rogue-server
-// alert. Native POST (not a Datastar action) so it works after any morph; the
-// CSRF token is read from the page <meta> at submit time because the live-broadcast
-// strip carries an empty token (same pattern as the pinning forms). A confirm
-// guards the accidental click - standing down stops DHCP on every scope.
+// standDownForm is the "Stand Down DHCP" control shown inside the rogue-server alert.
+// Standing down stops DHCP on every scope, so the accidental click is guarded by the
+// styled confirm <dialog> (native <dialog>.showModal, framework-free - free focus-trap /
+// Escape / return-focus, same pattern as the reset danger zone) instead of a native
+// confirm(). Native POST (not a Datastar action) so it survives any morph; the CSRF
+// token is read from the page <meta> at submit time because the live-broadcast strip
+// carries an empty token (same pattern as the pinning forms). The dialog rides inside
+// #backend-alert so it travels with the row when the strip is morphed in.
 templ standDownForm() {
-	<form class="alert-action" method="post" action="/rogue/standdown" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;return confirm('Stop serving DHCP on all scopes? Devices keep their current leases but get no new ones until you resume.')">
-		<input type="hidden" name="csrf_token" value=""/>
-		<button class="btn btn-sm btn-danger" type="submit">@Icon("power") Stand Down DHCP</button>
-	</form>
+	<button class="btn btn-sm btn-danger alert-action" type="button" onclick="document.getElementById('dlg-standdown').showModal()">@Icon("power") Stand Down DHCP</button>
+	<dialog id="dlg-standdown" aria-labelledby="dlg-standdown-title">
+		<form method="post" action="/rogue/standdown" data-busy onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+			<input type="hidden" name="csrf_token" value=""/>
+			<div class="dialog-head" id="dlg-standdown-title">Stand down DHCP?</div>
+			<div class="dialog-body">
+				<p>This stops serving DHCP on every scope. Devices keep their current leases but get no new ones until you resume.</p>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-danger-solid">Stand Down DHCP</button>
+			</div>
+		</form>
+	</dialog>
 }
 
 // resumeForm is the "Resume DHCP" control shown while DHCP is stood down. Same
