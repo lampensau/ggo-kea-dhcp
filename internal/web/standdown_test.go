@@ -58,6 +58,69 @@ func TestBackendAlertRendersRogueControls(t *testing.T) {
 	}
 }
 
+// TestRogueBannerCountsMultiplePerInterface proves the banner reports the honest total
+// when several foreign servers answer on ONE interface: the snapshot names only the first
+// (its Fields carry a single IP/MAC) but a Count of 2, so the headline and detail must
+// still count both, not collapse to "1".
+func TestRogueBannerCountsMultiplePerInterface(t *testing.T) {
+	rogues := []rogueSighting{{Server: "10.0.0.254", MAC: "aa:aa:aa:aa:aa:aa", Iface: "eth0", Count: 2}}
+	if got := rogueAlertTitle(rogues); got != "2 rogue DHCP servers detected" {
+		t.Errorf("title = %q, want the honest 2-server count", got)
+	}
+	if detail := rogueAlertDetail(rogues); !strings.Contains(detail, "10.0.0.254") || !strings.Contains(detail, "and 1 more") {
+		t.Errorf("detail should name the first server and count the other: %q", detail)
+	}
+	if audit := rogueAuditDetail(rogues); !strings.Contains(audit, "2 servers total") {
+		t.Errorf("audit detail should note the total when it exceeds named servers: %q", audit)
+	}
+
+	// A single server (Count 1, or an unset legacy sighting) still reads in the singular.
+	for _, single := range [][]rogueSighting{
+		{{Server: "10.0.0.254", Iface: "eth0", Count: 1}},
+		{{Server: "10.0.0.254", Iface: "eth0"}}, // Count 0 (unset) counts as one
+	} {
+		if got := rogueAlertTitle(single); got != "Rogue DHCP server detected" {
+			t.Errorf("single-server title = %q, want singular", got)
+		}
+	}
+}
+
+// TestResumeReloadFailureReArmsStandDown proves the dangerous resume path is not silent:
+// when the background Kea reload fails after the flag was cleared (Kea still running the
+// holdoff, serving nothing), the flag is re-armed so the stood-down banner + Resume
+// return - the operator is never left with a green UI over a dark box.
+func TestResumeReloadFailureReArmsStandDown(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedActiveProfile(t, s)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	// Start stood down, then resume. The reload fails against the unreachable dev Kea.
+	if err := s.sqlite.SetState(dhcpStandDownKey, "1"); err != nil {
+		t.Fatalf("set flag: %v", err)
+	}
+
+	if !s.beginReconcile() {
+		t.Fatal("could not claim the reconcile guard")
+	}
+	if err := s.setStandDown("admin", false, ""); err != nil {
+		s.endReconcile()
+		t.Fatalf("resume: %v", err)
+	}
+	if s.dhcpStoodDown() {
+		t.Fatal("flag should be cleared immediately after resume, before the reload")
+	}
+	s.scheduleServingReloadHeld("rogue-resume", true) // background; re-arms on failure
+	waitGuardReleased(t, s)
+
+	if !s.dhcpStoodDown() {
+		t.Error("a failed resume reload must re-arm the stand-down flag (dark box, green UI otherwise)")
+	}
+	if got := auditActions(t, s); !got["RECONCILE_FAILED"] {
+		t.Errorf("a failed resume reload should audit RECONCILE_FAILED, saw %v", got)
+	}
+}
+
 // TestKeaConfigForStateHoldoffVsProfile proves the state-aware renderer: while stood
 // down it emits the holdoff (empty subnet4, no served pool); cleared, it emits the
 // active profile's subnets.

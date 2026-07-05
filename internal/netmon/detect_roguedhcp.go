@@ -185,7 +185,9 @@ func (d *rogueDHCPDetector) Snapshot() DetectorSnapshot {
 	if len(active) > 1 {
 		s.Text = itoa(len(active)) + " rogue DHCP servers"
 	}
-	s.Fields = map[string]string{"server": first.ip, "mac": first.mac, "oui": ouiOf(first.mac)}
+	// count lets the web banner report the honest total when several servers answer on
+	// one interface - Fields names only the first, so the number would otherwise be lost.
+	s.Fields = map[string]string{"server": first.ip, "mac": first.mac, "oui": ouiOf(first.mac), "count": itoa(len(active))}
 	return s
 }
 

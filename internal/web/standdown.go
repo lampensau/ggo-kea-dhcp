@@ -25,10 +25,14 @@ func (s *Server) dhcpStoodDown() bool {
 }
 
 // rogueSighting is one foreign DHCP server the passive monitor currently sees.
+// Count is how many foreign servers that interface's detector saw; the snapshot
+// only exposes the first server's IP/MAC, so Count lets the banner report the honest
+// total even when several answer on one interface.
 type rogueSighting struct {
 	Server string
 	MAC    string
 	Iface  string
+	Count  int
 }
 
 // activeRogues returns the foreign DHCP servers the monitor currently reports at
@@ -42,15 +46,35 @@ func (s *Server) activeRogues() []rogueSighting {
 	for _, snap := range s.netmon.SnapshotAll() {
 		for _, d := range snap.Detectors {
 			if d.Kind == "rogue_dhcp" && d.Severity == netmon.SevError {
+				count := 1
+				if c, err := strconv.Atoi(d.Fields["count"]); err == nil && c > count {
+					count = c
+				}
 				out = append(out, rogueSighting{
 					Server: d.Fields["server"],
 					MAC:    d.Fields["mac"],
 					Iface:  snap.Iface,
+					Count:  count,
 				})
 			}
 		}
 	}
 	return out
+}
+
+// totalRogues sums the foreign servers across every interface's sighting. Count is
+// the per-interface tally (>=1); a zero Count (an unset/legacy sighting) counts as one
+// so the total never drops below the number of sightings.
+func totalRogues(rogues []rogueSighting) int {
+	n := 0
+	for _, r := range rogues {
+		if r.Count < 1 {
+			n++
+			continue
+		}
+		n += r.Count
+	}
+	return n
 }
 
 // rogueAlertRows builds the loud #backend-alert rows for the rogue-server / stand-down
@@ -85,17 +109,20 @@ func buildRogueRows(stoodDown bool, rogues []rogueSighting) []views.AlertRow {
 	}}
 }
 
-// rogueAlertTitle names the count of foreign servers in the banner headline.
+// rogueAlertTitle names the count of foreign servers in the banner headline, counting
+// every server (not just one per interface) so several answering on one interface are
+// reported honestly.
 func rogueAlertTitle(rogues []rogueSighting) string {
-	if len(rogues) > 1 {
-		return strconv.Itoa(len(rogues)) + " rogue DHCP servers detected"
+	if total := totalRogues(rogues); total > 1 {
+		return strconv.Itoa(total) + " rogue DHCP servers detected"
 	}
 	return "Rogue DHCP server detected"
 }
 
-// rogueAlertDetail spells out the offending server (first one named, with a count
-// of any others) and why it matters. The server IP/MAC are parsed from captured
-// frames; templ auto-escapes them in the rendered row.
+// rogueAlertDetail spells out the offending server (first one named, with a count of
+// any others) and why it matters. The "and N more" count spans every interface, so a
+// second server on the same interface as the first is still counted even though the
+// snapshot only exposes the first server's IP/MAC. templ auto-escapes them in the row.
 func rogueAlertDetail(rogues []rogueSighting) string {
 	if len(rogues) == 0 {
 		return ""
@@ -108,14 +135,16 @@ func rogueAlertDetail(rogues []rogueSighting) string {
 	if first.Iface != "" {
 		who += " on " + first.Iface
 	}
-	if len(rogues) > 1 {
-		who += " and " + strconv.Itoa(len(rogues)-1) + " more"
+	if more := totalRogues(rogues) - 1; more > 0 {
+		who += " and " + strconv.Itoa(more) + " more"
 	}
 	return who + " is answering DHCP - devices may lease from the wrong server. Stand our DHCP down to stop the conflict."
 }
 
 // rogueAuditDetail is the audit-log detail: the server(s) that prompted the action,
 // or a note that none is currently visible (an operator may stand down pre-emptively).
+// Only the first server per interface is named (the snapshot exposes no more); when the
+// true total exceeds the named servers, the tally is appended so the log isn't misleading.
 func rogueAuditDetail(rogues []rogueSighting) string {
 	if len(rogues) == 0 {
 		return "no rogue server currently visible"
@@ -128,7 +157,11 @@ func rogueAuditDetail(rogues []rogueSighting) string {
 		}
 		parts = append(parts, who)
 	}
-	return strings.Join(parts, ", ")
+	detail := strings.Join(parts, ", ")
+	if total := totalRogues(rogues); total > len(parts) {
+		detail += " (" + strconv.Itoa(total) + " servers total)"
+	}
+	return detail
 }
 
 // renderHoldoffConfig renders the stand-down Kea config for the active profile's
@@ -209,12 +242,22 @@ func (s *Server) applyDHCPServingState() error {
 // (via beginReconcile). Kea-only, so it never bounces the operator's link; the
 // persisted flag is authoritative, so a reload failure only logs/audits - the next
 // reconcile (or reboot) re-applies it.
-func (s *Server) scheduleServingReloadHeld(label string) {
+//
+// resuming marks the resume path, where a failed reload is dangerous: Kea is still
+// running the holdoff (serving nothing) but the flag is already cleared, so the UI would
+// show a healthy box over a dark one. On that failure we re-arm the stand-down flag so
+// the stood-down banner + Resume control return (a visible retry surface), then push the
+// banner - the operator is never left with a green UI over a box serving no leases.
+func (s *Server) scheduleServingReloadHeld(label string, resuming bool) {
 	go func() {
 		defer s.endReconcile()
 		if err := s.applyDHCPServingState(); err != nil {
 			log.Printf("[%s] applying DHCP serving state: %v", label, err)
 			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", label, "", err.Error(), "WARNING")
+			if resuming {
+				_ = s.sqlite.SetState(dhcpStandDownKey, "1")
+				s.publishBackendAlert()
+			}
 		}
 	}()
 }
@@ -237,7 +280,7 @@ func (s *Server) handleStandDown(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Failed to persist the stand-down state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.scheduleServingReloadHeld("rogue-standdown") // background; releases the guard
+	s.scheduleServingReloadHeld("rogue-standdown", false) // background; releases the guard
 
 	s.publishBackendAlert() // banner flips from the persisted flag, independent of the reload
 	s.setFlash(w, r, "DHCP stood down - the appliance is no longer serving addresses. Resume once the rogue server is gone.", "success")
@@ -257,7 +300,7 @@ func (s *Server) handleResumeDHCP(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Failed to clear the stand-down state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.scheduleServingReloadHeld("rogue-resume") // background; releases the guard
+	s.scheduleServingReloadHeld("rogue-resume", true) // background; releases the guard, re-arms on failure
 
 	s.publishBackendAlert()
 	s.setFlash(w, r, "DHCP resumed - the appliance is serving addresses again.", "success")
