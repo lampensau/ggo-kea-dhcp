@@ -21,6 +21,7 @@ import (
 	"ggo-kea-dhcp/internal/arpscan"
 	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
+	"ggo-kea-dhcp/internal/dns"
 	"ggo-kea-dhcp/internal/ggoscan"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/netmon"
@@ -38,8 +39,15 @@ type Server struct {
 	sqlite  *db.SQLiteDB
 	mariadb *db.MariaDB
 	kea     *kea.Client
-	dns     *network.DNSManager
-	net     *network.Manager
+	// dns is the single owner of UDP port 53: stopped through FACTORY/ONBOARDING
+	// (the reconciler deliberately serves no DNS there), authoritative for the
+	// device zones + dumb forwarder in ACTIVE. The zone is rebuilt from leases,
+	// reservations and scan names on the dashboard cadence (rebuildDNSZone).
+	dns *dns.Server
+	net *network.Manager
+	// dnsZoneSig gates the metrics sampler's zone rebuild so an idle box does not
+	// re-query reservations every 12s (event-driven rebuilds ride publishDashboard).
+	dnsZoneSig atomic.Uint64
 	// live is the in-process SSE broadcaster pushing state changes to connected
 	// operators (lifecycle badge, tiles, lease/learnable lists) without polling.
 	live *liveHub
@@ -151,7 +159,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		sqlite:  sqlite,
 		mariadb: mariadb,
 		kea:     keaClient,
-		dns:     network.NewDNSManager(),
+		dns:     dns.New(""),
 		net:     network.NewManager(),
 		live:    newLiveHub(),
 	}

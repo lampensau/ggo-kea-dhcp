@@ -229,6 +229,11 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 	if s.ggoscan != nil {
 		s.ggoscan.Stop()
 	}
+	// The port-53 listeners are bound to the outgoing profile's scope addresses;
+	// drop them before the re-IP. reconcileActive rebinds on the new addresses.
+	if s.dns != nil {
+		s.dns.Stop()
+	}
 	return plan, nil
 }
 

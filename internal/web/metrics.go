@@ -196,6 +196,10 @@ func (s *Server) sampleMetrics() {
 	// recordLastSeen still gets the full set so last-seen tracking is unaffected.
 	s.metrics.push(len(dedupeStaleLeases(active)), s.samplePoolUtil(leases), rttMs, s.uplinkProbe(), s.samplePTPClass())
 	s.recordLastSeen(active)
+	// Keep the local-DNS zone fresh on a headless box (no dashboard viewers means
+	// the live ticker's rebuild never runs). Signature-gated, so an idle box pays
+	// no reservation query.
+	s.maybeRebuildDNSZone(ctx, leases)
 }
 
 // lastSeenAdvance is the minimum cltt advance (seconds) before a last_seen row is

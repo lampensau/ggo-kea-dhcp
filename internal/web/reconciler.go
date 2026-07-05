@@ -240,7 +240,7 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	_ = s.net.ApplyMasquerade("wlan0", false)
 	_ = s.net.ClearPortForwards()
 
-	// No captive DNS redirector and no DHCP gateway/DNS handout during onboarding: that
+	// No captive DNS redirect and no DHCP gateway/DNS handout during onboarding: that
 	// made connected PCs route their (non-existent) internet through the box and tripped
 	// the OS captive-portal assistant into a self-signed-cert loop. Clients reach the box
 	// on its own same-subnet address. wlanIP is still needed for the onboarding Kea scope.
@@ -248,7 +248,12 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if _, err := net.InterfaceByName("wlan0"); err == nil {
 		wlanIP = softAPWlanIP
 	}
-	s.dns.Stop() // idempotent: ensure no redirector lingers from a prior onboarding pass
+	// Leaving ACTIVE (or re-entering onboarding): the port-53 owner goes quiet. Its
+	// captive-redirect mode exists (dns.StartRedirect) but stays off here, per the
+	// no-DNS-during-onboarding intent above.
+	if s.dns != nil {
+		s.dns.Stop()
+	}
 
 	// Onboarding Kea config. Deliberately carries NO MariaDB backend (see
 	// RenderOnboarding): eth0 DHCP must come up regardless of MariaDB state.
@@ -332,10 +337,10 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	boxUplinkEnabled, upSSID, upPass := s.uplinkSettings()
 	hasUplink := boxUplinkEnabled && anyScopeUplink && upSSID != ""
 
-	// Active mode: tear down onboarding-only services.
+	// Active mode: tear down onboarding-only services. (The port-53 server is
+	// rebound below via StartZone, which stops any prior listeners itself.)
 	_ = s.net.StopSoftAP()
 	_ = s.net.SetInterfaceManaged("wlan0", true)
-	s.dns.Stop()
 
 	// Render + write + reload Kea from the scopes already loaded above (no second
 	// DB load / JSON unmarshal).
@@ -380,6 +385,20 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	s.startNetmon(scopes)
 	s.startArpProber(scopes)
 	s.startGgoScan(scopes)
+	// ACTIVE-only: the port-53 owner serves the device zones, one socket per served
+	// scope's own address (never wlan0) so each apex answer names the address that
+	// segment can reach. Best-effort like the monitors; the zone primes in the
+	// background and then follows the dashboard cadence (rebuildDNSZone).
+	if s.dns != nil {
+		var bindIPs []string
+		for _, sc := range scopes {
+			if _, ipnet, e := net.ParseCIDR(sc.CIDR); e == nil {
+				bindIPs = append(bindIPs, kea.IncIP(ipnet.IP, 1).String())
+			}
+		}
+		s.dns.StartZone(bindIPs)
+		go s.primeDNSZone()
+	}
 
 	return errors.Join(errs...)
 }

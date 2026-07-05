@@ -428,6 +428,12 @@ func (s *Server) publishFragments(frags []liveFragment) {
 // lease set and broadcasts any that changed. The fragments morph by element id into
 // whichever page is open; on a page lacking an id the patch is a harmless no-op.
 func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.ActiveLease) {
+	// The local-DNS zone follows the same cadence as the dashboard: this covers
+	// the ticker's leasesChanged branch AND every post-mutation publishDashboard
+	// (reservation add/delete, pin/unpin, apply/switch), from the leases already
+	// in hand. The headless path (no viewers, no mutations) rides the metrics
+	// sampler via maybeRebuildDNSZone.
+	s.rebuildDNSZone(ctx, leases)
 	s.publishFragments(s.dashboardFragments(ctx, leases))
 }
 

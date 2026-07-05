@@ -1,7 +1,6 @@
 package network
 
 import (
-	"bytes"
 	"testing"
 )
 
@@ -131,83 +130,6 @@ func TestDbmToQualityMidRange(t *testing.T) {
 		if got := dbmToQuality(dbm); got != want {
 			t.Errorf("dbmToQuality(%d) = %d, want %d", dbm, got, want)
 		}
-	}
-}
-
-// dnsQuery builds a minimal well-formed DNS A-query: 12-byte header + one
-// question (labels, zero terminator, type A, class IN).
-func dnsQuery(txHi, txLo byte) []byte {
-	q := []byte{
-		txHi, txLo, // transaction ID
-		0x01, 0x00, // flags: standard query, recursion desired
-		0x00, 0x01, // QDCOUNT = 1
-		0x00, 0x00, // ANCOUNT
-		0x00, 0x00, // NSCOUNT
-		0x00, 0x00, // ARCOUNT
-	}
-	// question name: www.example.com
-	q = append(q, 3, 'w', 'w', 'w', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0x00)
-	q = append(q, 0x00, 0x01) // QTYPE A
-	q = append(q, 0x00, 0x01) // QCLASS IN
-	return q
-}
-
-// TestBuildResponseValidQuery checks the DNS response builder echoes the
-// transaction id, sets the response flags, claims one answer, and embeds the
-// configured answer IP.
-func TestBuildResponseValidQuery(t *testing.T) {
-	d, err := NewDNSRedirector("127.0.0.1", "10.0.0.1")
-	if err != nil {
-		t.Fatalf("NewDNSRedirector: %v", err)
-	}
-	req := dnsQuery(0xAB, 0xCD)
-	resp, err := d.buildResponse(req)
-	if err != nil {
-		t.Fatalf("buildResponse: %v", err)
-	}
-	if resp[0] != 0xAB || resp[1] != 0xCD {
-		t.Errorf("txID not echoed: %x %x", resp[0], resp[1])
-	}
-	if resp[2] != 0x81 || resp[3] != 0x80 {
-		t.Errorf("response flags = %x %x, want 81 80", resp[2], resp[3])
-	}
-	if resp[6] != 0x00 || resp[7] != 0x01 {
-		t.Errorf("ANCOUNT = %x %x, want 00 01", resp[6], resp[7])
-	}
-	// Answer must include the compressed-name pointer 0xc00c and the answer IP.
-	if !bytes.Contains(resp, []byte{0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01}) {
-		t.Errorf("answer RR header (pointer+A+IN) missing: % x", resp)
-	}
-	if !bytes.HasSuffix(resp, []byte{10, 0, 0, 1}) {
-		t.Errorf("response does not end with the answer IP 10.0.0.1: % x", resp)
-	}
-}
-
-// TestBuildResponseTooShort verifies a packet whose question section never
-// terminates is rejected rather than read out of bounds.
-func TestBuildResponseTooShort(t *testing.T) {
-	d, err := NewDNSRedirector("127.0.0.1", "10.0.0.1")
-	if err != nil {
-		t.Fatalf("NewDNSRedirector: %v", err)
-	}
-	// 12-byte header only, no question labels/terminator: offset+4 > len → malformed.
-	req := []byte{0xAB, 0xCD, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
-	if _, err := d.buildResponse(req); err == nil {
-		t.Error("expected malformed-packet error on a header-only request, got nil")
-	}
-}
-
-// TestNewDNSRedirectorRejectsBadIPs covers the constructor validation paths.
-func TestNewDNSRedirectorRejectsBadIPs(t *testing.T) {
-	if _, err := NewDNSRedirector("not-an-ip", "10.0.0.1"); err == nil {
-		t.Error("expected error for invalid bind IP")
-	}
-	if _, err := NewDNSRedirector("127.0.0.1", "nope"); err == nil {
-		t.Error("expected error for invalid answer IP")
-	}
-	// IPv6 answer is unsupported (only A records are built).
-	if _, err := NewDNSRedirector("127.0.0.1", "::1"); err == nil {
-		t.Error("expected error for IPv6 answer IP")
 	}
 }
 
