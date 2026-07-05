@@ -128,6 +128,11 @@ type Server struct {
 	lastSeenMu      sync.RWMutex
 	lastSeen        map[string]int64
 	lastSeenWritten map[string]int64
+	// lastLeases caches the most recent successful Kea lease fetch so the degraded
+	// (Kea-down) live path can keep rendering the periodic regions from known data
+	// instead of freezing every region for the whole outage.
+	lastLeasesMu sync.Mutex
+	lastLeases   []kea.ActiveLease
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
 	applying atomic.Bool
