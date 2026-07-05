@@ -11,16 +11,10 @@ import (
 	"ggo-kea-dhcp/internal/kea"
 )
 
-// collectDNSHosts gathers the zone builder's three inputs and delegates to the
-// pure buildDNSHosts. Kept thin so the merge rules are unit-testable. Fetches the
-// reservation map itself; callers that already hold one use collectDNSHostsWith.
-func (s *Server) collectDNSHosts(ctx context.Context, leases []kea.ActiveLease) map[string]string {
-	return s.collectDNSHostsWith(leases, s.fetchHWReservationMap(ctx))
-}
-
-// collectDNSHostsWith is collectDNSHosts with the reservation map supplied by the
-// caller, so a single publishDashboardWithLeases fetch feeds both the zone rebuild
-// and the dashboard fragments instead of querying MariaDB twice per broadcast.
+// collectDNSHostsWith gathers the zone builder's three inputs (with the reservation
+// map supplied by the caller) and delegates to the pure buildDNSHosts, so a single
+// publishDashboardWithLeases fetch feeds both the zone rebuild and the dashboard
+// fragments instead of querying MariaDB twice per broadcast.
 func (s *Server) collectDNSHostsWith(leases []kea.ActiveLease, res map[string]db.HostReservation) map[string]string {
 	var devs []ggoscan.Device
 	if s.ggoscan != nil {

@@ -100,8 +100,9 @@ func TestScanIdentitySignatureFollowsIP(t *testing.T) {
 	if ggoNamesSignature(scanIdentityByMAC(base)) == ggoNamesSignature(scanIdentityByMAC(reIP)) {
 		t.Fatal("signature ignored a scan-observed IP change")
 	}
-	// Stable inventory must hash identically (no spurious churn).
-	if ggoNamesSignature(scanIdentityByMAC(base)) != ggoNamesSignature(scanIdentityByMAC(base)) {
+	// An equal-content inventory must hash identically (no spurious churn).
+	same := []ggoscan.Device{{MAC: "00:1f:80:aa:00:01", Name: "BPX Stage", IP: "10.0.0.30"}}
+	if ggoNamesSignature(scanIdentityByMAC(base)) != ggoNamesSignature(scanIdentityByMAC(same)) {
 		t.Fatal("signature not stable for an unchanged inventory")
 	}
 }
