@@ -633,8 +633,8 @@ func applyNice(iface string) {
 	}
 }
 
-// MonitorManager owns the per-interface monitors and mirrors DNSManager: Start
-// (Stop-then-start, idempotent, best-effort) and Stop. It reads netmon_enabled /
+// MonitorManager owns the per-interface monitors with a Start (Stop-then-start,
+// idempotent, best-effort) and Stop lifecycle. It reads netmon_enabled /
 // thresholds via an injected GetState so netmon imports neither web nor db.
 type MonitorManager struct {
 	mu       sync.Mutex
