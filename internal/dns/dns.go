@@ -459,8 +459,19 @@ func (g *forwardGate) allow(now time.Time) bool {
 	return g.count <= maxForwardsPerSec
 }
 
+// maxTrackedSources bounds the limiter's per-window source map (the same cap
+// shape as the netmon presence maps): a spoofed-source flood otherwise grows
+// it O(pps) within the second - and Go maps never release their buckets, so a
+// single flood would inflate the map's footprint for the process lifetime.
+// Sized generously above any real client population on a served LAN segment.
+const maxTrackedSources = 512
+
 // rateLimiter is a per-source fixed-window counter: cheap, deterministic, and
-// self-cleaning (the map resets every window, so it cannot grow unbounded).
+// bounded - the map resets every window and is capped within one. When the cap
+// is hit (only under a spoofed flood), sources not already tracked are refused
+// for the remainder of that window: a one-second penalty for a legitimate
+// new client at worst, while tracked clients keep their normal per-source
+// allowance.
 type rateLimiter struct {
 	mu     sync.Mutex
 	window int64
@@ -473,6 +484,9 @@ func (r *rateLimiter) allow(source string, now time.Time) bool {
 	if w := now.Unix(); w != r.window {
 		r.window = w
 		clear(r.counts)
+	}
+	if _, tracked := r.counts[source]; !tracked && len(r.counts) >= maxTrackedSources {
+		return false
 	}
 	r.counts[source]++
 	return r.counts[source] <= queryLimitPerSec
