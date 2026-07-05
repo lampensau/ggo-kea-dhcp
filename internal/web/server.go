@@ -294,12 +294,24 @@ func (s *Server) Start() error {
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
 	go func() {
-		if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
-			// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
-			// interface would otherwise look healthy everywhere but journalctl. The
-			// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
-			log.Printf("Boot reconcile (best-effort) reported: %v", err)
-			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
+		// Hold the mutation guard for the boot reconcile, like every other reconcile
+		// path, so a fast operator apply/switch arriving the instant the listener binds
+		// cannot run a second reconcile concurrently over the same NM connections and
+		// kea-dhcp4.conf. Synchronous begin/end (this is already its own goroutine, so
+		// no scheduleReconcileHeld). The guard being busy at boot is near-impossible
+		// (nothing else claims it before the listener is up); if it happens, the
+		// winning request's own reconcile converges state, so skipping is safe.
+		if s.beginReconcile() {
+			if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+				// Audit, not just stderr: a box that boots "ACTIVE" but couldn't raise an
+				// interface would otherwise look healthy everywhere but journalctl. The
+				// Diagnostics page lists recent SYSTEM events, so this reaches the UI.
+				log.Printf("Boot reconcile (best-effort) reported: %v", err)
+				_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", "boot", "", err.Error(), "WARNING")
+			}
+			s.endReconcile()
+		} else {
+			log.Printf("Boot reconcile skipped: an apply is already in progress")
 		}
 		// Re-probe prerequisites now that the reconcile has brought Kea up (and
 		// waited for its control socket): the synchronous boot-time preflight in
