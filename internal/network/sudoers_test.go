@@ -51,13 +51,13 @@ func parseSudoers(t *testing.T) (bare map[string]bool, exact map[string]bool) {
 		t.Fatalf("read sudoers drop-in: %v", err)
 	}
 	// Join the backslash-continued spec into one logical line, then take the
-	// comma-separated command list after NOPASSWD:.
+	// comma-separated command list after every NOPASSWD: (a future split of the
+	// drop-in into several specs keeps working).
 	spec := strings.ReplaceAll(string(data), "\\\n", " ")
 	var cmdList string
 	for _, line := range strings.Split(spec, "\n") {
 		if _, after, found := strings.Cut(line, "NOPASSWD:"); found {
-			cmdList = after
-			break
+			cmdList += "," + after
 		}
 	}
 	if cmdList == "" {
@@ -91,14 +91,18 @@ type invocation struct {
 	allLiteral bool
 }
 
-// runCallRe matches a Commander call and captures its argument list source text.
-// All privileged invocations in this package are single-line cmd.Run(...) calls;
-// a future multi-line one simply won't match and its command will surface as an
-// uncovered name if it is new (and the reviewer extends this scanner).
-var runCallRe = regexp.MustCompile(`\.Run\(([^)]*)\)`)
+// runCallRe matches a Commander call - including multi-line ones - and captures
+// the argument-list source text up to the first closing paren. That paren is a
+// safe terminator because none of the fixed argvs put ')' inside a string
+// literal; the fail-closed count check below catches a call the regex misses.
+var runCallRe = regexp.MustCompile(`(?s)\.Run\(([^)]*)\)`)
 
 // scanInvocations regex-scans every non-test .go file in this package for
-// cmd.Run calls whose command (first argument) is a string literal.
+// cmd.Run calls whose command (first argument) is a string literal. It FAILS
+// CLOSED: every textual ".Run(" occurrence must be matched and parsed to a
+// literal command name - an un-scannable call would otherwise silently bypass
+// the sudoers cross-check and fail only on the Pi, the exact gap this test
+// exists to close.
 func scanInvocations(t *testing.T) []invocation {
 	t.Helper()
 	entries, err := os.ReadDir(".")
@@ -114,15 +118,23 @@ func scanInvocations(t *testing.T) []invocation {
 		if err != nil {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}
-		for lineNo, line := range strings.Split(string(data), "\n") {
-			for _, m := range runCallRe.FindAllStringSubmatch(line, -1) {
-				inv := parseArgs(m[1])
-				if inv.name == "" {
-					continue // first argument not a literal (no such call today)
-				}
-				inv.site = e.Name() + ":" + strconv.Itoa(lineNo+1)
-				out = append(out, inv)
+		src := string(data)
+		matches := runCallRe.FindAllStringSubmatchIndex(src, -1)
+		if raw := strings.Count(src, ".Run("); raw != len(matches) {
+			t.Errorf("%s: %d .Run( occurrences but only %d scannable - extend the scanner or reshape the call", e.Name(), raw, len(matches))
+		}
+		for _, m := range matches {
+			argSrc := src[m[2]:m[3]]
+			if strings.TrimSpace(argSrc) == "" {
+				continue // zero-arg .Run() is exec.Cmd's own method, never a Commander call
 			}
+			inv := parseArgs(argSrc)
+			if inv.name == "" {
+				t.Errorf("%s:%d: .Run call with a non-literal command name - the sudoers cross-check cannot verify it", e.Name(), 1+strings.Count(src[:m[0]], "\n"))
+				continue
+			}
+			inv.site = e.Name() + ":" + strconv.Itoa(1+strings.Count(src[:m[0]], "\n"))
+			out = append(out, inv)
 		}
 	}
 	if len(out) == 0 {

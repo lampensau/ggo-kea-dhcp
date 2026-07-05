@@ -24,7 +24,8 @@ BEGIN {
     floor["ggo-kea-dhcp/internal/web"]       = 50
     floor["ggo-kea-dhcp/internal/web/views"] = 50
 }
-NR > 1 {
+/^mode:/ { next }
+{
     # Profile line: <pkg>/<file>.go:<start>,<end> <numStmts> <hitCount>
     split($1, loc, ":"); pkg = loc[1]; sub(/\/[^\/]+\.go$/, "", pkg)
     total[pkg] += $2

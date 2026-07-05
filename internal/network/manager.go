@@ -37,8 +37,12 @@ func NewManagerWithCommander(c Commander) *Manager {
 // - rejecting it here keeps the Run argv literal (verified against the sudoers
 // drop-in by sudoers_test.go) and closes the seam against arbitrary restarts.
 func (m *Manager) RestartService(name string) error {
-	if name != "isc-kea-dhcp4-server" {
-		return fmt.Errorf("refusing to restart %q: only isc-kea-dhcp4-server is sudoers-permitted", name)
+	// keaUnit mirrors the web layer's keaServiceName; a single shared constant
+	// would couple the packages for one string, so the sudoers cross-check test
+	// is what actually keeps this literal and the drop-in rule aligned.
+	const keaUnit = "isc-kea-dhcp4-server"
+	if name != keaUnit {
+		return fmt.Errorf("refusing to restart %q: only %s is sudoers-permitted", name, keaUnit)
 	}
 	_, err := m.cmd.Run("systemctl", "restart", "isc-kea-dhcp4-server")
 	return err

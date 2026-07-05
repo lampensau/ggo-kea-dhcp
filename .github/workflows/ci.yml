@@ -73,6 +73,12 @@ jobs:
   # a vulnerable dependency already in vendor/. govulncheck is the Go team's
   # scanner (golang.org/x/vuln); the version pin resolves through the module
   # proxy + checksum database, so the tag cannot be silently rewritten.
+  #
+  # Hard-block by design: every PR fails while a reachable advisory is open.
+  # If an advisory has no fixed upstream release yet, the unblock path is a
+  # DELIBERATE edit here (temporarily gate the step or pin the module to a
+  # patched fork) in its own reviewed commit - never silently, and reverted the
+  # moment the fix ships.
   govulncheck:
     runs-on: ubuntu-latest
     steps:
