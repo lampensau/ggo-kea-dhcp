@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,20 @@ func TestAptLogTail(t *testing.T) {
 	got := s.aptLogTail()
 	if len(got) != logTailLines {
 		t.Errorf("apt.log tail = %d lines, want capped at %d", len(got), logTailLines)
+	}
+}
+
+// One over-long burst must not bloat the page: the byte cap keeps the newest
+// bytes and drops the truncated first line.
+func TestTailLinesByteCap(t *testing.T) {
+	long := strings.Repeat("x", logTailBytes) + "\ntail-line\n"
+	got := tailLines(long, 5)
+	for _, l := range got {
+		if len(l) > logTailBytes {
+			t.Fatalf("line survived over the byte cap (%d bytes)", len(l))
+		}
+	}
+	if len(got) == 0 || got[len(got)-1] != "tail-line" {
+		t.Errorf("newest line lost under the byte cap: %v", got)
 	}
 }

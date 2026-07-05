@@ -47,18 +47,47 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 // logTailLines caps every Diagnostics log tail; the journalctl invocation asks
 // for the same count, so this only re-trims the apt.log and defends the render.
-const logTailLines = 200
+// logTailBytes caps the total rendered bytes: journald lines can be tens of KB
+// each, so an entry cap alone still lets one crafted burst bloat the page.
+const (
+	logTailLines = 200
+	logTailBytes = 256 << 10
+	// journalFetchTimeout bounds how long the page WAITS for journalctl. The
+	// Commander's own 60s timeout still bounds the command itself, but a wedged
+	// journalctl must not stall the whole Diagnostics page during exactly the
+	// incident the tail exists for - after this, the page renders "not available"
+	// and the stray fetch finishes (bounded) in the background.
+	journalFetchTimeout = 5 * time.Second
+)
 
 // journalTail reads the service journal through the network layer's privileged
-// seam (an exact-argument sudoers rule). Read-only; a failure degrades to an
-// honest "not available" state on the page, never an error page - the operator
-// opened Diagnostics precisely because something else is wrong.
+// seam (an exact-argument sudoers rule). Read-only; a failure or slow fetch
+// degrades to an honest "not available" state on the page, never an error page -
+// the operator opened Diagnostics precisely because something else is wrong.
 func (s *Server) journalTail() ([]string, string) {
-	out, err := s.net.ServiceLogTail()
-	if err != nil {
-		log.Printf("[diagnostics] journal tail: %v", err)
+	type res struct {
+		out string
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		out, err := s.net.ServiceLogTail()
+		ch <- res{out, err}
+	}()
+	var r res
+	select {
+	case r = <-ch:
+	case <-time.After(journalFetchTimeout):
+		log.Printf("[diagnostics] journal tail: no reply within %s", journalFetchTimeout)
+		return nil, "The service journal is not responding right now."
+	}
+	if r.err != nil {
+		log.Printf("[diagnostics] journal tail: %v", r.err)
 		return nil, "The service journal could not be read on this system."
 	}
+	// journalctl prints this marker (and exits 0) when the unit has no entries,
+	// so an empty tail surfaces as the honest empty state, not as a one-line log.
+	out := strings.TrimSpace(strings.ReplaceAll(r.out, "-- No entries --", ""))
 	lines := tailLines(out, logTailLines)
 	if len(lines) == 0 {
 		return nil, "The journal returned no entries."
@@ -76,8 +105,15 @@ func (s *Server) aptLogTail() []string {
 	return tailLines(string(b), logTailLines)
 }
 
-// tailLines returns at most n trailing lines of text, without a trailing blank.
+// tailLines returns at most n trailing lines (and at most logTailBytes total,
+// newest kept) of text, without a trailing blank.
 func tailLines(text string, n int) []string {
+	if len(text) > logTailBytes {
+		text = text[len(text)-logTailBytes:]
+		if i := strings.IndexByte(text, '\n'); i >= 0 {
+			text = text[i+1:] // drop the truncated first line
+		}
+	}
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	if len(lines) == 1 && lines[0] == "" {
 		return nil
