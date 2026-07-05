@@ -110,6 +110,9 @@ type metricsSnapshot struct {
 }
 
 func (m *metricsStore) snapshot() metricsSnapshot {
+	if m == nil {
+		return metricsSnapshot{} // pre-sampler render (tests): empty series, no panic
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return metricsSnapshot{
@@ -125,6 +128,9 @@ func (m *metricsStore) snapshot() metricsSnapshot {
 // the stat-tiles render on it via markChanged, so between 12s samples the tiles
 // are not re-rendered; publishIfChanged still suppresses an identical fragment.
 func (m *metricsStore) signature() uint64 {
+	if m == nil {
+		return 0
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.pushes

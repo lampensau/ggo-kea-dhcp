@@ -243,8 +243,19 @@ func (s *Server) tickDashboard() {
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
-		return // can't tell if anything changed; next tick retries
+		// Kea down: the lease-derived regions freeze at their last honest state
+		// (never broadcast a guess), but the periodic set (tiles, net-health,
+		// activity, shell badges, diag-audit) is Kea-independent by construction -
+		// keep it flowing so an open dashboard shows the outage (backend alert,
+		// gapped sparklines, KEA_DOWN audit rows) instead of freezing entirely.
+		// Ungated: the sampler pushes no samples while Kea is down (a sparkline gap
+		// is honest), so the metrics signature freezes and cannot gate this branch.
+		// publishIfChanged still keeps the wire quiet; the render cost is bounded
+		// to outage windows with a viewer connected.
+		s.publishFragments(s.periodicDashboardFragments(ctx, s.lastKnownLeases()))
+		return
 	}
+	s.setLastLeases(leases)
 	// Render when EITHER the lease set OR the sampled metrics changed - both
 	// markChanged calls must run (no short-circuit) so both signatures advance.
 	// Without the metrics check the stat-tile sparklines would freeze between
@@ -309,9 +320,33 @@ func (s *Server) publishDashboard() {
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)
 	if err != nil {
-		return // return on error to prevent caching / broadcasting a lie
+		// Kea down: refresh only the Kea-independent periodic regions so an
+		// event-driven push (e.g. a stand-down toggle) still lands during an
+		// outage; the lease-derived regions keep their last honest state.
+		s.publishFragments(s.periodicDashboardFragments(ctx, s.lastKnownLeases()))
+		return
 	}
+	s.setLastLeases(leases)
 	s.publishDashboardWithLeases(ctx, leases)
+}
+
+// setLastLeases / lastKnownLeases cache the most recent successful lease fetch
+// for the degraded (Kea-down) render paths above. lastKnownLeases returns nil
+// before the first successful fetch, which every view build already tolerates
+// (first boot renders with no leases). It returns the LIVE slice, not a copy:
+// callers must treat it as read-only - the ticker goroutine and event-driven
+// publishers hold it concurrently, so an in-place mutation (e.g. sorting the
+// leases themselves rather than a derived row slice) would be a data race.
+func (s *Server) setLastLeases(leases []kea.ActiveLease) {
+	s.lastLeasesMu.Lock()
+	s.lastLeases = leases
+	s.lastLeasesMu.Unlock()
+}
+
+func (s *Server) lastKnownLeases() []kea.ActiveLease {
+	s.lastLeasesMu.Lock()
+	defer s.lastLeasesMu.Unlock()
+	return s.lastLeases
 }
 
 // liveFragment is a rendered live-region fragment paired with the hub region key

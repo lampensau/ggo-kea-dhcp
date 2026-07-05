@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"ggo-kea-dhcp/internal/kea"
@@ -54,6 +55,67 @@ func TestPeriodicVsFullFragments(t *testing.T) {
 		if !full[r] {
 			t.Errorf("full fragments missing lease-derived region %q", r)
 		}
+	}
+}
+
+// TestTickDashboardKeaOutage proves a Kea outage does not freeze the live stream:
+// when GetLeases fails (the test server's Kea endpoint is unreachable),
+// tickDashboard still publishes the Kea-independent periodic regions (tiles,
+// net-health, diag-audit) and publishes NO lease-derived region - those must
+// freeze at their last honest state rather than broadcast a guess.
+func TestTickDashboardKeaOutage(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.live = newLiveHub()
+	s.metrics = newMetricsStore()
+	fakeNetmon(s)
+	defer s.netmon.Stop()
+	_ = seedActiveProfile(t, s)
+
+	ch := s.live.subscribe("") // unknown page: receive every region
+	defer s.live.unsubscribe(ch)
+
+	s.tickDashboard() // GetLeases fails against 127.0.0.1:1
+
+	var frags []string
+drain:
+	for {
+		select {
+		case f := <-ch:
+			frags = append(frags, f)
+		default:
+			break drain
+		}
+	}
+	all := strings.Join(frags, "\n")
+	for _, id := range []string{`id="dash-tiles"`, `id="net-health"`, `id="diag-audit"`} {
+		if !strings.Contains(all, id) {
+			t.Errorf("Kea-down tick did not publish periodic region %s", id)
+		}
+	}
+	for _, id := range []string{`id="leases-body"`, `id="pool-table"`, `id="recent-leases"`, `id="pinnings"`} {
+		if strings.Contains(all, id) {
+			t.Errorf("Kea-down tick must not publish lease/MariaDB region %s", id)
+		}
+	}
+
+	// The degraded path must keep flowing across ticks, not fire once: the metrics
+	// sampler pushes nothing while Kea is down, so any gate on its signature would
+	// freeze after the first tick. A new audit row must reach diag-audit on the
+	// NEXT tick.
+	_ = s.sqlite.LogAudit("SYSTEM", "KEA_DOWN", "KEA", "", "outage test", "ERROR")
+	s.tickDashboard()
+	var second []string
+drain2:
+	for {
+		select {
+		case f := <-ch:
+			second = append(second, f)
+		default:
+			break drain2
+		}
+	}
+	if !strings.Contains(strings.Join(second, "\n"), `id="diag-audit"`) {
+		t.Errorf("second Kea-down tick did not publish the new audit row to diag-audit")
 	}
 }
 
