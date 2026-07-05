@@ -29,6 +29,9 @@ depends:
   - caddy
   - network-manager
   - sudo
+  - curl           # self-updater: fetch the release's GitHub-published digest
+  - jq             # self-updater: parse the releases API JSON for that digest
+  - ca-certificates # self-updater: trust roots for the HTTPS API call
   - hostapd        # wlan0 SoftAP for FACTORY/ONBOARDING captive portal
   - iw             # wifi link queries used alongside hostapd
   - wireless-tools # iwlist fallback for the WiFi-uplink SSID scan

@@ -359,6 +359,20 @@ func (s *Server) removeStaged(names ...string) {
 	}
 }
 
+// clearStagedUpdate empties the whole staging directory, best-effort. Called on
+// reset so a staged .deb/manifest (and the badge/anchor its state drives) never
+// outlives the wipe. Safe against a racing install: both reset handlers and the
+// install path hold the reconcile guard.
+func (s *Server) clearStagedUpdate() {
+	entries, err := os.ReadDir(s.updateDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = os.Remove(filepath.Join(s.updateDir, e.Name()))
+	}
+}
+
 // reconcileUpdateResult runs once at boot: it clears stale partials, folds a
 // pending updater result into the audit log, and recognizes the
 // successful-update race - on success the postinstall restarts this process

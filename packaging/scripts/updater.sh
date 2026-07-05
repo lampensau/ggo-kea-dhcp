@@ -7,11 +7,17 @@
 # result.json in that directory; the control plane (app-scope failures) or its
 # next boot (a successful in-place restart) folds it into the audit log.
 #
-# Trust model: authenticity comes from the TLS download from GitHub verified
-# against the release's API-published digest, done by the control plane at
-# staging time - the same anchor install.sh uses. The sha256 re-verify below is
-# integrity defense in depth against a corrupted or swapped staging file, not a
-# second authenticity check.
+# Trust model: this root updater anchors authenticity in the digest GitHub
+# publishes for the release, fetched HERE (as root) from the releases API using
+# only the version string from the manifest. The app user (ggo-kea-dhcp) writes
+# both the staged .deb AND manifest.json, so a compromised app user could make
+# the app-written sha256 agree with a hostile package - that sha is therefore an
+# integrity check only (a corrupted or swapped staging file), never the
+# authenticity gate. Verifying against GitHub's published digest constrains the
+# root install to a genuinely published release even if the app user is
+# compromised. Fail closed: if the authoritative digest cannot be fetched, no
+# install happens. The outbound API call needs no sudoers (this runs as root)
+# and the update unit applies none of the main unit's network sandboxing.
 #
 # There is deliberately NO rollback for a half-applied system-scope update:
 # apt/dpkg cannot transactionally undo a partial dependency upgrade. The
@@ -20,10 +26,19 @@
 # App-scope updates replace a single package and inherit dpkg's own atomicity.
 set -eu
 
+# Parse apt's classification output and the GitHub API JSON in a fixed locale so
+# a localized Pi can't defeat the string matching below (the needs_system grep
+# and the digest check).
+export LC_ALL=C LANG=C
+
 STAGE=/var/lib/ggo-kea-dhcp/update
 RESULT="$STAGE/result.json"
 MANIFEST="$STAGE/manifest.json"
 APT_LOG="$STAGE/apt.log"
+
+REPO=lampensau/ggo-kea-dhcp
+ASSET=ggo-kea-dhcp_arm64.deb
+GH_API=https://api.github.com
 
 VERSION=unknown
 STATUS=failed
@@ -49,8 +64,9 @@ fail() {
 
 [ -f "$MANIFEST" ] || fail "no staged manifest"
 
-# Dependency-free manifest parse: the control plane writes compact JSON with
-# known string keys, so one sed per field suffices (no jq on the appliance).
+# Compact-manifest parse: the control plane writes compact JSON with known
+# string keys, so one sed per field suffices (jq is reserved for the richer
+# releases API response below).
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$MANIFEST"; }
 VERSION="$(field version)"
 SCOPE="$(field scope)"
@@ -65,11 +81,41 @@ case "$DEB" in
 esac
 [ -f "$DEB" ] || fail "staged package is missing"
 
+# VERSION anchors the authoritative API lookup below, so it must be plain
+# semver: a compromised app user must not be able to smuggle '/' or '..' into
+# the API URL and redirect it at an attacker-controlled repo (curl normalizes
+# '..' path segments). Digits and dots only kills that.
+case "$VERSION" in
+	*[!0-9.]*) fail "manifest version is not a plain semver" ;;
+esac
+
 # Recover a previous mid-dpkg power loss before touching anything (see the
 # header comment - this is the only rollback story there is).
 dpkg --configure -a || true
 
+# Integrity check against the app-written sha first: cheap defense in depth
+# against a corrupted or swapped staging file. This is NOT an authenticity
+# check - the app user wrote both the .deb and this sha, so a compromised app
+# user can make them agree.
 echo "$SHA  $DEB" | sha256sum -c - >/dev/null 2>&1 || fail "staged package failed its sha256 re-verification"
+
+# Authoritative authenticity gate: fetch the digest GitHub published for this
+# release's asset (keyed only on the manifest's version string) and verify the
+# staged .deb against THAT. A compromised app user cannot forge a
+# GitHub-published digest, so this pins the install to a genuinely published
+# release. Fail closed - never fall back to the app-written sha - if the digest
+# is unreachable or absent.
+api="$(curl -fsSL --max-time 30 -H 'Accept: application/vnd.github+json' \
+	"$GH_API/repos/$REPO/releases/tags/v$VERSION" 2>/dev/null || true)"
+[ -n "$api" ] || fail "cannot reach GitHub to verify the release digest (failing closed)"
+want="$(printf '%s' "$api" | jq -r --arg n "$ASSET" \
+	'.assets[] | select(.name == $n) | .digest' 2>/dev/null || true)"
+case "$want" in
+	sha256:*) ;;
+	*) fail "GitHub published no verifiable digest for v$VERSION (failing closed)" ;;
+esac
+got="sha256:$(sha256sum "$DEB" | awk '{print $1}')"
+[ "$got" = "$want" ] || fail "staged package does not match GitHub's published digest for v$VERSION"
 
 PKG="$(dpkg-deb -f "$DEB" Package 2>/dev/null || true)"
 [ "$PKG" = "ggo-kea-dhcp" ] || fail "staged file is not the ggo-kea-dhcp package (got '$PKG')"

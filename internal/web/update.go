@@ -356,6 +356,11 @@ func (s *Server) buildUpdateView(csrf string) views.UpdateView {
 	}
 	v.Notes, _ = s.sqlite.GetState(stateUpdateNotes)
 	sha, _ := s.sqlite.GetState(stateUpdateSHA256)
+	// No stored digest = no in-UI install (notify only). GitHub can populate an
+	// asset's digest asynchronously after publish, so on a freshly cut release
+	// this degrades safely: the card shows the version and notes but the install
+	// button stays hidden until a later check picks up the digest. Never weaken
+	// this - the digest is the authenticity anchor for the whole install path.
 	v.CanInstall = sha != ""
 	ns, _ := s.sqlite.GetState(stateUpdateNeedsSystem)
 	v.NeedsSystem = ns == "1"
