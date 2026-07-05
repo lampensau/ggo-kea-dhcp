@@ -110,19 +110,37 @@ templ setupHeadActions(v SetupView) {
 // IP, named in the badge so the operator sees it before Apply), Unverified when the
 // probe is not actually watching (stopped on the ACTIVE edit page, or blind without
 // CAP_NET_RAW) so the operator knows the shield has confirmed nothing, and Suspended
-// while the port has no carrier. Live-morphed via the shield-status region while the
-// wizard is open, so a server that speaks up mid-setup flips the badge without a reload.
+// while the port has no carrier. #shield-status is an aria-live region so a server
+// that speaks up mid-setup is announced to screen readers, not just morphed silently;
+// the fuller explanation rides an info-tip (focusable, tap-open) so it is not hover-
+// only for keyboard and touch operators (DESIGN §9/§10: no critical cue behind hover).
 templ ShieldBadge(state, iface, detail string) {
-	switch state {
-		case "Detected":
-			<span id="shield-status" class="badge badge-err" title={ "DHCP server " + detail + " is already answering on " + iface + " - stop it before applying, or clients will get addresses from both servers" }>@Icon("shield-alert") Rogue DHCP: { detail }</span>
-		case "Active":
-			<span id="shield-status" class="badge badge-ok" title={ "Watching " + iface + " for competing DHCP servers - none seen" }>@Icon("shield") Shield: Active</span>
-		case "Unverified":
-			<span id="shield-status" class="badge badge-info" title={ "Not watching " + iface + " for competing DHCP servers - the passive probe is not running here, so no all-clear has been confirmed" }>@Icon("shield-off") Shield: Unverified</span>
-		default:
-			<span id="shield-status" class="badge badge-warn" title={ "Shield suspended - no carrier on " + iface }>@Icon("shield-off") Shield: Suspended</span>
-	}
+	<span id="shield-status" class="shield-badge" aria-live="polite">
+		switch state {
+			case "Detected":
+				<span class="badge badge-err">@Icon("shield-alert") Rogue DHCP: { detail }</span>
+				@shieldTip("DHCP server " + detail + " is already answering on " + iface + " - stop it before applying, or clients will get addresses from both servers")
+			case "Active":
+				<span class="badge badge-ok">@Icon("shield") Shield: Active</span>
+				@shieldTip("Watching " + iface + " for competing DHCP servers - none seen")
+			case "Unverified":
+				<span class="badge badge-info">@Icon("shield-off") Shield: Unverified</span>
+				@shieldTip("Not watching " + iface + " for competing DHCP servers - the passive probe is not running here, so no all-clear has been confirmed")
+			default:
+				<span class="badge badge-warn">@Icon("shield-off") Shield: Suspended</span>
+				@shieldTip("Shield suspended - no carrier on " + iface)
+		}
+	</span>
+}
+
+// shieldTip renders the shield's explanation as a focusable, tap-open info-tip
+// (the same pattern as the pools/pinning tips) so its meaning is reachable without
+// hover. The full text is the aria-label so screen readers get it on focus.
+templ shieldTip(text string) {
+	<span class="info-tip shield-tip" tabindex="0" role="note" aria-label={ text }>
+		@Icon("info")
+		<span class="info-tip-text">{ text }</span>
+	</span>
 }
 
 // LinkBadge reflects the eth0 link: Disconnected (no carrier), VLAN Trunk (tagged VLANs -

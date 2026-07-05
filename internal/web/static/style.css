@@ -602,6 +602,12 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .setup-head { display:flex; justify-content:space-between; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-2); }
 .setup-head-actions { display:flex; align-items:center; gap:var(--sp-4); flex-wrap:wrap; }
 .setup-status { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; }
+/* Shield badge + its focusable info-tip sit inline as one live region. */
+.shield-badge { display:inline-flex; align-items:center; }
+/* The shield tip lives at the top of the page, so open it downward (not upward,
+   which would clip past the viewport top) and right-align it under the badge. */
+.shield-tip .info-tip-text { bottom:auto; top:calc(100% + 7px); left:auto; right:0; transform:none; }
+.shield-tip .info-tip-text::after { top:auto; bottom:100%; left:auto; right:9px; transform:none; border-top-color:transparent; border-bottom-color:var(--border-strong); }
 .section-heading { margin:var(--sp-6) 0 var(--sp-3); }
 .scope-card-head { display:flex; justify-content:space-between; align-items:center; gap:var(--sp-5); flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:var(--sp-3); margin-bottom:var(--sp-4); }
 
