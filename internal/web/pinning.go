@@ -256,6 +256,7 @@ func mergePortRows(labels map[string]string, pinned map[string]db.HostReservatio
 		}
 		ports = append(ports, row)
 	}
+	sanitizePortHostnames(ports)
 	sort.Slice(ports, func(i, j int) bool {
 		return ports[i].PortIdentity < ports[j].PortIdentity
 	})
@@ -266,8 +267,8 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	portIdentity := r.FormValue("port_identity")
 	ipStr := r.FormValue("ip")
-	hostname := r.FormValue("hostname")
-	macStr := r.FormValue("mac") // the learned device's MAC, used to clear its stale leases
+	hostname := slugifyHostname(r.FormValue("hostname")) // stored as a DNS label, like every reservation
+	macStr := r.FormValue("mac")                         // the learned device's MAC, used to clear its stale leases
 
 	log.Printf("[Pinning] Pinning port %s to IP %s...", logSafe(portIdentity), logSafe(ipStr))
 

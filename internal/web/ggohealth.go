@@ -131,8 +131,8 @@ func (s *Server) overlayGgoNamesWith(rows []views.LeaseRow, names map[string]str
 
 // slugifyHostname converts a device name to a DNS-safe label: lowercase, alnum and
 // single dashes, trimmed, capped at the 63-char DNS label limit. Returns "" when
-// nothing usable remains. Used to default a manual reservation's hostname to the
-// scanned device name so the auto name carries over into operator reservations.
+// nothing usable remains. The single sanitizer behind every stored reservation/pin
+// hostname and, via HostnameSlugs, every displayed device name.
 func slugifyHostname(name string) string {
 	var b strings.Builder
 	dash := false

@@ -144,7 +144,7 @@ templ LeasesBody(rows []LeaseRow, canReserve bool) {
 										class="btn btn-sm btn-secondary"
 										data-mac={ l.HWAddress }
 										data-ip={ l.IPAddress }
-										data-host={ l.Hostname }
+										data-host={ l.RawHostname }
 										onclick="ggoReserveOpen(this.dataset.mac, this.dataset.ip, this.dataset.host)"
 										title={ "Reserve " + l.IPAddress + " for this device" }
 										aria-label={ "Reserve " + l.IPAddress }
