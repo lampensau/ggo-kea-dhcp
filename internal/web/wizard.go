@@ -383,7 +383,7 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 
-	go s.finishApply(plan, profileName, actor)
+	go s.runRecoveredAudited("finish-apply", func() { s.finishApply(plan, profileName, actor) })
 }
 
 func (s *Server) handleWifiScan(w http.ResponseWriter, r *http.Request) {

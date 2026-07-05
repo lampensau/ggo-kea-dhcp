@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"maps"
@@ -293,6 +294,22 @@ func runRecovered(name string, fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[%s] recovered from panic: %v", name, r)
+		}
+	}()
+	fn()
+}
+
+// runRecoveredAudited is runRecovered for the detached reconcile goroutines
+// (finish-apply/switch, held reconciles, uplink connect, zone prime). A panic
+// there strands the box mid-transition, so besides absorbing it the recovery is
+// audited - Diagnostics is often the only place an operator can see why an
+// apply never finished. fn's own defers (endReconcile) run during unwinding,
+// before the recover here, so the mutation guard is always released.
+func (s *Server) runRecoveredAudited(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[%s] recovered from panic: %v", name, r)
+			_ = s.sqlite.LogAudit("SYSTEM", "PANIC_RECOVERED", name, "", fmt.Sprint(r), "ERROR")
 		}
 	}()
 	fn()
