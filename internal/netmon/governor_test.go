@@ -4,7 +4,7 @@ import "testing"
 
 func testGovConfig() govConfig {
 	return govConfig{
-		dropHigh: 0, chanDropHigh: 0, ppsHigh: 10000,
+		dropHigh: 0, chanDropHigh: 0,
 		stepDownAfter: 2, stepUpAfter: 3, cooldownTicks: 2,
 	}
 }

@@ -32,7 +32,7 @@ func TestPeriodicVsFullFragments(t *testing.T) {
 	periodic := regionSet(s.periodicDashboardFragments(t.Context(), leases))
 	full := regionSet(s.dashboardFragments(t.Context(), leases))
 
-	wantPeriodic := []string{"dash-tiles", "activity-feed", "state-badge", "link-status", "net-health", "net-health-rollup"}
+	wantPeriodic := []string{"dash-tiles", "activity-feed", "state-badge", "link-status", "shield-status", "net-health", "net-health-rollup"}
 	leaseDerived := []string{"pool-table", "pool-rollup", "leases-body", "recent-leases"}
 
 	for _, r := range wantPeriodic {

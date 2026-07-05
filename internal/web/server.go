@@ -77,6 +77,11 @@ type Server struct {
 	// the switch port is trunking tagged VLANs (the full monitor runs only in ACTIVE).
 	// Started/stopped by the reconciler beside the onboarding bring-up.
 	trunkProbe *netmon.TrunkProbe
+	// rogueProbe passively watches eth0 during onboarding for a foreign DHCP server
+	// already answering (an OFFER/ACK carrying another server-id), feeding the wizard's
+	// shield badge. Same lifecycle as trunkProbe. Interface-typed so wizard tests can
+	// fake a detection without a capture socket.
+	rogueProbe rogueProber
 	// metrics holds the dashboard's live trend series (lease count, pool
 	// utilization, Kea RTT, uplink), filled by an always-on sampler independent of
 	// the client-gated live ticker so a cold-opened dashboard has sparkline history.
@@ -112,6 +117,17 @@ type Server struct {
 	// re-applied uplink logs exactly one row per real up/down transition (zero value =
 	// unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
+}
+
+// rogueProber is the onboarding rogue-DHCP probe surface (*netmon.RogueProbe in
+// production; faked in wizard tests).
+type rogueProber interface {
+	Start(iface string)
+	Stop()
+	// Watching is false when the probe is stopped or blind (no CAP_NET_RAW), so
+	// the shield can report "unverified" instead of a false all-clear.
+	Watching() bool
+	Server() (ip, mac string, ok bool)
 }
 
 // SetPreflight stores the latest preflight result.
@@ -170,8 +186,10 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		}
 		return out, true
 	}, leaseCacheTTL, time.Now)
-	// The onboarding trunk probe (started in reconcileOnboarding, stopped on entering ACTIVE).
+	// The onboarding trunk + rogue-DHCP probes (started in reconcileOnboarding,
+	// stopped on entering ACTIVE).
 	s.trunkProbe = netmon.NewTrunkProbe()
+	s.rogueProbe = netmon.NewRogueProbe()
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
 	s.loginThrottle = newLoginThrottle()

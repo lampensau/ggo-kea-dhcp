@@ -14,7 +14,7 @@ It runs only while the appliance is active, and only on the wired networks it se
 
 Rows are ordered by severity, then by how directly a problem breaks DHCP.
 
-**Rogue DHCP server.** Another DHCP server answered on a network this appliance serves; the detail names the server address and MAC. This is the highest-priority finding: devices are leasing from the wrong server, and which server wins any given request is a race. Find the cable that connects the offending device (most often a router someone plugged in for "just a minute") and remove or deactivate it.
+**Rogue DHCP server.** Another DHCP server answered on a network this appliance serves; the detail names the server address and MAC. This is the highest-priority finding: devices are leasing from the wrong server, and which server wins any given request is a race. Find the cable that connects the offending device (most often a router someone plugged in for "just a minute") and remove or deactivate it. The watch reliably catches a rogue's broadcast offers and any answer directed at the appliance; on a switched network it can miss a rogue that only unicasts offers straight to other clients, since the switch forwards those out the victim's port and never the appliance's. If you suspect a rogue the card does not name, mirror the uplink port (SPAN) to the appliance's port, or check the switch's own DHCP-snooping counters.
 
 **Duplicate IP.** Two devices claim the same address; the detail shows the address and how many times devices have declined it. Typical cause: a statically configured device sitting on an address the pool also hands out. Reserve the address for that device or move the static into the reserved range.
 

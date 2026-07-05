@@ -309,3 +309,36 @@ func TestZZPreviewStatTiles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestZZPreviewShieldBadge renders the setup wizard once per shield state
+// (Active / Detected with a named rogue server / Unverified when the probe is
+// blind-or-stopped / Suspended) so the badge can be screenshotted in page
+// context. Preview-only; cleaned up before make pi.
+func TestZZPreviewShieldBadge(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	cases := []struct {
+		file, shield, detail, link string
+	}{
+		{"active", "Active", "", "Flat"},
+		{"detected", "Detected", "10.0.0.250", "Flat"},
+		{"unverified", "Unverified", "", "Flat"},
+		{"suspended", "Suspended", "", "Disconnected"},
+	}
+	for _, c := range cases {
+		v := SetupView{
+			Page:        PageData{State: "ONBOARDING", Authenticated: true, CSRFToken: "tok", CurrentPath: "/setup", Title: "Setup Wizard"},
+			ShieldState: c.shield, ShieldDetail: c.detail,
+			LinkState: c.link, Interface: "eth0",
+		}
+		var b strings.Builder
+		if err := Setup(v).Render(context.Background(), &b); err != nil {
+			t.Fatal(err)
+		}
+		html := strings.ReplaceAll(b.String(), "/static/", "")
+		if err := os.WriteFile("../static/_preview_shield_"+c.file+".html", []byte(html), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

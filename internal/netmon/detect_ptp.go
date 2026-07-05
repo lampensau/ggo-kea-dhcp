@@ -7,7 +7,7 @@ import (
 
 // defaultPTPAbsence: PTP Announce is typically sent every 1–2s, so a few seconds
 // of silence already means the GM is gone, but we allow margin against bursty
-// loss / duty-cycle gaps before warning.
+// loss before warning.
 const defaultPTPAbsence = 15 * time.Second
 
 // ptpChurnWindow / ptpChurnThreshold: this many distinct GM appearances within
@@ -23,8 +23,8 @@ const (
 // lost) and rapid GM-identity churn (contention). Multiple simultaneous GMs is
 // normal BMCA failover → info, not a warning. We do not assume a domain number
 // (Green-GO defaults to 0 but it is user-editable) - domains are discovered from
-// the wire. Announce arrives as L2 0x88F7 or UDP 319/320 (multicast → needs the
-// promiscuous duty-cycle, gated by MulticastSniff).
+// the wire. Announce arrives as L2 0x88F7 or UDP 319/320 (the PTP multicast
+// groups are always joined, so a GM is observable even without MulticastSniff).
 type ptpDetector struct {
 	iface   string
 	absence time.Duration

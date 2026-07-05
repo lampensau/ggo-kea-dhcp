@@ -6,9 +6,9 @@ import "golang.org/x/sys/unix"
 // known/derivable groups are joined directly - a benign *receiver* action (not a
 // querier; harmless extra joiner; no effect on audio). PTP and mDNS groups are
 // fixed and joined up front; sACN groups are per-universe and joined as universes
-// are discovered during the promiscuous duty-cycle sample. With the NIC's hardware
-// multicast filter, only joined groups + broadcast reach the kernel, far cheaper
-// than holding promiscuous against the full audio flood.
+// are discovered under the steady-state promiscuous socket (when MulticastSniff is
+// on). With the NIC's hardware multicast filter, only joined groups + broadcast
+// reach the kernel, far cheaper than holding promiscuous against the full audio flood.
 
 // knownGroups are the multicast groups we can join directly without discovery:
 // PTP (IEEE 1588 default + pdelay) and mDNS. sACN groups are per-universe and are
@@ -92,8 +92,8 @@ func multicastMAC(group [4]byte) [6]byte {
 // IGMP membership report, so on an IGMP-snooping switch the upstream may still
 // prune the group from our port. Getting snooped multicast forwarded requires a
 // real IGMP join (a parallel AF_INET socket doing IP_ADD_MEMBERSHIP) - deferred
-// until validated on the Pi. Until then the promiscuous duty-cycle remains the
-// reliable multicast path; this join is the cheap steady-state optimisation.
+// until validated on the Pi. Until then steady-state promiscuous capture remains
+// the reliable multicast path; this join is the cheap optimisation on top.
 func (m *multicastJoiner) join(group [4]byte) error {
 	if m.joined[group] {
 		return nil
