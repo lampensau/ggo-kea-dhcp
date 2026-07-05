@@ -122,7 +122,7 @@ type Server struct {
 // rogueProber is the onboarding rogue-DHCP probe surface (*netmon.RogueProbe in
 // production; faked in wizard tests).
 type rogueProber interface {
-	Start(iface string)
+	Start(iface string, selfIPs [][4]byte)
 	Stop()
 	Server() (ip, mac string, ok bool)
 }

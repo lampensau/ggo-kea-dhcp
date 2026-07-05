@@ -149,8 +149,8 @@ type fakeRogueProbe struct {
 	found   bool
 }
 
-func (f *fakeRogueProbe) Start(string) {}
-func (f *fakeRogueProbe) Stop()        {}
+func (f *fakeRogueProbe) Start(string, [][4]byte) {}
+func (f *fakeRogueProbe) Stop()                   {}
 func (f *fakeRogueProbe) Server() (string, string, bool) {
 	return f.ip, f.mac, f.found
 }
