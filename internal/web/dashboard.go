@@ -254,9 +254,7 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
 		log.Printf("Kea API lease query failed: %v", err)
-		sse := datastar.NewSSE(w, r)
-		_ = sse.PatchElementTempl(views.Toast(fmt.Sprintf("Failed to query leases: %v", err), "error"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+		toast(datastar.NewSSE(w, r), fmt.Sprintf("Failed to query leases: %v", err), "error")
 		return
 	}
 
@@ -271,8 +269,7 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 
 	sse := datastar.NewSSE(w, r)
 	if err := s.kea.DeleteLease(r.Context(), ip); err != nil {
-		_ = sse.PatchElementTempl(views.Toast("Failed to release "+ip+": "+err.Error(), "error"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+		toast(sse, "Failed to release "+ip+": "+err.Error(), "error")
 		return
 	}
 	_ = s.sqlite.LogAudit(s.getActor(r), "LEASE_RELEASE", ip, "", "", "SUCCESS")
@@ -286,8 +283,7 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), s.mariadb != nil))
 	}
-	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
-		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+	toast(sse, "Released lease for "+ip, "success")
 
 	// Release completes over SSE (no page reload), so the flash-context auto-open path
 	// can't fire here. If the released device is a Green-GO client online now, open the

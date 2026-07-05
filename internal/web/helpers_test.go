@@ -60,15 +60,32 @@ func TestDecodeHex(t *testing.T) {
 	}
 }
 
-func TestIsPrintable(t *testing.T) {
-	if !isPrintable("Gi0/1") {
-		t.Error("printable string reported non-printable")
+// isPrintableASCII is a pure character-set predicate: the empty string is
+// vacuously printable (true), and the callers that need empty to mean
+// "fall back to hex" check s != "" explicitly (renderIDPart,
+// bytesToPortIdentity). This table pins both halves of that contract.
+func TestIsPrintableASCII(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"Gi0/1", true},
+		{"", true},        // vacuously true: empty-string policy lives at the call sites
+		{"a\x01b", false}, // control char
+		{"a\x7fb", false}, // DEL
+		{"gültig", false}, // multibyte UTF-8: every byte >= 0x80 fails
+	} {
+		if got := isPrintableASCII(c.in); got != c.want {
+			t.Errorf("isPrintableASCII(%q) = %v, want %v", c.in, got, c.want)
+		}
 	}
-	if isPrintable("") {
-		t.Error("empty string must be non-printable")
+	// The two ex-isPrintable call sites must still treat empty/NUL-only input as
+	// non-printable (hex fallback), not vacuously printable.
+	if ascii, hexStr := renderIDPart([]byte{0, 0}); ascii != hexStr {
+		t.Errorf("renderIDPart(NUL-only) ascii=%q, want hex fallback %q", ascii, hexStr)
 	}
-	if isPrintable("a\x01b") {
-		t.Error("control char must be non-printable")
+	if got := bytesToPortIdentity(nil); got != "" {
+		t.Errorf("bytesToPortIdentity(nil) = %q, want empty", got)
 	}
 }
 

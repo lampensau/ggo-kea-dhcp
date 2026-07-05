@@ -115,8 +115,7 @@ func (s *Server) handlePoolsPlanOp(w http.ResponseWriter, r *http.Request) {
 	sse := datastar.NewSSE(w, r)
 	_, _, scopes, ok := s.activeProfileScopes()
 	if !ok || sIdx < 0 || sIdx >= len(scopes) {
-		_ = sse.PatchElementTempl(views.Toast("No active profile to edit.", "error"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+		toast(sse, "No active profile to edit.", "error")
 		return
 	}
 	sc := scopes[sIdx]
@@ -159,10 +158,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	mode := orDefault(q.Get("mode"), "simple")
 
 	sse := datastar.NewSSE(w, r)
-	toastErr := func(msg string) {
-		_ = sse.PatchElementTempl(views.Toast(msg, "error"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
-	}
+	toastErr := func(msg string) { toast(sse, msg, "error") }
 
 	profileID, ids, scopes, ok := s.activeProfileScopes()
 	if !ok || sIdx < 0 || sIdx >= len(scopes) {
@@ -261,8 +257,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	leases, _ := s.kea.GetLeases(r.Context(), 1000)
 	_ = sse.PatchElementTempl(views.ScopeServices(s.scopeServicesView(sc, sIdx)))
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
-	_ = sse.PatchElementTempl(views.Toast(msg, "success"),
-		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+	toast(sse, msg, "success")
 }
 
 // nilIfEmpty returns nil for an empty string so an UPDATE writes SQL NULL (the

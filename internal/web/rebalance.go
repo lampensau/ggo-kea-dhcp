@@ -179,7 +179,7 @@ func (s *Server) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
 			continue
 		}
 		moved++
-		_ = s.sqlite.LogAudit("system", "LEASE_REBALANCE",
+		_ = s.sqlite.LogAudit("SYSTEM", "LEASE_REBALANCE",
 			fmt.Sprintf("%s (%s): %s pool -> %s pool", m.IP, m.HW, m.FromClass, m.ToClass), "", "", "SUCCESS")
 	}
 	if moved > 0 {

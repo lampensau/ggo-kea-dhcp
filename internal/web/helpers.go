@@ -214,7 +214,7 @@ func splitFlexID(flex []byte) (remote, circuit []byte) {
 // sub-option yields two empty strings (shown as an em dash).
 //
 // Binary sub-options are detected and shown as hex automatically: any byte outside
-// printable ASCII fails isPrintable, so the ASCII view falls back to the hex. The
+// printable ASCII fails the printable test, so the ASCII view falls back to the hex. The
 // only concession is trailing NUL padding - some switches NUL-pad or NUL-terminate
 // an otherwise-ASCII identifier ("ether7\x00"), so trailing NULs are trimmed before
 // the printable test. Only the ASCII view is affected: the hex view stays exact and
@@ -224,7 +224,7 @@ func renderIDPart(b []byte) (ascii, hexStr string) {
 		return "", ""
 	}
 	hexStr = colonHex(b)
-	if s := string(bytes.TrimRight(b, "\x00")); isPrintable(s) {
+	if s := string(bytes.TrimRight(b, "\x00")); s != "" && isPrintableASCII(s) {
 		return s, hexStr
 	}
 	return hexStr, hexStr
@@ -291,15 +291,6 @@ func decodeHex(h string) string {
 		return h
 	}
 	return string(b)
-}
-
-func isPrintable(s string) bool {
-	for _, r := range s {
-		if r < 32 || r > 126 {
-			return false
-		}
-	}
-	return len(s) > 0
 }
 
 // opCtx bounds one background IO operation (live ticker, samplers, memoized

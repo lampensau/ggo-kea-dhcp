@@ -45,7 +45,7 @@ func flexIDToBytes(portIdentity string) []byte {
 // delimited remote+circuit flex-id, which carries a non-printable 0x1f) is
 // lowercase colon-hex, which flexIDToBytes round-trips back to the same bytes.
 func bytesToPortIdentity(b []byte) string {
-	if s := string(b); isPrintable(s) {
+	if s := string(b); s != "" && isPrintableASCII(s) {
 		return s
 	}
 	return colonHex(b)
@@ -421,9 +421,7 @@ func (s *Server) handleLabel(w http.ResponseWriter, r *http.Request) {
 
 	// Confirm via a toast without reloading the page.
 	if isDatastar(r) {
-		sse := datastar.NewSSE(w, r)
-		_ = sse.PatchElementTempl(views.Toast("Label updated for "+portIdentity, "success"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+		toast(datastar.NewSSE(w, r), "Label updated for "+portIdentity, "success")
 		return
 	}
 	s.setFlash(w, r, "Label updated for "+portIdentity, "success")

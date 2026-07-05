@@ -98,31 +98,35 @@ func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&b.AppSchema)
 	b.Lifecycle, _ = s.sqlite.GetState(db.LifecycleStateKey)
 
+	// Each table read runs in its own closure so `defer rows.Close()` releases the
+	// cursor before the next query: the sqlite pool is capped at ONE connection
+	// (db.SetMaxOpenConns(1)), so a cursor held open across a later Query would
+	// deadlock the export.
+
 	// Users. A backup that silently dropped an admin would lock the operator out on
 	// restore, so any read error fails the export rather than reporting success.
-	urows, err := s.sqlite.Query("SELECT username, password_hash FROM users ORDER BY id")
-	if err != nil {
-		return nil, fmt.Errorf("read users: %w", err)
-	}
-	for urows.Next() {
-		var u BackupUser
-		if err := urows.Scan(&u.Username, &u.PasswordHash); err != nil {
-			urows.Close()
-			return nil, fmt.Errorf("scan user: %w", err)
+	if err := func() error {
+		rows, err := s.sqlite.Query("SELECT username, password_hash FROM users ORDER BY id")
+		if err != nil {
+			return fmt.Errorf("read users: %w", err)
 		}
-		b.Users = append(b.Users, u)
+		defer rows.Close()
+		for rows.Next() {
+			var u BackupUser
+			if err := rows.Scan(&u.Username, &u.PasswordHash); err != nil {
+				return fmt.Errorf("scan user: %w", err)
+			}
+			b.Users = append(b.Users, u)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate users: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, err
 	}
-	if err := urows.Err(); err != nil {
-		urows.Close()
-		return nil, fmt.Errorf("iterate users: %w", err)
-	}
-	urows.Close()
 
 	// Profiles + scopes (scopes via the same ScopeConfig path the rest of the app uses).
-	prows, err := s.sqlite.Query("SELECT id, name, COALESCE(description,''), active FROM profiles ORDER BY id")
-	if err != nil {
-		return nil, fmt.Errorf("read profiles: %w", err)
-	}
 	type profRow struct {
 		id     int
 		name   string
@@ -130,19 +134,26 @@ func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 		active bool
 	}
 	var profs []profRow
-	for prows.Next() {
-		var p profRow
-		if err := prows.Scan(&p.id, &p.name, &p.desc, &p.active); err != nil {
-			prows.Close()
-			return nil, fmt.Errorf("scan profile: %w", err)
+	if err := func() error {
+		rows, err := s.sqlite.Query("SELECT id, name, COALESCE(description,''), active FROM profiles ORDER BY id")
+		if err != nil {
+			return fmt.Errorf("read profiles: %w", err)
 		}
-		profs = append(profs, p)
+		defer rows.Close()
+		for rows.Next() {
+			var p profRow
+			if err := rows.Scan(&p.id, &p.name, &p.desc, &p.active); err != nil {
+				return fmt.Errorf("scan profile: %w", err)
+			}
+			profs = append(profs, p)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("read profiles: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, err
 	}
-	if err := prows.Err(); err != nil {
-		prows.Close()
-		return nil, fmt.Errorf("read profiles: %w", err)
-	}
-	prows.Close()
 	for _, p := range profs {
 		scopes, err := s.loadScopeConfigs(p.id)
 		if err != nil {
@@ -152,23 +163,26 @@ func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	}
 
 	// Port labels.
-	lrows, err := s.sqlite.Query("SELECT flex_id_hex, label, COALESCE(location,''), COALESCE(notes,'') FROM port_labels")
-	if err != nil {
-		return nil, fmt.Errorf("read port labels: %w", err)
-	}
-	for lrows.Next() {
-		var l BackupPortLabel
-		if err := lrows.Scan(&l.FlexIDHex, &l.Label, &l.Location, &l.Notes); err != nil {
-			lrows.Close()
-			return nil, fmt.Errorf("scan port label: %w", err)
+	if err := func() error {
+		rows, err := s.sqlite.Query("SELECT flex_id_hex, label, COALESCE(location,''), COALESCE(notes,'') FROM port_labels")
+		if err != nil {
+			return fmt.Errorf("read port labels: %w", err)
 		}
-		b.PortLabels = append(b.PortLabels, l)
+		defer rows.Close()
+		for rows.Next() {
+			var l BackupPortLabel
+			if err := rows.Scan(&l.FlexIDHex, &l.Label, &l.Location, &l.Notes); err != nil {
+				return fmt.Errorf("scan port label: %w", err)
+			}
+			b.PortLabels = append(b.PortLabels, l)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate port labels: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return nil, err
 	}
-	if err := lrows.Err(); err != nil {
-		lrows.Close()
-		return nil, fmt.Errorf("iterate port labels: %w", err)
-	}
-	lrows.Close()
 
 	// MariaDB host reservations + pins. Captured only when MariaDB is reachable; the
 	// flag records that so restore knows whether an empty list means "none" or
