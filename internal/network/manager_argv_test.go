@@ -5,11 +5,19 @@ import "testing"
 func TestRestartService(t *testing.T) {
 	rec := &RecordingCommander{}
 	m := NewManagerWithCommander(rec)
-	if err := m.RestartService("kea-dhcp4"); err != nil {
+	if err := m.RestartService("isc-kea-dhcp4-server"); err != nil {
 		t.Fatalf("RestartService: %v", err)
 	}
-	if !callContaining(rec, "systemctl", "restart", "kea-dhcp4") {
+	if !callContaining(rec, "systemctl", "restart", "isc-kea-dhcp4-server") {
 		t.Errorf("calls=%v", rec.Calls)
+	}
+	// Any other unit is refused before reaching sudo (whose exact-argument rule
+	// would deny it on the Pi anyway).
+	if err := m.RestartService("caddy"); err == nil {
+		t.Error("RestartService(caddy) must be refused")
+	}
+	if callContaining(rec, "systemctl", "restart", "caddy") {
+		t.Errorf("refused unit still reached the Commander: %v", rec.Calls)
 	}
 }
 

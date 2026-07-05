@@ -20,7 +20,7 @@ GGO_VERSION ?= $(shell sed -n 's/.*Number = "\(.*\)".*/\1/p' internal/version/ve
 DEPLOY_HOST ?= 10.0.0.1
 DEPLOY_USER ?= timo
 
-.PHONY: generate build vet test all check cover-gate pi deb deploy release
+.PHONY: generate build vet test all check cover-gate cover-floors pi deb deploy release
 
 generate:
 	$(TEMPL) generate
@@ -59,9 +59,10 @@ check: generate
 		echo "shellcheck not installed - skipping (CI still runs it)"; \
 	fi
 
-# Enforce the total-coverage threshold on an existing coverage.txt (produced by
-# `make test`). Single source of truth - CI calls this too.
-cover-gate:
+# Enforce the total-coverage threshold AND the per-package regression floors
+# (scripts/cover_floors.sh) on an existing coverage.txt (produced by `make
+# test`). Single source of truth - CI calls this too.
+cover-gate: cover-floors
 	@go tool cover -func=coverage.txt | awk -v threshold="50.0" '/total:/ { \
 		split($$NF, a, "%"); \
 		coverage = a[1]; \
@@ -72,6 +73,9 @@ cover-gate:
 			print "Success: Code coverage (" coverage "%) meets threshold (" threshold "%)"; \
 		} \
 	}'
+
+cover-floors:
+	@./scripts/cover_floors.sh
 
 # Cross-compile for the Raspberry Pi (ARM64). Adjust GOARCH=arm + GOARM=7 for 32-bit.
 pi: generate
