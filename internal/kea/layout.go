@@ -222,7 +222,7 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 		for _, i := range elasticIdx {
 			// FloorForClass, not the bare layoutMinPool: a catch-all landing as the
 			// elastic remainder keeps its higher safety-net floor (see the invariant
-			// on FloorForClass), matching the seed path's ForecastForClass.
+			// on FloorForClass), matching the seed path's SizeForClass.
 			if floor := FloorForClass(specs[i].Class); sizes[i] < floor {
 				return nil, fmt.Errorf("subnet too small for the configured pools: elastic pool %q would get only %d addresses (min %d) - reduce device counts or use a larger subnet", specs[i].Class, sizes[i], floor)
 			}
@@ -251,11 +251,13 @@ func LayoutPools(cidr string, specs []PoolSpec) ([]PoolPlacement, error) {
 				return nil, fmt.Errorf("no free space left for elastic pool %q", specs[i].Class)
 			}
 			sz = min(sz, int(gaps[gi].hi-gaps[gi].lo)+1)
-			// Pass 2 guaranteed >= layoutMinPool against TOTAL free space, but a single
-			// gap can be smaller when pinned ranges fragment the subnet. Re-check so we
-			// error rather than silently emit a sub-floor pool.
-			if sz < layoutMinPool {
-				return nil, fmt.Errorf("subnet too fragmented for elastic pool %q: its largest free gap holds only %d addresses (min %d) - try Auto-Fill or free a pinned range", specs[i].Class, sz, layoutMinPool)
+			// Pass 2 guaranteed the CLASS floor (FloorForClass) against TOTAL free
+			// space, but a single gap can be smaller when pinned ranges fragment the
+			// subnet. Re-check against the same class floor so a catch-all capped
+			// into a small gap errors rather than silently emitting a sub-floor
+			// safety net.
+			if floor := FloorForClass(specs[i].Class); sz < floor {
+				return nil, fmt.Errorf("subnet too fragmented for elastic pool %q: its largest free gap holds only %d addresses (min %d) - try Auto-Fill or free a pinned range", specs[i].Class, sz, floor)
 			}
 		}
 		g := gaps[gi]
