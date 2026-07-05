@@ -151,3 +151,57 @@ func TestSettingsSaveConfiguringDefers(t *testing.T) {
 		s.endReconcile()
 	}
 }
+
+// A settings form rendered while ACTIVE carries the WiFi-uplink fields, but the
+// uplink block runs only in ACTIVE - a submit landing after the flip to
+// CONFIGURING drops them entirely. The deferred flash must say so instead of
+// implying every field was saved.
+func TestSettingsSaveConfiguringNamesDroppedUplink(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	form := url.Values{
+		"lease_lifetime": {"3600"},
+		"uplink_enabled": {"on"},
+		"uplink_ssid":    {"VenueNet"},
+		"uplink_pass":    {"secret-pass"},
+	}
+	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.handleSettingsSave(rr, req)
+
+	c := flashCookie(rr)
+	if c == nil {
+		t.Fatal("no flash cookie set")
+	}
+	req2 := httptest.NewRequest("GET", "/settings", nil)
+	req2.AddCookie(&http.Cookie{Name: "ggo_flash", Value: c.Value})
+	f := s.getFlash(httptest.NewRecorder(), req2)
+	if f == nil {
+		t.Fatal("flash did not decode")
+	}
+	if !strings.Contains(f.Message, "uplink") {
+		t.Errorf("flash %q does not mention the dropped uplink fields", f.Message)
+	}
+	if ssid, _ := s.sqlite.GetState("uplink_ssid"); ssid == "VenueNet" {
+		t.Error("the uplink fields were persisted in CONFIGURING - the message would then be wrong the other way")
+	}
+
+	// A submit WITHOUT uplink fields keeps the plain deferred message.
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/settings/save", strings.NewReader(url.Values{"lease_lifetime": {"7200"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.handleSettingsSave(rr, req)
+	c = flashCookie(rr)
+	if c == nil {
+		t.Fatal("no flash cookie on the second save")
+	}
+	req2 = httptest.NewRequest("GET", "/settings", nil)
+	req2.AddCookie(&http.Cookie{Name: "ggo_flash", Value: c.Value})
+	if f := s.getFlash(httptest.NewRecorder(), req2); f == nil || strings.Contains(f.Message, "uplink") {
+		t.Errorf("uplink warning appeared on a save without uplink fields: %+v", f)
+	}
+}

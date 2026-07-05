@@ -208,7 +208,15 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// in-flight apply picks them up depends on where it happened to be - so
 		// give the same honest deferred message the guard-busy paths use instead
 		// of a success flash that implies the change is live.
-		s.setFlash(w, r, settingsDeferredMsg, "info")
+		msg := settingsDeferredMsg
+		// A form rendered while still ACTIVE carries the WiFi-uplink fields, but
+		// the uplink block above runs only in ACTIVE - so a submit landing after
+		// the flip drops those fields entirely. Say so instead of implying they
+		// were saved with the rest.
+		if r.Form.Has("uplink_enabled") || r.Form.Has("uplink_ssid") {
+			msg += " WiFi uplink changes were NOT saved - reopen Settings once the change finishes."
+		}
+		s.setFlash(w, r, msg, "info")
 		s.redirectHTMX(w, r, "/settings")
 		return
 	}

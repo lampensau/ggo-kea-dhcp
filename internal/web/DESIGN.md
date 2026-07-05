@@ -183,9 +183,16 @@ Token-driven classes (defined in `static/style.css`). Shared focus ring via
   config (e.g. enable WiFi). A plain checkbox is fine where a switch is overkill.
 - **`.meter`** green fill on sunken track → `.warn` amber ≥80% → `.err` red ≥95%;
   pair with `role="progressbar"` + aria values.
-- **`.tile`** - left-aligned greyscale 28px value + leading status dot (meaning
-  comes from the dot). Uplink "Offline" = neutral grey, **not red** (expected on
-  an isolated net).
+- **`.stat-tile`** (in a `.tile-grid`, column count pinned via the inline
+  `--tiles` var) - the dashboard's live stat strip: a `.tile-label` header
+  (status dot + icon + label + optional `.tile-edit` pencil), the 28/600
+  `.tile-value` with optional unit/delta, then a **server-rendered inline-SVG
+  `.sparkline`** (a translucent `<polygon>` area under a `<polyline>`, colored by
+  the severity class through tokens so it auto-themes; `sr-only` trend summary
+  for screen readers; framework-free hover tooltip from `data-tips`). **Never a
+  charting library or canvas** - both break the SSE-morph model and cannot theme
+  via CSS vars. Meaning comes from the dot; uplink "Offline" = neutral grey,
+  **not red** (expected on an isolated net).
 - **`.alert`** `-info / -warn / -err` strips (left border + icon carry status).
 - **`.toast`** - flat, left-border + icon carries status, `aria-live`; 5s
   auto-dismiss (errors persist).
@@ -208,14 +215,24 @@ The core behavior: **the operator never refreshes and is never frozen.**
   (CIDR auto-calc, show/hide fields, add/remove scope cards) is **pure client-side
   Datastar signals**, zero backend calls.
 - **Channel.** A hidden element opens `GET /sse/live` on load. The Go SSE hub
-  (`internal/web/live.go`) pushes `PatchElements` to **stable region ids**:
-  `#state-badge`, `#dash-tiles`, `#pool-table`, `#leases-body`, `#learnable-body`,
-  `#link-status`. **Each fragment is rendered by the same templ partial used for
-  first paint**, so live and initial markup cannot drift.
+  (`internal/web/live.go`) pushes `PatchElements` to **stable region ids**, scoped
+  per page by `regionOnPage` - **that function is the canonical region list; when
+  a region is added or renamed, update it and this section together.** The shell
+  set (`#state-badge`, `#sys-health`, `#backend-alert`, `#kea-toast`,
+  `#update-badge`, `#standdown-toast`) reaches every authenticated page; the rest
+  are page-owned: the dashboard's ten (tiles, LLDP chip, pool table + rollup,
+  recent leases, activity feed, net-health card + rollup, pinnings + rollup),
+  `#leases-body` on /leases, the four pinned/learnable regions on /pinning, the
+  wizard's `#link-status` + `#shield-status`, and `#diag-audit` on /diagnostics.
+  **Each fragment is rendered by the same templ partial used for first paint**,
+  so live and initial markup cannot drift.
 - **Event sources.** Lifecycle/link/uplink/pool transitions publish from
   `reconcileActive` / `beginApply` / `finishApply` / settings / reset (event-driven,
-  instant). Kea-derived lists refresh on a 3–5s server ticker **only while a client
-  is connected**, pushed **only on change** (per-region hash). Idle clients cost nothing.
+  instant). Kea-derived lists refresh on a **4s server ticker only while a client
+  is connected**, pushed **only on change** (per-region hash) - idle clients cost
+  nothing. Independent of viewers, an always-on **12s metrics sampler**
+  (`internal/web/metrics.go`) keeps the stat-tile trend rings warm, so a
+  cold-opened dashboard has sparkline history instead of an empty strip.
 - **Non-blocking actions.** Every mutating control (`@post`/`@delete`) uses
   `data-indicator` for a localized in-flight spinner; the rest of the page stays
   interactive. The server responds immediately; results arrive as merges.
@@ -280,7 +297,12 @@ grep -rn 'style="' internal/web/views --include='*.templ'   # only dynamic value
 grep -rn 'blur(\|gradient\|box-shadow.*glow\|text-shadow' internal/web/static/style.css
 # Datastar keyed plugins written with a hyphen instead of a colon (must be empty):
 grep -rnE 'data-(on|attr|class|bind|indicator|ref|computed)-[a-z]' internal/web/views --include='*.templ'
+# charting libs / canvas (sparklines are server-rendered inline SVG only - must be empty):
+grep -rniE '<canvas|chart\.js|apexcharts|echarts' internal/web/views internal/web/static
 ```
+
+When a live region is added or renamed, `regionOnPage` (live.go) and §9's region
+summary change together - the function is canonical, the prose is the map.
 
 Verification per phase: `templ generate && go build -mod=vendor . && go vet
 -mod=vendor ./... && go test -mod=vendor ./...`. The appliance binary is **never
