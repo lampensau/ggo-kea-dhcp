@@ -255,3 +255,34 @@ func TestFetchPortLabelsTranslatesLegacyKeys(t *testing.T) {
 		t.Errorf("hex-shaped legacy key should pass through: %v", labels)
 	}
 }
+
+// TestLegacyLabelAliasCleared pins the zombie-label fix: a label row stored
+// under the pre-hex printable key must be cleared by any write under the new
+// hex key - otherwise a rename is shadowed and a cleared label resurrects
+// through fetchPortLabels' translate-on-read.
+func TestLegacyLabelAliasCleared(t *testing.T) {
+	s, _ := newTestServer(t)
+	raw := []byte("switch/Gi1/0/4")
+	hexKey := bytesToPortIdentity(raw)
+	if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?)", string(raw), "Old Name"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rename under the new key must not leave the old row shadowing.
+	if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?)", hexKey, "New Name"); err != nil {
+		t.Fatal(err)
+	}
+	s.clearLegacyLabelAlias(hexKey)
+	labels, err := s.fetchPortLabels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := labels[hexKey]; got != "New Name" {
+		t.Errorf("label = %q, want the rename to win over the legacy alias", got)
+	}
+	var n int
+	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM port_labels").Scan(&n)
+	if n != 1 {
+		t.Errorf("port_labels rows = %d, want the legacy alias gone", n)
+	}
+}
