@@ -453,7 +453,7 @@ func TestLeasesBodyVariants(t *testing.T) {
 		{IPAddress: "10.0.0.9", HWAddress: "00:1f:80:11:22:33", Class: "GGO-WP-X", Reserved: true, SubnetID: 1},
 		{IPAddress: "10.0.0.12", HWAddress: "00:1f:80:44:55:66", Class: "GGO-BPX", Reserved: true, PortPinned: true},
 	}
-	html := render(t, LeasesBody(rows, "tok", true))
+	html := render(t, LeasesBody(rows, true))
 	for _, want := range []string{
 		"10.0.0.50", "10.0.0.9", "10.0.0.12",
 		`data-expires="1893456000"`, // live countdown epoch on the active lease
@@ -477,7 +477,7 @@ func TestLeasesBodyNoLeaseStates(t *testing.T) {
 		{IPAddress: "10.0.0.42", HWAddress: "00:1f:80:aa:bb:01", Class: "GGO-BPX", Presence: "online", NoLeaseState: "awaiting"},
 		{IPAddress: "10.0.0.77", HWAddress: "00:1f:80:aa:bb:02", Class: "GGO-BPX", Presence: "online", NoLeaseState: "static"},
 	}
-	html := render(t, LeasesBody(rows, "tok", true))
+	html := render(t, LeasesBody(rows, true))
 	for _, want := range []string{
 		"awaiting renewal", "badge-info",
 		"static in pool", "badge-warn",

@@ -143,28 +143,12 @@ templ configMenu(profiles []ProfileOption, csrf string, showEditPools bool) {
 				for _, p := range profiles {
 					if !p.Active {
 						<div class="config-row">
-							<form
-								method="post"
-								action="/profile/activate"
-								onsubmit="return confirm('Switch to this configuration? The appliance will re-IP and your connection will briefly drop while it reconnects.')"
-							>
-								<input type="hidden" name="csrf_token" value={ csrf }/>
-								<input type="hidden" name="profile_id" value={ itoa(p.ID) }/>
-								<button type="submit" class="config-item">
-									@Icon("refresh-cw")
-									<span class="config-item-name">{ p.Name }</span>
-									<span class="config-item-meta">{ itoa(p.ScopeCount) } { pluralize(p.ScopeCount, "scope", "scopes") }</span>
-								</button>
-							</form>
-							<form
-								method="post"
-								action="/profile/delete"
-								onsubmit="return confirm('Delete this saved configuration? This cannot be undone.')"
-							>
-								<input type="hidden" name="csrf_token" value={ csrf }/>
-								<input type="hidden" name="profile_id" value={ itoa(p.ID) }/>
-								<button type="submit" class="config-del" title="Delete configuration" aria-label={ "Delete " + p.Name }>@Icon("trash-2")</button>
-							</form>
+							<button type="button" class="config-item" data-profile={ itoa(p.ID) } data-name={ p.Name } onclick="ggoProfileOpen('profile-activate-dialog', this)">
+								@Icon("refresh-cw")
+								<span class="config-item-name">{ p.Name }</span>
+								<span class="config-item-meta">{ itoa(p.ScopeCount) } { pluralize(p.ScopeCount, "scope", "scopes") }</span>
+							</button>
+							<button type="button" class="config-del" data-profile={ itoa(p.ID) } data-name={ p.Name } onclick="ggoProfileOpen('profile-delete-dialog', this)" title="Delete configuration" aria-label={ "Delete " + p.Name }>@Icon("trash-2")</button>
 						</div>
 					}
 				}
@@ -183,6 +167,74 @@ templ configMenu(profiles []ProfileOption, csrf string, showEditPools bool) {
 			</a>
 		</div>
 	</details>
+	if hasOtherProfiles(profiles) {
+		@profileActivateDialog(csrf)
+		@profileDeleteDialog(csrf)
+		@profileConfirmScript()
+	}
+}
+
+// profileActivateDialog / profileDeleteDialog are the single confirm dialogs
+// for the Manage menu's per-profile actions; ggoProfileOpen fills profile_id
+// and the name line from the clicked row. Native POST forms with tokens baked
+// at render time - the menu is static first-paint structure, never a live
+// morph target. Activating re-IPs the box, so the server answers with the
+// reconnect interstitial, same as before.
+templ profileActivateDialog(csrf string) {
+	<dialog id="profile-activate-dialog" aria-labelledby="profile-activate-dialog-title">
+		<form method="post" action="/profile/activate" data-busy>
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="profile_id"/>
+			<div class="dialog-head" id="profile-activate-dialog-title">Switch to this configuration?</div>
+			<div class="dialog-body">
+				<p>The appliance will re-IP and your connection will briefly drop while it reconnects.</p>
+				<dl class="kv">
+					<dt>Configuration</dt><dd id="profile-activate-dialog-name"></dd>
+				</dl>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-primary">@Icon("refresh-cw") Switch Configuration</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ profileDeleteDialog(csrf string) {
+	<dialog id="profile-delete-dialog" aria-labelledby="profile-delete-dialog-title">
+		<form method="post" action="/profile/delete" data-busy>
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="profile_id"/>
+			<div class="dialog-head" id="profile-delete-dialog-title">Delete this saved configuration?</div>
+			<div class="dialog-body">
+				<p>This cannot be undone.</p>
+				<dl class="kv">
+					<dt>Configuration</dt><dd id="profile-delete-dialog-name"></dd>
+				</dl>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-danger-solid">@Icon("trash-2") Delete Configuration</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+// profileConfirmScript defines the shared opener for both profile dialogs. It
+// also folds the Manage dropdown shut so the modal isn't stacked on the open
+// menu (a form submit used to navigate away; a dialog cancel would not).
+templ profileConfirmScript() {
+	<script>
+		window.ggoProfileOpen = function (id, btn) {
+			var d = document.getElementById(id);
+			if (!d) return;
+			d.querySelector("[name=profile_id]").value = btn.dataset.profile || "";
+			document.getElementById(id + "-name").textContent = btn.dataset.name || "";
+			var menu = btn.closest("details");
+			if (menu) menu.removeAttribute("open");
+			d.showModal();
+		};
+	</script>
 }
 
 // The dashboard stat strip is StatTiles (views/stattile.templ) - four live tiles

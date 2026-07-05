@@ -21,6 +21,7 @@ templ Pinning(v PinningView) {
 				@pinnedCard(v)
 				@learnableCard(v)
 				@pinDialog(v.Page.CSRFToken)
+				@unpinDialog(v.Page.CSRFToken)
 				@pinningScript()
 			}
 		</div>
@@ -160,21 +161,44 @@ templ labelForm(p PortRow, csrf string) {
 	</form>
 }
 
-// unpinForm is a native POST (not a Datastar @post): the native pin form works
-// reliably, so unpin mirrors it - full POST + server redirect back to /pinning,
-// which refreshes the list so a removed pin actually disappears.
-//
-// The live SSE ticker re-renders #pinned-body and broadcasts it with an EMPTY CSRF
-// (a broadcast can't carry a per-session token), which wipes the form's token. So
-// the token is set from the page <meta> in onsubmit - at submit time, immune to any
-// prior morph (data-init is unreliable: it may not re-run after a morph).
-templ unpinForm(p PortRow, csrf string) {
-	<form method="post" action="/pinning/unpin" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;return confirm('Unpin this port? The device will fall back to a dynamic address on its next request.')">
-		<input type="hidden" name="csrf_token" value={ csrf }/>
-		<input type="hidden" name="port_identity" value={ p.PortIdentity }/>
-		<input type="hidden" name="subnet_id" value={ itoa(p.SubnetID) }/>
-		<button class="btn btn-sm btn-danger" type="submit">@Icon("pin-off") Unpin</button>
-	</form>
+// unpinButton opens the shared unpin confirm dialog (unpinDialog, mounted
+// outside the live region so a ticker morph can't wipe it) prefilled from the
+// row's data attributes.
+templ unpinButton(p PortRow) {
+	<button
+		type="button"
+		class="btn btn-sm btn-danger"
+		data-port={ p.PortIdentity }
+		data-portlabel={ portLabel(p) }
+		data-subnet={ itoa(p.SubnetID) }
+		onclick="ggoUnpinOpen(this)"
+	>@Icon("pin-off") Unpin</button>
+}
+
+// unpinDialog is the single unpin confirm dialog: a native POST form like the
+// pin dialog (full POST + server redirect back to /pinning). It sits outside
+// the live #pinned-body region, so its render-time CSRF token survives every
+// SSE morph - unlike the old per-row forms, which had to re-read the token
+// from the page <meta> at submit time.
+templ unpinDialog(csrf string) {
+	<dialog id="unpin-dialog" aria-labelledby="unpin-dialog-title">
+		<form method="post" action="/pinning/unpin" data-busy>
+			<input type="hidden" name="csrf_token" value={ csrf }/>
+			<input type="hidden" name="port_identity"/>
+			<input type="hidden" name="subnet_id"/>
+			<div class="dialog-head" id="unpin-dialog-title">Unpin this port?</div>
+			<div class="dialog-body">
+				<p>The device will fall back to a dynamic address on its next request.</p>
+				<dl class="kv">
+					<dt>Port</dt><dd class="mono" id="unpin-dialog-port"></dd>
+				</dl>
+			</div>
+			<div class="dialog-foot">
+				<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+				<button type="submit" class="btn btn-danger-solid">@Icon("pin-off") Unpin Port</button>
+			</div>
+		</form>
+	</dialog>
 }
 
 // pinButton opens the confirm dialog prefilled from the row's data attributes.
@@ -247,7 +271,7 @@ templ PinnedBody(pinned []PortRow, csrf string) {
 				<td class="mono">{ p.IPAddress }</td>
 				<td class="mono col-mac">{ orDash(p.HWAddress) }</td>
 				<td>{ orDash(p.Hostname) }</td>
-				<td class="col-actions">@unpinForm(p, csrf)</td>
+				<td class="col-actions">@unpinButton(p)</td>
 			</tr>
 		}
 	</tbody>
@@ -300,6 +324,14 @@ templ pinningScript() {
 			var typed = row ? row.querySelector("input[name=label]") : null;
 			d.querySelector("[name=label]").value = (typed && typed.value) ? typed.value : (btn.dataset.label || "");
 			document.getElementById("pin-dialog-port").textContent = btn.dataset.portlabel || btn.dataset.port || "";
+			d.showModal();
+		};
+		window.ggoUnpinOpen = function (btn) {
+			var d = document.getElementById("unpin-dialog");
+			if (!d) return;
+			d.querySelector("[name=port_identity]").value = btn.dataset.port || "";
+			d.querySelector("[name=subnet_id]").value = btn.dataset.subnet || "";
+			document.getElementById("unpin-dialog-port").textContent = btn.dataset.portlabel || btn.dataset.port || "";
 			d.showModal();
 		};
 	</script>

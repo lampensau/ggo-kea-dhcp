@@ -353,7 +353,7 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), "", s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 

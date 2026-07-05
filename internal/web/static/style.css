@@ -544,7 +544,6 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 .config-divider { height:1px; background:var(--border); margin:5px 0; }
 .config-row { display:flex; align-items:center; gap:2px; }
 .config-row .config-item { flex:1; }
-.config-row form { margin:0; }
 .config-del { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; flex:none; border:none; background:none; color:var(--text-muted); border-radius:var(--r-sm); cursor:pointer; }
 .config-del:hover { background:var(--err-tint); color:var(--err); }
 .config-del .lucide { width:15px; height:15px; }
