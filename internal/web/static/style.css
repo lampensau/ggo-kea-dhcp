@@ -147,7 +147,8 @@ a.status-pill:hover { filter:brightness(1.08); }
 .account-who { padding:8px 10px 9px; font-size:12.5px; color:var(--text-secondary); border-bottom:1px solid var(--border); margin-bottom:4px; }
 .account-who strong { color:var(--text); }
 .account-item { display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:none; background:none; color:var(--text); font:inherit; font-size:13.5px; text-align:left; border-radius:var(--r-sm); cursor:pointer; }
-.account-item:hover { background:var(--err-tint); color:var(--err); }
+.account-item:hover { background:var(--surface-2); }
+.account-item.is-danger:hover { background:var(--err-tint); color:var(--err); }
 .account-item .lucide { width:16px; height:16px; }
 
 .count-badge { display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:18px; padding:0 6px; margin-left:7px; border-radius:var(--r-full); background:var(--surface-3); color:var(--text-secondary); font-size:11px; font-weight:600; font-feature-settings:"tnum" 1; vertical-align:middle; }

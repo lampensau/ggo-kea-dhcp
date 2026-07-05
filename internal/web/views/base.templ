@@ -424,16 +424,16 @@ templ accountMenu(d PageData) {
 			if d.Username != "" {
 				<div class="account-who">Signed in as <strong>{ d.Username }</strong></div>
 			}
-			if d.Authenticated {
+			if d.State == "ACTIVE" {
 				<button type="button" class="account-item" onclick="this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()">@Icon("key") Account</button>
 			}
 			<form method="post" action="/logout">
 				<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>
-				<button type="submit" class="account-item">@Icon("log-out") Sign Out</button>
+				<button type="submit" class="account-item is-danger">@Icon("log-out") Sign Out</button>
 			</form>
 		</div>
 	</details>
-	if d.Authenticated {
+	if d.State == "ACTIVE" {
 		@accountDialog(d)
 		@pwStrengthScript()
 	}
