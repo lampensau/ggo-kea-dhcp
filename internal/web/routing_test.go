@@ -59,6 +59,11 @@ func TestStateRedirectFor_Extra(t *testing.T) {
 		// ACTIVE allows the wizard and all dashboard pages.
 		{db.StateActive, "/settings", ""},
 		{db.StateActive, "/leases", ""},
+		// The /factory bootstrap POSTs carry no re-auth and belong to the FACTORY
+		// window only - they must not be reachable by an ACTIVE/CONFIGURING session.
+		{db.StateActive, "/factory/restore", "/dashboard"},
+		{db.StateActive, "/factory/setup", "/dashboard"},
+		{db.StateConfiguring, "/factory/restore", "/dashboard"},
 		// An unexpected/empty state is permissive (no redirect from this pure fn).
 		{"WEIRD", "/dashboard", ""},
 		{"", "/dashboard", ""},

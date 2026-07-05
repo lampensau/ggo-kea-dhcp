@@ -724,12 +724,17 @@ func stateRedirectFor(state, path string) string {
 		// second apply from starting). The reconnect interstitial's /dashboard
 		// navigation lands on the dashboard instead of bouncing to /setup before
 		// the apply goroutine flips the state to ACTIVE.
-		if path == "/setup" || path == "/setup/apply" {
+		if path == "/setup" || path == "/setup/apply" || strings.HasPrefix(path, "/factory") {
 			return "/dashboard"
 		}
 	case db.StateActive:
 		// ACTIVE allows the setup wizard as "create a new configuration" - that is
-		// how a second profile (and thus profile switching) becomes reachable.
+		// how a second profile (and thus profile switching) becomes reachable. The
+		// /factory bootstrap POSTs are the exception: they carry no re-auth and exist
+		// only for the pre-auth FACTORY window, so they must not be reachable here.
+		if strings.HasPrefix(path, "/factory") {
+			return "/dashboard"
+		}
 	}
 	return ""
 }
