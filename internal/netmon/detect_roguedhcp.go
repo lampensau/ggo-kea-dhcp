@@ -12,15 +12,21 @@ const defaultRogueAbsence = 120 * time.Second
 
 // rogueDHCPDetector flags any DHCP server other than us answering on the wire - a
 // competing server hands clients wrong addresses/gateways and breaks the show.
-// It self-suppresses against our own interface/server IPs (passed at Start) and
+// It self-suppresses by our own source MAC, not the option-54 server-id: the
+// server-id is an attacker-controlled field, so a rogue that forges it to the
+// box's IP would evade an IP-keyed filter entirely; the source MAC is an L2 fact
+// (spoofing it is harder and switch-detectable). One physical NIC MAC also covers
+// every served scope, tagged or not - all our OFFERs egress the same eth0 MAC -
+// so a mixed untagged+VLAN box never self-flags its own per-VLAN offers. It
 // reports the offender's IP + MAC/OUI. High severity. Passive (UDP sport 67,
-// OFFER/ACK). During ONBOARDING the same detector backs the wizard's shield
-// badge via RogueProbe (with no self IPs - the box is not serving DHCP yet).
+// OFFER/ACK). During ONBOARDING the same detector backs the wizard's shield badge
+// via RogueProbe, keyed on eth0's MAC (the box already serves its onboarding pool).
 type rogueDHCPDetector struct {
-	iface   string
-	selfIPs map[[4]byte]bool
-	absence time.Duration
-	servers map[[4]byte]*rogueServer
+	iface      string
+	selfMAC    [6]byte
+	selfMACSet bool
+	absence    time.Duration
+	servers    map[[4]byte]*rogueServer
 }
 
 type rogueServer struct {
@@ -30,19 +36,16 @@ type rogueServer struct {
 	present bool
 }
 
-func newRogueDHCPDetector(iface string, selfIPs [][4]byte, absence time.Duration) *rogueDHCPDetector {
+func newRogueDHCPDetector(iface string, selfMAC [6]byte, macKnown bool, absence time.Duration) *rogueDHCPDetector {
 	if absence <= 0 {
 		absence = defaultRogueAbsence
 	}
-	set := make(map[[4]byte]bool, len(selfIPs))
-	for _, ip := range selfIPs {
-		set[ip] = true
-	}
 	return &rogueDHCPDetector{
-		iface:   iface,
-		selfIPs: set,
-		absence: absence,
-		servers: make(map[[4]byte]*rogueServer),
+		iface:      iface,
+		selfMAC:    selfMAC,
+		selfMACSet: macKnown,
+		absence:    absence,
+		servers:    make(map[[4]byte]*rogueServer),
 	}
 }
 
@@ -68,15 +71,16 @@ func (d *rogueDHCPDetector) Consume(f Frame, now time.Time) {
 	if !opts.hasServerID || (opts.msgType != 2 && opts.msgType != 5) { // OFFER or ACK only
 		return
 	}
-	if d.selfIPs[opts.serverID] {
-		return // that's us
+	mac, macOK := srcMAC(f.Data)
+	if d.selfMACSet && macOK && mac == d.selfMAC {
+		return // that's us - our own OFFER/ACK, identified by the physical NIC MAC
 	}
 	srv := d.servers[opts.serverID]
 	if srv == nil {
 		srv = &rogueServer{pres: newPresence(0, d.absence), ip: ipString(opts.serverID)}
 		d.servers[opts.serverID] = srv
 	}
-	if mac, ok := srcMAC(f.Data); ok {
+	if macOK {
 		srv.mac = macString(mac)
 	}
 	srv.pres.sighting(now)

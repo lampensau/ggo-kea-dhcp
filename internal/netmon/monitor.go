@@ -16,8 +16,6 @@ import (
 
 const (
 	monitorTick        = 2 * time.Second
-	defaultDutyOn      = 5 * time.Second
-	defaultDutyOff     = 60 * time.Second
 	defaultFaultBudget = 5
 	baseBackoff        = 500 * time.Millisecond
 	maxBackoff         = 30 * time.Second
@@ -37,11 +35,17 @@ type Spec struct {
 	// Greengo marks an interface served by a Green-GO-preset scope: it attaches the
 	// Green-GO census + 'h'-config detectors and the UDP-5810 'h' BPF clause. Off on
 	// non-Green-GO scopes so they neither run those detectors nor capture 5810.
-	Greengo        bool
-	InterfaceIPs   [][4]byte // our IPs on this iface (rogue-DHCP self-suppress, static-in-pool infra)
-	Pools          []PoolRange
-	ConfiguredVIDs []int
-	Leases         LeaseSnapshotFunc
+	Greengo      bool
+	InterfaceIPs [][4]byte // our IPs on this iface (static-in-pool infra exclusion)
+	// InterfaceMAC is the box's own L2 address on this iface's NIC; the rogue-DHCP
+	// detector suppresses our own OFFER/ACK by matching it (a source-MAC fact, not
+	// the forgeable option-54 server-id). InterfaceMACSet is false when it could not
+	// be read (dev sandbox / iface down), in which case no self-suppression is done.
+	InterfaceMAC    [6]byte
+	InterfaceMACSet bool
+	Pools           []PoolRange
+	ConfiguredVIDs  []int
+	Leases          LeaseSnapshotFunc
 	// LeaseLifetime is the active profile's lease lifetime in seconds. The
 	// static-in-pool detector sizes its lease-history grace to ~T1 (half of it) so a
 	// client that just lost a lease isn't flagged as static before it can re-DHCP.
@@ -55,7 +59,7 @@ type Spec struct {
 	// RawTrunkOnly marks a synthesized raw-eth0 monitor for a pure-trunk profile
 	// (no untagged scope): it runs ONLY the VLAN-reality detector, so the other
 	// detectors don't misfire on a monitor that has no served scope of its own
-	// (e.g. rogue-DHCP with no self-IP would flag our own per-VLAN offers).
+	// (e.g. static-in-pool with no configured pool, or a scope-less rogue watch).
 	RawTrunkOnly bool
 }
 
@@ -107,7 +111,7 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 	dets := []Detector{
 		newIGMPDetector(spec.Iface, th.IGMPAbsence),
 		newLLDPDetector(spec.Iface, linkUp),
-		newRogueDHCPDetector(spec.Iface, spec.InterfaceIPs, 0),
+		newRogueDHCPDetector(spec.Iface, spec.InterfaceMAC, spec.InterfaceMACSet, 0),
 		newDuplicateIPDetector(spec.Iface, 0),
 		newPTPDetector(spec.Iface, 0),
 		newStormDetector(spec.Iface, th.StormPPS, rx),
@@ -164,7 +168,6 @@ type Monitor struct {
 	gov       *governor
 	clock     func() time.Time
 	hosts     *hostTracker
-	rx        rxCounterFunc
 
 	tickInterval time.Duration
 	baseBackoff  time.Duration
@@ -177,17 +180,9 @@ type Monitor struct {
 	cur     Sniffer
 	stopped bool
 
-	// duty-cycle + promiscuous single-owner state (monitor goroutine only)
-	dutyWindowOpen bool
-	lastToggle     time.Time
-	promiscOn      bool
-	joiner         *multicastJoiner
-
-	// pps computation for the governor
-	lastRx     uint64
-	lastRxTime time.Time
-	haveRx     bool
-	curPPS     int
+	// promiscuous single-owner state (monitor goroutine only)
+	promiscOn bool
+	joiner    *multicastJoiner
 
 	// Frame-clock: a clock for the frame-fed detectors that PAUSES while frames
 	// are being dropped (>= LevelCountersOnly). Their absence/debounce timers run
@@ -213,7 +208,7 @@ type framesFreezer interface{ setFramesDropped(bool) }
 // blind time).
 func (m *Monitor) frameNow() time.Time { return m.clock().Add(-m.frameClockOffset) }
 
-func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, gov *governor, clock func() time.Time, tick, backoff time.Duration, budget int, rx rxCounterFunc) *Monitor {
+func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, gov *governor, clock func() time.Time, tick, backoff time.Duration, budget int) *Monitor {
 	slots := make([]*detectorSlot, len(detectors))
 	for i, d := range detectors {
 		// sysfs-counter-fed detectors survive L2 (counters-only), so they keep ticking
@@ -234,7 +229,7 @@ func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *Snapsho
 	}
 	return &Monitor{
 		spec: spec, openFn: openFn, filter: filter, detectors: slots,
-		store: store, sink: sink, gov: gov, clock: clock, hosts: newHostTracker(), rx: rx,
+		store: store, sink: sink, gov: gov, clock: clock, hosts: newHostTracker(),
 		tickInterval: tick, baseBackoff: backoff, faultBudget: budget,
 		quit: make(chan struct{}),
 	}
@@ -361,8 +356,6 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 	available := !isNop(sn)
 	cc, _ := sn.(capControl)
 	m.promiscOn = false
-	m.dutyWindowOpen = false
-	m.lastToggle = m.clock()
 	m.joiner = nil
 	// Join the cheap, fixed known groups (PTP + mDNS) whenever we have a real
 	// capture socket - independent of MulticastSniff. These are benign receiver
@@ -457,21 +450,31 @@ func (m *Monitor) onTick(cc capControl, available bool) {
 		m.frameClockOffset += now.Sub(m.lastTickNow)
 	}
 
-	// Dual overflow signals → governor level. Wire pps is read here too but feeds
-	// only the duty-window suppression below, never the level (see govInputs).
+	// Dual overflow signals → governor level (see govInputs). Wire pps is
+	// deliberately not consulted for promiscuous or level: a busy-but-healthy show
+	// LAN runs enormous pps with zero drops, and that is exactly where the rogue
+	// watch must stay promiscuous.
 	var tpDrops, chanDrops uint32
 	if cc != nil {
 		tpDrops, chanDrops = cc.stats()
 	}
-	pps := m.readPPS(now)
 	level := m.gov.observe(govInputs{tpDrops: tpDrops, chanDrops: chanDrops})
 	dropping := framesDropped(level)
 
 	// Promiscuous single-owner: ONE boolean recomputed here, the only caller of
-	// setPromiscuous. Governor owns the ceiling (level==LevelFull), the duty-cycler
-	// operates strictly within it, and high pps suppresses the sampling window.
-	m.recomputeDuty(now, pps)
-	want := level == LevelFull && m.dutyWindowOpen && m.spec.MulticastSniff
+	// setPromiscuous. In ACTIVE the box always serves DHCP, so promiscuous is the
+	// steady-state default at full fidelity: a rogue server that unicasts its
+	// OFFER/ACK straight to a victim (never broadcasting) is invisible to a
+	// non-promiscuous socket, and catching exactly that is the point of the rogue
+	// detector and the shield stand-down. The tradeoff is real - the NIC now hands
+	// userspace every frame on the segment - but the in-kernel BPF still drops all
+	// but the narrow parsed set, so the userspace cost stays bounded, and the
+	// governor still owns the ceiling: it sheds promiscuous first (drops to
+	// LevelNoPromisc) the instant either overflow counter fires, so a genuine flood
+	// cannot starve Kea or the UI. Wire pps deliberately does NOT shed it (see
+	// governor.go): a busy-but-healthy show LAN runs enormous pps with zero drops,
+	// and that is precisely the network the rogue watch must stay awake on.
+	want := level == LevelFull
 	if cc != nil {
 		m.applyPromiscuous(cc, want)
 	}
@@ -523,30 +526,6 @@ func (m *Monitor) tickOne(s *detectorSlot, now time.Time) (events []Event) {
 	return s.d.Tick(now)
 }
 
-// recomputeDuty toggles the promiscuous sampling window (e.g. 5s on / 60s off),
-// suppressing a new ON window while wire pps is already high.
-func (m *Monitor) recomputeDuty(now time.Time, pps int) {
-	if !m.spec.MulticastSniff {
-		m.dutyWindowOpen = false
-		return
-	}
-	elapsed := now.Sub(m.lastToggle)
-	if m.dutyWindowOpen {
-		if elapsed >= defaultDutyOn {
-			m.dutyWindowOpen = false
-			m.lastToggle = now
-		}
-		return
-	}
-	if elapsed >= defaultDutyOff {
-		if m.gov.cfg.ppsHigh > 0 && pps > m.gov.cfg.ppsHigh {
-			return // governor suppresses the sample under high wire load
-		}
-		m.dutyWindowOpen = true
-		m.lastToggle = now
-	}
-}
-
 // applyPromiscuous is the sole writer of PACKET_MR_PROMISC; it acts only on a
 // change so there is never a double add/drop.
 func (m *Monitor) applyPromiscuous(cc capControl, want bool) {
@@ -558,25 +537,6 @@ func (m *Monitor) applyPromiscuous(cc capControl, want bool) {
 		return
 	}
 	m.promiscOn = want
-}
-
-func (m *Monitor) readPPS(now time.Time) int {
-	if m.rx == nil {
-		return 0
-	}
-	cur, ok := m.rx()
-	if !ok {
-		return 0
-	}
-	if m.haveRx {
-		if dt := now.Sub(m.lastRxTime).Seconds(); dt > 0 && cur >= m.lastRx {
-			m.curPPS = int(float64(cur-m.lastRx) / dt)
-		}
-	}
-	m.lastRx = cur
-	m.lastRxTime = now
-	m.haveRx = true
-	return m.curPPS
 }
 
 func (m *Monitor) publishSnapshot(level Level, available, dropping bool) {
@@ -711,7 +671,7 @@ func (mm *MonitorManager) Start(specs []Spec) {
 		return
 	}
 	th := mm.loadThresholds()
-	gcfg := mm.loadGovConfig()
+	gcfg := defaultGovConfig()
 
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
@@ -723,7 +683,7 @@ func (mm *MonitorManager) Start(specs []Spec) {
 		rx := sysfsRxReader(spec.Iface)
 		link := sysfsLinkReader(spec.Iface)
 		dets := mm.detectorsFor(spec, th, rx, link)
-		mon := newMonitor(spec, mm.openFn, dets, mm.store, mm.sink, newGovernor(gcfg), mm.clock, mm.tickInterval, mm.baseBackoff, mm.faultBudget, rx)
+		mon := newMonitor(spec, mm.openFn, dets, mm.store, mm.sink, newGovernor(gcfg), mm.clock, mm.tickInterval, mm.baseBackoff, mm.faultBudget)
 		mon.start()
 		mm.monitors[spec.Iface] = mon
 	}
@@ -770,19 +730,6 @@ func (mm *MonitorManager) loadThresholds() Thresholds {
 		}
 	}
 	return th
-}
-
-func (mm *MonitorManager) loadGovConfig() govConfig {
-	cfg := defaultGovConfig()
-	if mm.getState == nil {
-		return cfg
-	}
-	if v, _ := mm.getState("netmon_pps_highwater"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			cfg.ppsHigh = n
-		}
-	}
-	return cfg
 }
 
 // linkStateFunc reports whether the interface carrier is up (a cable is present and

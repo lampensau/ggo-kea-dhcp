@@ -151,9 +151,9 @@ type fakeRogueProbe struct {
 	watching bool
 }
 
-func (f *fakeRogueProbe) Start(string, [][4]byte) {}
-func (f *fakeRogueProbe) Stop()                   {}
-func (f *fakeRogueProbe) Watching() bool          { return f.watching }
+func (f *fakeRogueProbe) Start(string)   {}
+func (f *fakeRogueProbe) Stop()          {}
+func (f *fakeRogueProbe) Watching() bool { return f.watching }
 func (f *fakeRogueProbe) Server() (string, string, bool) {
 	return f.ip, f.mac, f.found
 }

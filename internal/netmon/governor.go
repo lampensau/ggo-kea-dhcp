@@ -10,11 +10,10 @@ package netmon
 
 // govInputs are one tick's load signals. Only the two overflow counters drive
 // level escalation - they are the direct "are we falling behind?" measure. Wire
-// pps is deliberately NOT here: on a busy-but-healthy show LAN the in-kernel BPF
-// keeps both counters ~0 while pps is enormous, so letting pps escalate would
-// black out monitoring on exactly the networks the feature targets. pps is used
-// only to suppress the promiscuous *sampling window* (the monitor's recomputeDuty),
-// never to step the level.
+// pps is deliberately NOT a signal at all: on a busy-but-healthy show LAN the
+// in-kernel BPF keeps both counters ~0 while pps is enormous, so letting pps
+// escalate (or shed the steady-state promiscuous socket) would black out
+// monitoring on exactly the networks the feature targets.
 type govInputs struct {
 	tpDrops   uint32 // AF_PACKET PACKET_STATISTICS drops = socket-buffer overflow
 	chanDrops uint32 // frame-channel drop-on-full count = userspace-pipeline overflow
@@ -25,7 +24,6 @@ type govInputs struct {
 type govConfig struct {
 	dropHigh      uint32 // tp_drops/tick over which the socket buffer is overflowing
 	chanDropHigh  uint32 // channel drops/tick over which the parse pipeline is behind
-	ppsHigh       int    // wire pps over which we preemptively shed / suppress sampling
 	stepDownAfter int    // sustained breach ticks required to shed (no flap on a spike)
 	stepUpAfter   int    // sustained calm ticks required to recover
 	cooldownTicks int    // ticks after any step before the next step-up is allowed
@@ -35,7 +33,6 @@ func defaultGovConfig() govConfig {
 	return govConfig{
 		dropHigh:      0, // any sustained socket-buffer drop means we're behind
 		chanDropHigh:  0, // any sustained pipeline drop means we're behind
-		ppsHigh:       50000,
 		stepDownAfter: 2,
 		stepUpAfter:   5,
 		cooldownTicks: 5,
@@ -58,7 +55,7 @@ func (g *governor) currentLevel() Level { return g.level }
 // breach reports whether this tick's signals say we are falling behind. Either
 // overflow counter firing is sufficient - they catch different bottlenecks (the
 // socket buffer vs the parse pipeline). Wire pps is intentionally excluded (see
-// govInputs): it gates the sampling window, not the level.
+// govInputs): a healthy high-pps LAN must not shed monitoring.
 func (g *governor) breach(in govInputs) bool {
 	return in.tpDrops > g.cfg.dropHigh || in.chanDrops > g.cfg.chanDropHigh
 }

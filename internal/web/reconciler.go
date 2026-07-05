@@ -231,10 +231,10 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	}
 	// Onboarding-only: watch eth0 for a DHCP server already answering, so the wizard's
 	// shield badge names it before the operator applies. Best-effort like the trunk probe.
-	// The box serves its own onboarding pool on eth0, so pass its own IP as a self-IP -
-	// otherwise the probe captures the box's own OFFERs and flags the appliance itself.
+	// The box serves its own onboarding pool on eth0; Start reads eth0's MAC and suppresses
+	// the box's own OFFERs by source MAC, so the probe never flags the appliance itself.
 	if s.rogueProbe != nil {
-		s.rogueProbe.Start("eth0", selfIPsFromCIDR(cidr))
+		s.rogueProbe.Start("eth0")
 	}
 
 	// Onboarding never routes - make sure no NAT state leaks in from a prior gig.
@@ -612,21 +612,6 @@ func (s *Server) waitKeaReachable(attempts int, delay time.Duration) error {
 }
 
 // --- app_state-backed settings with defaults ---
-
-// selfIPsFromCIDR extracts the host IP from a "10.0.0.1/24"-style CIDR as the
-// single-element self-IP list the rogue probe suppresses. Returns nil on a
-// malformed or non-IPv4 CIDR (the probe then simply has nothing to suppress).
-func selfIPsFromCIDR(cidr string) [][4]byte {
-	ip, _, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil
-	}
-	v4 := ip.To4()
-	if v4 == nil {
-		return nil
-	}
-	return [][4]byte{{v4[0], v4[1], v4[2], v4[3]}}
-}
 
 func (s *Server) onboardingCIDR() string {
 	if v, _ := s.sqlite.GetState("onboarding_ip"); v != "" {

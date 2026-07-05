@@ -2,6 +2,7 @@ package netmon
 
 import (
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -61,10 +62,10 @@ var rogueOfferFilter = func() []bpf.RawInstruction {
 // case: the venue's managed switch still runs its own DHCP). It feeds captured
 // frames to the same rogueDHCPDetector the ACTIVE monitor uses. The box already
 // serves its own onboarding pool on eth0, so its own OFFERs are on the wire and
-// promiscuously captured; Start is given the box's own IPs as selfIPs so the
-// detector suppresses them and the badge never flags the appliance itself.
-// Purely passive: it sends nothing. The capture opens promiscuous so a server's
-// unicast OFFER/ACK to
+// promiscuously captured; Start reads eth0's own MAC and hands it to the detector
+// so those OFFERs are suppressed (by source MAC, not the forgeable option-54
+// server-id) and the badge never flags the appliance itself. Purely passive: it
+// sends nothing. The capture opens promiscuous so a server's unicast OFFER/ACK to
 // another client (renewals - the usual traffic on an established segment) is
 // visible, not just broadcast answers; nothing else owns the promiscuous bit
 // outside ACTIVE, and closing the socket drops the membership. Best-effort like
@@ -82,26 +83,39 @@ type RogueProbe struct {
 func NewRogueProbe() *RogueProbe { return &RogueProbe{} }
 
 // Start (re)starts the probe on iface. Safe to call repeatedly - it stops any
-// prior capture first and resets the detector. selfIPs are the box's own
-// addresses on iface, suppressed so the box's onboarding OFFERs are not flagged.
+// prior capture first and resets the detector. It reads iface's own MAC and hands
+// it to the detector so the box's onboarding OFFERs are suppressed by source MAC.
 // A capture that can't open (no CAP_NET_RAW / dev sandbox) leaves the probe inert
 // rather than erroring.
-func (p *RogueProbe) Start(iface string, selfIPs [][4]byte) {
+func (p *RogueProbe) Start(iface string) {
 	p.Stop()
+	selfMAC, macKnown := interfaceHWAddr(iface)
 	sn, err := openCapture(iface, true, rogueOfferFilter)
 	if err != nil {
 		log.Printf("[RogueProbe] capture on %s unavailable: %v", iface, err)
 		return
 	}
-	p.begin(iface, sn, selfIPs)
+	p.begin(iface, sn, selfMAC, macKnown)
+}
+
+// interfaceHWAddr reads iface's 6-byte hardware address (macKnown=false when the
+// interface is absent or has no 48-bit MAC, e.g. the dev sandbox). A VLAN
+// sub-interface inherits its parent's MAC, so this works for eth0.<vid> too.
+func interfaceHWAddr(iface string) (mac [6]byte, macKnown bool) {
+	ifi, err := net.InterfaceByName(iface)
+	if err != nil || len(ifi.HardwareAddr) != 6 {
+		return mac, false
+	}
+	copy(mac[:], ifi.HardwareAddr)
+	return mac, true
 }
 
 // begin wires a fresh detector to sn and starts the read loop (the test seam:
 // tests inject a FakeSniffer here).
-func (p *RogueProbe) begin(iface string, sn Sniffer, selfIPs [][4]byte) {
+func (p *RogueProbe) begin(iface string, sn Sniffer, selfMAC [6]byte, macKnown bool) {
 	quit := make(chan struct{})
 	p.mu.Lock()
-	p.det = newRogueDHCPDetector(iface, selfIPs, 0)
+	p.det = newRogueDHCPDetector(iface, selfMAC, macKnown, 0)
 	p.sniffer = sn
 	p.quit = quit
 	p.mu.Unlock()
@@ -118,6 +132,15 @@ func (p *RogueProbe) loop(sn Sniffer, quit chan struct{}) {
 		select {
 		case f, ok := <-sn.Frames():
 			if !ok {
+				// The capture's frame channel closed. If quit did NOT fire, this is a
+				// fatal death of the read loop (the socket went away mid-run), not an
+				// orderly Stop - mark the probe blind so Watching() drops to false and the
+				// shield reads "Unverified" instead of a confident, but false, all-clear.
+				select {
+				case <-quit:
+				default:
+					p.markDead(sn)
+				}
 				return
 			}
 			// Wall clock, not f.TS: the detector's presence windows are
@@ -133,6 +156,20 @@ func (p *RogueProbe) loop(sn Sniffer, quit chan struct{}) {
 			return
 		}
 	}
+}
+
+// markDead is called by the read loop when its capture dies fatally (the frame
+// channel closed without a Stop). It clears the sniffer + detector so Watching()
+// returns false and Server() reports no confirmed all-clear. Guarded by sn ==
+// current so a concurrent restart (begin already installed a fresh sniffer) is
+// not clobbered.
+func (p *RogueProbe) markDead(sn Sniffer) {
+	p.mu.Lock()
+	if p.sniffer == sn {
+		p.sniffer = nil
+		p.det = nil
+	}
+	p.mu.Unlock()
 }
 
 // Stop tears down the capture and clears the detector. Idempotent.
@@ -157,11 +194,12 @@ func (p *RogueProbe) Stop() {
 
 // Watching reports whether the probe is actually capturing frames: a real
 // AF_PACKET socket is open and its read loop is live. It is false when the probe
-// is stopped (not running - e.g. the ACTIVE edit page) OR when the capture fell
-// back to a nop sniffer (no CAP_NET_RAW / dev sandbox), in which case Server()
-// will always answer "none" not because the link is clear but because nothing is
-// being observed. Callers use this to render an honest "unverified" shield rather
-// than a confident all-clear when the probe is blind.
+// is stopped (not running - e.g. the ACTIVE edit page), when the capture fell back
+// to a nop sniffer (no CAP_NET_RAW / dev sandbox), OR when the read loop died
+// fatally mid-run (markDead cleared the sniffer) - in every case Server() answers
+// "none" not because the link is clear but because nothing is being observed.
+// Callers use this to render an honest "unverified" shield rather than a confident
+// all-clear when the probe is blind.
 func (p *RogueProbe) Watching() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

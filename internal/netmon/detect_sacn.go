@@ -21,20 +21,18 @@ const vectorE131Data = 0x00000002
 const optStreamTerminated = 0x40
 
 // defaultSACNAbsence: a source that stops transmitting for this long is dropped.
-// sACN is multicast, so it is only captured during the promiscuous duty window
-// (defaultDutyOn on / defaultDutyOff off). A source seen in one window is not
-// sampled again for a full off-period, so the absence MUST exceed the duty
-// period or a steadily-present source would age out every cycle and churn
-// presence/conflict state. We size it to ~2x the duty period.
+// sACN is multicast, captured under the steady-state promiscuous socket (gated by
+// MulticastSniff). The window is kept generous so a source that merely pauses
+// (idle cue stack) between sends is not churned through presence/conflict state.
 // ponytail: clean shutdown is the fast path (optStreamTerminated); this long
 // timeout only bounds the worst case where we never catch the terminate packet.
-const defaultSACNAbsence = 2 * (defaultDutyOn + defaultDutyOff)
+const defaultSACNAbsence = 130 * time.Second
 
 // sacnDetector inspects E1.31 lighting data. Multiple sources on a universe is
 // normal and intentional (priority-based backup), so it is informational; a true
 // conflict is two *different* sources (CIDs) transmitting on the same universe at
 // the *same* priority - neither defers, so output flickers. Tier-2, multicast →
-// needs the promiscuous duty-cycle (gated by MulticastSniff).
+// needs steady-state promiscuous capture (gated by MulticastSniff).
 type sacnDetector struct {
 	iface     string
 	absence   time.Duration

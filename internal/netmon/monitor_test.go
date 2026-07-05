@@ -230,15 +230,11 @@ func TestMonitor_PromiscuousSingleOwner(t *testing.T) {
 	mm, _ := fastManager(openFn, clk)
 	defer mm.Stop()
 
-	// MulticastSniff on → the duty-cycler may open a promiscuous window at L0.
-	mm.Start([]Spec{{Iface: "eth0", MulticastSniff: true}})
+	// Promiscuous is the steady-state default at L0 in ACTIVE - no MulticastSniff
+	// and no duty window needed, so a rogue's unicast OFFERs to other clients are
+	// always visible.
+	mm.Start([]Spec{{Iface: "eth0"}})
 
-	// Let serveOnce initialize its duty baseline (lastToggle = clock now) before
-	// advancing the clock, otherwise the advance could land before the baseline is
-	// taken and the window would never appear due.
-	time.Sleep(30 * time.Millisecond)
-	// Advance past the duty-off interval so the window opens at L0 → promiscuous on.
-	clk.Advance(defaultDutyOff + time.Second)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		log := fs.PromiscLog()
@@ -248,11 +244,10 @@ func TestMonitor_PromiscuousSingleOwner(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	if log := fs.PromiscLog(); len(log) == 0 || !log[len(log)-1] {
-		t.Fatalf("promiscuous never enabled at L0 in a duty window: %v", log)
+		t.Fatalf("promiscuous never enabled at L0 steady-state: %v", log)
 	}
 
-	// Now drive sustained overflow → governor sheds to >=L1 → promiscuous forced
-	// off even though the duty window is still open.
+	// Now drive sustained overflow → governor sheds to >=L1 → promiscuous forced off.
 	fs.SetStats(100, 100)
 	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
