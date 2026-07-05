@@ -181,7 +181,7 @@ func (s *Server) evictForPin(ctx context.Context, reservedIP, wantMAC, portIdent
 // formReturn returns a safe same-site redirect target from the posted "return"
 // field (must be a root-relative path), else def. Prevents an open redirect.
 func formReturn(r *http.Request, def string) string {
-	if rt := r.FormValue("return"); safeReturnPath(rt) {
+	if rt := r.FormValue("return"); isValidRedirect(rt) {
 		return rt
 	}
 	return def
