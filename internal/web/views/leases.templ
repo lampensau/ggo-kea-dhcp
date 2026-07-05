@@ -50,6 +50,7 @@ templ Leases(v LeasesView) {
 			@ReserveDialog(v.Page.CSRFToken, "/leases")
 			@ReserveScript()
 		}
+		@RebootMount(v.Page.CSRFToken, v.Page.Flash)
 	}
 }
 

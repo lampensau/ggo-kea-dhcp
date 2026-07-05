@@ -22,6 +22,7 @@ templ Pinning(v PinningView) {
 				@learnableCard(v)
 				@pinDialog(v.Page.CSRFToken)
 				@unpinDialog(v.Page.CSRFToken)
+				@RebootMount(v.Page.CSRFToken, v.Page.Flash)
 				@pinningScript()
 			}
 		</div>

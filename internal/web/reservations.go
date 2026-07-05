@@ -251,7 +251,14 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease
 	// would otherwise not appear until the next lease change.
 	s.publishDashboard()
-	s.setFlash(w, r, fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr), "success")
+	msg := fmt.Sprintf("Reserved %s for %s - the device adopts it on its next DHCP renewal (within a few minutes).", ipStr, macStr)
+	// If the reserved device is a Green-GO client that is online now, offer to reboot it
+	// so the change applies immediately instead of waiting out the renewal.
+	if dev, ok := s.rebootOfferForMAC(hw.String()); ok {
+		s.setFlashDevice(w, r, msg, "success", dev)
+	} else {
+		s.setFlash(w, r, msg, "success")
+	}
 	s.redirectHTMX(w, r, formReturn(r, "/leases"))
 }
 

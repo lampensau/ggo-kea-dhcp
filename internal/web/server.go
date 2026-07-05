@@ -298,6 +298,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /pinning/pin", s.handlePin)
 	mux.HandleFunc("POST /pinning/unpin", s.handleUnpin)
 	mux.HandleFunc("POST /pinning/label", s.handleLabel)
+	mux.HandleFunc("POST /device/reboot", s.handleDeviceReboot)
 	mux.HandleFunc("GET /audit", s.handleAudit)
 	mux.HandleFunc("GET /diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("GET /settings", s.handleSettings)
@@ -381,6 +382,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request, title string) 
 	}
 	if f := s.getFlash(w, r); f != nil {
 		d.Flash = &views.Flash{Message: f.Message, Type: f.Type}
+		if f.Device != nil {
+			d.Flash.Device = &views.FlashDevice{MAC: f.Device.MAC, IP: f.Device.IP, Name: f.Device.Name}
+		}
 	}
 	return d
 }
@@ -430,13 +434,30 @@ func (s *Server) redirectHTMX(w http.ResponseWriter, r *http.Request, path strin
 type FlashMessage struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
+	// Device is set only when the action targeted an online Green-GO device: the next
+	// page offers to reboot it to apply the change now (see setFlashDevice).
+	Device *FlashDevice `json:"device,omitempty"`
+}
+
+// FlashDevice is the reboot-to-apply target carried alongside a flash: the device's
+// current address and already-sanitized name (its MAC is kept for reference).
+type FlashDevice struct {
+	MAC  string `json:"mac,omitempty"`
+	IP   string `json:"ip"`
+	Name string `json:"name"`
 }
 
 func (s *Server) setFlash(w http.ResponseWriter, r *http.Request, msg, msgType string) {
-	flash := FlashMessage{
-		Message: msg,
-		Type:    msgType,
-	}
+	s.writeFlash(w, r, FlashMessage{Message: msg, Type: msgType})
+}
+
+// setFlashDevice writes a flash that also carries a reboot-to-apply device context, so
+// the next page load can offer to reboot that Green-GO device and apply the change now.
+func (s *Server) setFlashDevice(w http.ResponseWriter, r *http.Request, msg, msgType string, dev FlashDevice) {
+	s.writeFlash(w, r, FlashMessage{Message: msg, Type: msgType, Device: &dev})
+}
+
+func (s *Server) writeFlash(w http.ResponseWriter, r *http.Request, flash FlashMessage) {
 	data, _ := json.Marshal(flash)
 	// Server-read only (getFlash) - HttpOnly + Strict + Secure like the session
 	// cookie (conditional: FACTORY/ONBOARDING runs over plain HTTP on the SoftAP).
@@ -475,6 +496,12 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 
 	var flash FlashMessage
 	if err := json.Unmarshal(data, &flash); err != nil {
+		// Tolerate a cookie that predates the JSON schema (a bare message string), so
+		// an in-flight flash across a deploy still shows rather than being dropped.
+		var bare string
+		if json.Unmarshal(data, &bare) == nil && bare != "" {
+			return &FlashMessage{Message: bare, Type: "info"}
+		}
 		return nil
 	}
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -287,4 +288,18 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = sse.PatchElementTempl(views.Toast("Released lease for "+ip, "success"),
 		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+
+	// Release completes over SSE (no page reload), so the flash-context auto-open path
+	// can't fire here. If the released device is a Green-GO client online now, open the
+	// reboot-to-apply dialog directly by appending a one-shot script that calls the
+	// page's opener (the dialog + opener are mounted on /leases). The device is still
+	// physically at ip - releasing only drops the Kea lease - so it can be reached and
+	// rebooted to re-request DHCP immediately.
+	if dev, ok := s.rebootOfferForIP(ip); ok {
+		ipArg, _ := json.Marshal(dev.IP)
+		nameArg, _ := json.Marshal(dev.Name)
+		_ = sse.PatchElements(
+			"<script>window.ggoRebootOpen&&window.ggoRebootOpen("+string(ipArg)+","+string(nameArg)+")</script>",
+			datastar.WithSelector("body"), datastar.WithModeAppend())
+	}
 }

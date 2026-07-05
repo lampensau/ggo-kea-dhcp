@@ -98,6 +98,7 @@ var auditActionLabels = map[string]string{
 	"LABEL_PORT":         "Port labeled",
 	"RESERVATION_ADD":    "Reservation added",
 	"RESERVATION_DELETE": "Reservation removed",
+	"DEVICE_REBOOT":      "Device rebooted",
 	"EDIT_POOLS":         "Pools edited",
 	"UPDATE_SETTINGS":    "Settings updated",
 	"UPDATE_UPLINK":      "Uplink updated",

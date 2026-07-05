@@ -1,6 +1,7 @@
 package ggoscan
 
 import (
+	"bytes"
 	"net"
 	"testing"
 )
@@ -69,23 +70,27 @@ func TestReleaseMismatchWithinFamily(t *testing.T) {
 	}
 }
 
-// TestOnlyEmitsScan is the safety guard: the single frame this package can transmit
-// is the read-only device-scan request (type 0x10), never a mutating opcode.
-func TestOnlyEmitsScan(t *testing.T) {
-	want := []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
-	if len(scanFrame) != len(want) {
-		t.Fatalf("scanFrame len = %d, want %d", len(scanFrame), len(want))
+// TestOnlyEmitsScanAndReboot is the safety guard: this package builds exactly two
+// frames - the read-only scan request and the reboot request SendReboot uses - and
+// no third emitter. The scan frame is pinned byte-for-byte, and the reboot frame is
+// held to the same fixed shape differing in exactly one request byte, so a new frame
+// can't be introduced here unnoticed.
+func TestOnlyEmitsScanAndReboot(t *testing.T) {
+	wantScan := []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
+	if !bytes.Equal(scanFrame, wantScan) {
+		t.Fatalf("scanFrame = % x, want % x", scanFrame, wantScan)
 	}
-	for i, b := range want {
-		if scanFrame[i] != b {
-			t.Fatalf("scanFrame[%d] = 0x%02x, want 0x%02x", i, scanFrame[i], b)
+	if len(rebootFrame) != len(scanFrame) {
+		t.Fatalf("rebootFrame len = %d, want %d", len(rebootFrame), len(scanFrame))
+	}
+	diff := 0
+	for i := range scanFrame {
+		if rebootFrame[i] != scanFrame[i] {
+			diff++
 		}
 	}
-	// The opcode byte (index 5) must be 0x10. Mutating opcodes (0x90 reboot, 0xa0
-	// memory-clear, 0x20/0x30/0x140/0x250 firmware, 0x310 save-default) must never
-	// appear in the only frame builder.
-	if scanFrame[5] != 0x10 {
-		t.Fatalf("scan opcode = 0x%02x, want 0x10 (read-only)", scanFrame[5])
+	if diff != 1 {
+		t.Fatalf("reboot frame differs from scan in %d byte(s), want exactly 1", diff)
 	}
 }
 

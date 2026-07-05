@@ -53,10 +53,22 @@ type StatusPillView struct {
 	Details   []string
 }
 
-// Flash is a one-shot toast message surfaced from the flash cookie.
+// Flash is a one-shot toast message surfaced from the flash cookie. Device is set
+// only when the action that raised the flash targeted an online Green-GO device: the
+// next page offers to reboot it (RebootMount auto-opens the reboot dialog) so the
+// address change takes effect now instead of at the device's next renewal.
 type Flash struct {
 	Message string
 	Type    string // "success" | "error" | "info"
+	Device  *FlashDevice
+}
+
+// FlashDevice names the online Green-GO device a reboot-to-apply offer targets: its
+// current address and friendly (already-sanitized) name, plus its MAC for reference.
+type FlashDevice struct {
+	MAC  string
+	IP   string
+	Name string
 }
 
 // SysHealthView models the header system-health indicator: the worst-of CPU /
