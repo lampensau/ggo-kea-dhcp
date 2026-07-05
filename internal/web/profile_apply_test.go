@@ -17,7 +17,7 @@ func TestPersistProfileEntersConfiguringAtomically(t *testing.T) {
 	}
 	var plan applyPlan
 	scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "greengo"}}
-	if err := s.persistProfile("beta", scopes, &plan); err != nil {
+	if err := s.persistProfile("beta", scopes, UplinkConfig{}, &plan); err != nil {
 		t.Fatalf("persistProfile: %v", err)
 	}
 	if plan.newProfileID == 0 {
@@ -56,7 +56,7 @@ func TestPersistProfileStashesSameName(t *testing.T) {
 	var plan applyPlan
 	plan.prevProfileID = int(prevID)
 	scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "greengo"}}
-	if err := s.persistProfile("alpha", scopes, &plan); err != nil {
+	if err := s.persistProfile("alpha", scopes, UplinkConfig{}, &plan); err != nil {
 		t.Fatalf("persistProfile: %v", err)
 	}
 
@@ -104,9 +104,9 @@ func TestPersistProfileStashesSameName(t *testing.T) {
 }
 
 // TestFailedApplyRestoresUplink proves a failed apply restores the box-level WiFi
-// uplink credentials it wrote mid-apply: beginApply persists the NEW uplink before
-// the profile commit (the reconcile reads it from app_state), so finishApply's
-// rollback must put the prior credentials back - otherwise the rollback reconcile
+// uplink credentials it wrote mid-apply: persistProfile commits the NEW uplink with
+// the profile (the reconcile reads it from app_state), so finishApply's rollback
+// must put the prior credentials back - otherwise the rollback reconcile
 // reconnects wlan0 to the failed profile's uplink.
 func TestFailedApplyRestoresUplink(t *testing.T) {
 	s, _ := newTestServer(t)

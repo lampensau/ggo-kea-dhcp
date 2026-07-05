@@ -85,29 +85,23 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 		return applyPlan{}, fmt.Errorf("Generated configuration failed validation (kea-dhcp4 -t): %w", err)
 	}
 
-	// Persist the box-level WiFi uplink (one wlan0) only after the candidate
-	// validates, so a render/validate failure can't leave wlan0's credentials
-	// half-mutated. The reconcile reads these back to configure the uplink.
-	// Capture the prior values first: every later failure (here or in
-	// finishApply) must restore them, or the rollback reconcile would reconnect
-	// wlan0 to the failed profile's uplink.
-	prevUplink := make(map[string]string, 3)
-	for _, k := range []string{"uplink_enabled", "uplink_ssid", "uplink_pass"} {
-		prevUplink[k], _ = s.sqlite.GetState(k)
-	}
-	en := "0"
-	if uplink.Enabled {
-		en = "1"
-	}
-	if err := s.sqlite.SetStates(map[string]string{"uplink_enabled": en, "uplink_ssid": uplink.SSID, "uplink_pass": uplink.Password}); err != nil {
-		s.endReconcile()
-		return applyPlan{}, fmt.Errorf("Failed to store WiFi uplink: %w", err)
+	// Capture the current box-level uplink for finishApply's failure restore. A
+	// read error aborts the apply: proceeding would capture "" and a later
+	// rollback would then "restore" empty credentials over the real ones -
+	// nothing has been written yet, so aborting here leaves the box untouched.
+	prevUplink := make(map[string]string, len(uplinkStateKeys))
+	for _, k := range uplinkStateKeys {
+		v, err := s.sqlite.GetState(k)
+		if err != nil {
+			s.endReconcile()
+			return applyPlan{}, fmt.Errorf("Failed to read the current WiFi uplink for rollback: %w", err)
+		}
+		prevUplink[k] = v
 	}
 
 	// Snapshot the current live config so a failed apply can be rolled back.
 	snapPath, err := s.snapshotKeaConf("pre-apply")
 	if err != nil {
-		s.restoreUplinkState(prevUplink)
 		s.endReconcile()
 		return applyPlan{}, fmt.Errorf("Failed to snapshot current configuration: %w", err)
 	}
@@ -119,12 +113,24 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	// persistProfile writes the profile, its scopes, AND the CONFIGURING state in one
 	// transaction (synchronously, before the interstitial is flushed - this is what
 	// keeps the interstitial's /dashboard nav from bouncing back to /setup).
-	if err := s.persistProfile(profileName, scopes, &plan); err != nil {
-		s.restoreUplinkState(prevUplink)
+	if err := s.persistProfile(profileName, scopes, uplink, &plan); err != nil {
 		s.endReconcile()
 		return applyPlan{}, err
 	}
 	return plan, nil
+}
+
+// uplinkStateKeys / uplinkState are the single definition of the box-level WiFi
+// uplink app_state keys: the rollback capture iterates the keys and every writer
+// builds its map through uplinkState, so the two cannot drift apart.
+var uplinkStateKeys = []string{"uplink_enabled", "uplink_ssid", "uplink_pass"}
+
+func uplinkState(enabled bool, ssid, pass string) map[string]string {
+	en := "0"
+	if enabled {
+		en = "1"
+	}
+	return map[string]string{uplinkStateKeys[0]: en, uplinkStateKeys[1]: ssid, uplinkStateKeys[2]: pass}
 }
 
 // restoreUplinkState puts the pre-apply box-level uplink keys back after a failed
@@ -139,13 +145,16 @@ func (s *Server) restoreUplinkState(prev map[string]string) {
 	}
 }
 
-// persistProfile writes the new (active) profile and its scopes in one
-// transaction, setting plan.newProfileID. A pre-existing same-named profile is
-// renamed aside and deactivated (not deleted), recorded in plan.stashProfileID,
-// so a failed apply can restore the operator's prior config - re-applying the
-// active profile's own name must not destroy it before the apply is known good.
-// finishApply drops the stash on success; the failure path renames it back.
-func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, plan *applyPlan) error {
+// persistProfile writes the new (active) profile, its scopes, AND the box-level
+// WiFi uplink in one transaction, setting plan.newProfileID. A pre-existing
+// same-named profile is renamed aside and deactivated (not deleted), recorded in
+// plan.stashProfileID, so a failed apply can restore the operator's prior config -
+// re-applying the active profile's own name must not destroy it before the apply
+// is known good. finishApply drops the stash on success; the failure path renames
+// it back. The uplink rides the same transaction so an earlier failure (render,
+// validate, snapshot) or a rolled-back commit never wrote it at all - only
+// finishApply's failure branch needs an explicit restore (restoreUplinkState).
+func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, uplink UplinkConfig, plan *applyPlan) error {
 	tx, err := s.sqlite.Begin()
 	if err != nil {
 		return fmt.Errorf("Database error: %w", err)
@@ -194,6 +203,16 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, plan *
 			plan.newProfileID, ifaceMode, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, sc.MulticastSniff, servicesSpec, sc.Name); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("Failed to store scope: %w", err)
+		}
+	}
+	// The box-level WiFi uplink (one wlan0) lands in the same transaction; the
+	// finishApply reconcile reads it back to configure the uplink.
+	for k, v := range uplinkState(uplink.Enabled, uplink.SSID, uplink.Password) {
+		if _, err := tx.Exec(`
+			INSERT INTO app_state (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("Failed to store WiFi uplink: %w", err)
 		}
 	}
 	// Enter CONFIGURING in the SAME transaction as the profile/scope writes so the
