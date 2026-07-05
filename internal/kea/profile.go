@@ -376,6 +376,34 @@ func RenderOnboarding(in OnboardingInput) (configStr string, ifaces []string, er
 	return configStr, ifaces, nil
 }
 
+// HoldoffInput renders the DHCP stand-down (holdoff) config: Kea keeps running
+// with its control socket up but serves NO subnet, so it stops answering DHCP
+// entirely. Used when the operator stands DHCP down after a rogue server is
+// detected - keeping the daemon reachable means health stays green (no false
+// "Kea down") and resume is a plain config reload, not a service restart.
+type HoldoffInput struct {
+	Interfaces    []string // the served interfaces to bind (informational; no subnet is served)
+	KeaSecretPath string
+	Debug         bool
+}
+
+// RenderHoldoff renders the holdoff config: a valid kea-dhcp4 config with an
+// empty subnet4 list, so the daemon runs and answers its control socket but
+// serves no address on any interface.
+func RenderHoldoff(in HoldoffInput) (string, error) {
+	ifaces := in.Interfaces
+	if len(ifaces) == 0 {
+		ifaces = []string{"eth0"}
+	}
+	// No MariaDB fields and no subnets: RenderConfig omits the hosts-database and
+	// the host hooks, and buildSubnets yields an empty (never null) subnet4 array.
+	return RenderConfig(TemplateData{
+		Interfaces:    ifaces,
+		KeaSecretPath: in.KeaSecretPath,
+		Debug:         in.Debug,
+	})
+}
+
 // onboardingSubnet derives a dynamic onboarding subnet from a host CIDR
 // (e.g. "10.0.0.1/24") with a .100-.250 pool clamped to the subnet size. It hands out
 // NO default gateway or DNS: onboarding clients only need to reach the box on its own

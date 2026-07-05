@@ -240,6 +240,14 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 
+	// A restore is a clean slate: never inherit a DHCP stand-down. Leaving it set would
+	// have the post-restore reconcile render the holdoff config - ACTIVE but serving no
+	// leases, with no rogue in sight to explain it. Cleared regardless of which sections
+	// were selected, since the flag belongs to no backup section.
+	if _, err := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey); err != nil {
+		return "", fmt.Errorf("clear stand-down: %w", err)
+	}
+
 	// Each selected section clears then re-inserts its own tables. Unselected sections
 	// are left alone, so a profiles-only restore keeps the current admins, and vice versa.
 	if sel["users"] {

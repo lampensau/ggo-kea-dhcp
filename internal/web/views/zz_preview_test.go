@@ -480,3 +480,57 @@ func TestZZPreviewDNSToggle(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestZZPreviewRogueBanner(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	ctx := context.Background()
+
+	css, err := os.ReadFile("../static/style.css")
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
+	}
+
+	rogue := []AlertRow{{
+		Severity:  "err",
+		Title:     "Rogue DHCP server detected",
+		Detail:    "192.0.2.7 (9c:1f:80:de:ad:be) on eth0 is answering DHCP - devices may lease from the wrong server. Standing our DHCP down pauses this appliance's serving; it does not remove the rogue.",
+		Action:    "standdown",
+		LeaseHint: "about 30 minutes",
+	}}
+	held := []AlertRow{{
+		Severity: "warn",
+		Title:    "DHCP stood down by operator",
+		Detail:   "This appliance is not handing out or renewing DHCP leases. The rogue server is not stopped, and devices will lose their address as each current lease expires (about 30 minutes). Resume once the rogue server is disconnected.",
+		Action:   "resume",
+	}}
+
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="preview"><title>Rogue stand-down banner preview</title><style>`)
+	b.Write(css)
+	b.WriteString(`</style></head><body><main class="container"><h2>Rogue detected (Stand Down control)</h2>`)
+	_ = BackendAlert(rogue).Render(ctx, &b)
+	b.WriteString(`<h2>Stood down by operator (Resume control)</h2>`)
+	_ = BackendAlert(held).Render(ctx, &b)
+	// Force the real confirm dialog open non-modally (.show(), not showModal) so it
+	// renders inline in the page flow - the styled replacement for the old native
+	// confirm() is captured in the same screenshot without a backdrop hiding the banners.
+	b.WriteString(`<h2>Stand Down confirm dialog (styled, replaces native confirm)</h2>`)
+	b.WriteString(`<script>document.getElementById('dlg-standdown').show()</script>`)
+	b.WriteString(`<h2>Stand-down failure toast (reload failed, still serving)</h2>`)
+	b.WriteString(`<div id="toast-container">`)
+	_ = StandDownFailToast(true).Render(ctx, &b)
+	b.WriteString(`</div>`)
+	b.WriteString(`</main></body></html>`)
+
+	dir := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd-r3"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir preview: %v", err)
+	}
+	out := dir + "/preview_rogue_banner.html"
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write preview: %v", err)
+	}
+	t.Logf("wrote %s", out)
+}

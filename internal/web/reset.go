@@ -99,8 +99,11 @@ func (s *Server) routineResetDB() error {
 	// so a leftover update_latest_* would light the footer badge with a dead
 	// /settings#update anchor. LIKE-escape so only the update_* keys match.
 	_, e3 := tx.Exec(`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`)
+	// Clear any DHCP stand-down: it's per-job serving state. Inheriting it into the next
+	// job's apply would render the holdoff config - ACTIVE but serving no leases.
+	_, e5 := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey)
 	_, e4 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
-	if err := errors.Join(e1, e2, e3, e4); err != nil {
+	if err := errors.Join(e1, e2, e3, e4, e5); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -173,7 +176,7 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM config_snapshots",
 		"DELETE FROM sessions",
 		"DELETE FROM users",
-		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass')",
+		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass','dhcp_standdown')",
 		// The self-update record (badge/card state) must not survive a factory reset.
 		`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`,
 	} {

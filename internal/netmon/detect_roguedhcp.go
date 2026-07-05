@@ -10,6 +10,14 @@ import (
 // present rather than flapping.
 const defaultRogueAbsence = 120 * time.Second
 
+// rogueSustainedAfter is how long a rogue server's run of sightings must span before
+// the snapshot reports it as sustained (Fields["sustained"]="1"). Presence itself is
+// confirmed on the first frame (the Network Health row is immediate), but the loud
+// one-click stand-down banner keys off sustained presence: a single spoofed OFFER -
+// trivially forgeable by anything on the segment - stays "warm" for the absence window
+// yet never accumulates span, so it can't escalate to the fleet-outage control.
+const rogueSustainedAfter = 30 * time.Second
+
 // rogueDHCPDetector flags any DHCP server other than us answering on the wire - a
 // competing server hands clients wrong addresses/gateways and breaks the show.
 // It self-suppresses by our own source MAC, not the option-54 server-id: the
@@ -217,7 +225,19 @@ func (d *rogueDHCPDetector) Snapshot() DetectorSnapshot {
 	if len(active) > 1 {
 		s.Text = itoa(len(active)) + " rogue DHCP servers"
 	}
-	s.Fields = map[string]string{"server": first.ip, "mac": first.mac, "oui": ouiOf(first.mac)}
+	// sustained is set once ANY currently-present rogue has been seen for a sustained
+	// run (not a single warm-held frame): the web layer gates the loud stand-down banner
+	// on it, while the row above is already immediate.
+	sustained := "0"
+	for _, srv := range active {
+		if srv.pres.sustainedFor(rogueSustainedAfter) {
+			sustained = "1"
+			break
+		}
+	}
+	// count lets the web banner report the honest total when several servers answer on
+	// one interface - Fields names only the first, so the number would otherwise be lost.
+	s.Fields = map[string]string{"server": first.ip, "mac": first.mac, "oui": ouiOf(first.mac), "count": itoa(len(active)), "sustained": sustained}
 	return s
 }
 

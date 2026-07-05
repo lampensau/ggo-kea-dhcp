@@ -903,6 +903,12 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 /* --text-secondary, not --text-muted: muted is ~3:1 on the err/warn tint (below AA).
    Secondary clears AA on both themes while keeping the title louder than the detail. */
 #backend-alert .alert-detail { color:var(--text-secondary); font-size:12px; }
+/* The rogue-server / stand-down rows carry an inline operator control (Stand Down /
+   Resume): center the row and push the button to the trailing edge so it reads as the
+   row's action, not part of the message. */
+#backend-alert .alert { align-items:center; }
+#backend-alert .alert-body { flex:1 1 auto; }
+#backend-alert .alert-action { margin-left:auto; flex:none; }
 
 .diag-status { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 

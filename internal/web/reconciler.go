@@ -345,9 +345,11 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	_ = s.net.SetInterfaceManaged("wlan0", true)
 
 	// Render + write + reload Kea from the scopes already loaded above (no second
-	// DB load / JSON unmarshal).
+	// DB load / JSON unmarshal). keaConfigForState honors a persisted operator
+	// stand-down: while stood down it renders the holdoff config (Kea reachable but
+	// serving no subnet), so a reboot mid-conflict does not silently resume serving.
 	reloadOK := false
-	cfgStr, _, rerr := s.renderKeaForScopes(scopes)
+	cfgStr, rerr := s.keaConfigForState(scopes)
 	if rerr != nil {
 		errs = append(errs, fmt.Errorf("render profile: %w", rerr))
 	} else if werr := s.writeAndReloadKea(cfgStr); werr != nil {
@@ -375,8 +377,9 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// (e.g. a beltpack that earlier landed in a catch-all) into its own device-class
 	// pool when that pool has room - by releasing the stale lease so it re-DHCPs.
 	// Best-effort; gated on a successful reload so we never act against a config Kea
-	// did not accept.
-	if reloadOK {
+	// did not accept. Skipped while stood down - the holdoff config serves no pool,
+	// so there is nothing to rebalance into.
+	if reloadOK && !s.dhcpStoodDown() {
 		s.rebalanceLeases(context.Background(), scopes)
 	}
 

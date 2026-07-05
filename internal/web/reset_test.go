@@ -24,6 +24,7 @@ func TestRoutineResetDB(t *testing.T) {
 	_, _ = s.sqlite.Exec("INSERT INTO profiles (name, active) VALUES ('venue', 1)")
 	_, _ = s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES ('00aa', 'Camera 1')")
 	_ = s.sqlite.SetStates(map[string]string{"uplink_ssid": "VenueWiFi", "uplink_pass": "secret123", "uplink_enabled": "1"})
+	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
 
 	if err := s.routineResetDB(); err != nil {
@@ -34,6 +35,11 @@ func TestRoutineResetDB(t *testing.T) {
 	// stale uplink creds can't apply and must not prefill the setup wizard.
 	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "" {
 		t.Errorf("routine reset must clear the WiFi uplink, got ssid %q", v)
+	}
+	// A stale stand-down would render the holdoff on the next job's apply - ACTIVE but
+	// serving nothing. A reset is a clean slate; the flag must be gone.
+	if s.dhcpStoodDown() {
+		t.Error("routine reset must clear the DHCP stand-down flag")
 	}
 
 	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateOnboarding {
@@ -99,6 +105,7 @@ func TestFactoryWipeDB(t *testing.T) {
 	_, _ = s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES ('00aa', 'Camera 1')")
 	_, _ = s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')")
 	_ = s.sqlite.SetStates(map[string]string{"uplink_ssid": "VenueWiFi", "uplink_pass": "secret123", "uplink_enabled": "1"})
+	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
 
 	if err := s.factoryWipeDB(); err != nil {
@@ -110,6 +117,9 @@ func TestFactoryWipeDB(t *testing.T) {
 	}
 	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "" {
 		t.Errorf("factory reset must clear the WiFi uplink, got ssid %q", v)
+	}
+	if s.dhcpStoodDown() {
+		t.Error("factory reset must clear the DHCP stand-down flag")
 	}
 	for _, tbl := range []string{"profiles", "scopes", "port_labels", "users"} {
 		if n := count(t, s, "SELECT COUNT(*) FROM "+tbl); n != 0 {

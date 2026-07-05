@@ -168,7 +168,7 @@ func (h *liveHub) broadcastLocked(region, fragment string) {
 // never silently dropped; a page with no live regions of its own (audit, settings,
 // pools, reset) receives only the shell regions.
 func regionOnPage(region, page string) bool {
-	if region == "state-badge" || region == "sys-health" || region == "backend-alert" || region == "kea-toast" || region == "update-badge" {
+	if region == "state-badge" || region == "sys-health" || region == "backend-alert" || region == "kea-toast" || region == "update-badge" || region == "standdown-toast" {
 		return true // these live in the shell on every authenticated page
 	}
 	switch page {
