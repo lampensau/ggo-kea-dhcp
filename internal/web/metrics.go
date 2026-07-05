@@ -181,6 +181,10 @@ func (s *Server) sampleMetrics() {
 	// while Kea is down; inert outside ACTIVE, where the server is stopped.
 	s.healDNSBinds()
 
+	// Bound the on-disk stores (snapshots, audit log, sessions). Also Kea-independent:
+	// a box with Kea down must still not fill its SD card.
+	s.maybeRunMaintenance()
+
 	ctx, cancel := opCtx()
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)
