@@ -190,7 +190,8 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 }
 
 // reconcileOnboarding brings up the onboarding environment: eth0 management IP,
-// wlan0 SoftAP, captive DNS, torn-down NAT, and the ungrouped dynamic Kea scope.
+// wlan0 SoftAP, torn-down NAT, and the ungrouped dynamic Kea scope. No captive DNS
+// redirector runs here - it is only stopped (see the no-DNS note below).
 func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	var errs []error
 	cidr := s.onboardingCIDR()

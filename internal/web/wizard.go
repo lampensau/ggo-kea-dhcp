@@ -21,6 +21,14 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFactorySetup(w http.ResponseWriter, r *http.Request) {
+	// Only meaningful on a factory-fresh box: it creates the first admin and mints a
+	// session with no re-auth. In ACTIVE that would let a live session mint a rogue
+	// admin and bounce the box back to ONBOARDING. The middleware redirects /factory
+	// away outside FACTORY; this guard closes it independently of the routing table.
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateFactory {
+		s.handleError(w, r, "The appliance is already configured.", http.StatusForbidden)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		s.handleError(w, r, "invalid form data", http.StatusBadRequest)
 		return

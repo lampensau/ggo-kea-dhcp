@@ -440,6 +440,15 @@ func parseUploadedBackup(r *http.Request) (*Backup, error) {
 // profiles, and reservations without re-onboarding. Reachable only in FACTORY,
 // pre-auth (there is no admin yet); it must carry one in the bundle.
 func (s *Server) handleFactoryRestore(w http.ResponseWriter, r *http.Request) {
+	// Defense in depth: this handler carries no current-password re-auth (there is no
+	// admin in FACTORY), so it must never run once the box is configured - an ACTIVE
+	// session reaching it would replace every admin hash without the operator's password.
+	// The lifecycle middleware already redirects /factory paths away outside FACTORY;
+	// this guard closes the same door independently of the routing table.
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateFactory {
+		s.handleError(w, r, "This recovery path is only available on a factory-fresh appliance.", http.StatusForbidden)
+		return
+	}
 	// This route is pre-auth (FACTORY has no admin yet) and installs the admin hash
 	// from the uploaded bundle verbatim - so it is also a takeover primitive for
 	// anyone who can reach the box during the FACTORY window. True auth is impossible

@@ -558,13 +558,15 @@ func isUnsafeMethod(m string) bool {
 
 // sameOriginRequest is the pre-session CSRF defense for the FACTORY-state bootstrap
 // POSTs (/factory/setup, /factory/restore), which run before any session or CSRF
-// token exists. For an unsafe method it requires the Origin (else Referer) header,
-// when present, to match the request Host. A cross-origin browser POST always carries
-// a mismatched Origin and is rejected; a legitimate same-origin submit matches. When
-// both headers are absent (some non-browser clients) it allows the request rather than
-// break onboarding - the header check is defense-in-depth, not the sole gate. It does
-// not stop an attacker who forges a matching Origin; that needs an out-of-band recovery
-// secret, deliberately out of scope to keep zero-touch onboarding usable.
+// token exists. For an unsafe method it requires the Origin (else Referer) header to
+// match the request Host. A cross-origin browser POST always carries a mismatched
+// Origin and is rejected; a legitimate same-origin submit matches. When both headers
+// are absent it fails closed: browsers always send at least one on an unsafe request
+// (a fetch/@post sends Origin, a native <form> POST sends Referer), so only header-less
+// scripted clients (curl) are blocked - and blocking those is the point, since they can
+// otherwise seize a fresh box via the pre-auth /factory/restore before the operator
+// reaches it. It does not stop an attacker who forges a matching Origin; that needs an
+// out-of-band recovery secret, deliberately out of scope to keep onboarding usable.
 func sameOriginRequest(r *http.Request) bool {
 	if !isUnsafeMethod(r.Method) {
 		return true
@@ -578,7 +580,7 @@ func sameOriginRequest(r *http.Request) bool {
 		}
 	}
 	if origin == "" {
-		return true // no Origin/Referer to check - allow (don't break onboarding)
+		return false // no Origin/Referer to check - fail closed (browsers always send one)
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -744,12 +746,17 @@ func stateRedirectFor(state, path string) string {
 		// second apply from starting). The reconnect interstitial's /dashboard
 		// navigation lands on the dashboard instead of bouncing to /setup before
 		// the apply goroutine flips the state to ACTIVE.
-		if path == "/setup" || path == "/setup/apply" {
+		if path == "/setup" || path == "/setup/apply" || strings.HasPrefix(path, "/factory") {
 			return "/dashboard"
 		}
 	case db.StateActive:
 		// ACTIVE allows the setup wizard as "create a new configuration" - that is
-		// how a second profile (and thus profile switching) becomes reachable.
+		// how a second profile (and thus profile switching) becomes reachable. The
+		// /factory bootstrap POSTs are the exception: they carry no re-auth and exist
+		// only for the pre-auth FACTORY window, so they must not be reachable here.
+		if strings.HasPrefix(path, "/factory") {
+			return "/dashboard"
+		}
 	}
 	return ""
 }
