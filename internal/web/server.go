@@ -309,6 +309,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /reset/routine", s.handleResetRoutine)
 	mux.HandleFunc("POST /reset/factory", s.handleResetFactory)
 
+	mux.HandleFunc("POST /rogue/standdown", s.handleStandDown)
+	mux.HandleFunc("POST /rogue/resume", s.handleResumeDHCP)
+
 	mux.HandleFunc("POST /system/reboot", s.handleSystemReboot)
 	mux.HandleFunc("POST /system/poweroff", s.handleSystemPowerOff)
 

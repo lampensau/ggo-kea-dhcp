@@ -19,12 +19,14 @@ The Manage menu on the dashboard is where the bigger operations live: editing th
 
 ## The backend health banner
 
-Every page shares an always-on alert region for the two backends the appliance depends on:
+Every page shares an always-on alert region for the things that need attention right now. Two of them are backend outages:
 
 - **DHCP server down** is an error: devices stop getting addresses. The banner clears itself the moment the server answers again; if it does not, [Troubleshooting](troubleshooting.md) has the recovery steps.
 - **Reservation database down** is a warning: dynamic leases keep serving, but reservations and port pinning are unavailable until it returns. The appliance reconnects on its own.
 
-Both transitions are recorded in the audit log with timestamps, which is useful when reconstructing what happened during a show.
+The same banner carries the appliance's loudest alarm: a **rogue DHCP server** on a network you serve. When the passive monitor sees another server handing out addresses, the banner names it and offers a **Stand Down DHCP** control that stops this appliance serving on every scope, so the two servers stop fighting over your devices; it switches to **Resume DHCP** while stood down. Nothing here is automatic - the monitor only warns, standing down is your explicit choice, and it survives a reboot, so the box will not resume serving until you say so. See [Network health](network-health.md) for the detector behind it.
+
+These transitions are recorded in the audit log with timestamps - the backend outages and every stand-down and resume - which is useful when reconstructing what happened during a show.
 
 ## Leases and reservations
 

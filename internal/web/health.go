@@ -158,9 +158,12 @@ func (s *Server) preflightAlertRows() []views.AlertRow {
 // (Kea/MariaDB/uplink) plus any degraded boot-time prerequisite. Used for both the
 // first paint and the live #backend-alert pushes so the two never diverge.
 func (s *Server) backendAlertRows() []views.AlertRow {
-	var rows []views.AlertRow
+	// Rogue-server / stand-down leads: it is the loudest, most time-critical signal
+	// (a competing DHCP server mid-show), and carries the operator's stand-down/resume
+	// control - so it sits at the top of the strip, above backend reachability.
+	rows := s.rogueAlertRows()
 	if s.health != nil {
-		rows = s.health.alertRows()
+		rows = append(rows, s.health.alertRows()...)
 	}
 	return append(rows, s.preflightAlertRows()...)
 }

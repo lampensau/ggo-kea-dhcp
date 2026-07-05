@@ -59,6 +59,11 @@ type AlertRow struct {
 	Severity string
 	Title    string
 	Detail   string
+	// Action, when non-empty, renders an inline operator control at the end of the
+	// row: "standdown" (a red "Stand Down DHCP" button) or "resume" (a "Resume DHCP"
+	// button). The control is a native POST form whose CSRF token is read from the
+	// page <meta> at submit time, since the live-broadcast strip carries no token.
+	Action string
 }
 
 // alertClass maps an AlertRow severity ("err"/"warn") to its .alert variant class.

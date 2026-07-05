@@ -309,3 +309,48 @@ func TestZZPreviewStatTiles(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestZZPreviewRogueBanner renders the always-on #backend-alert strip in both rogue
+// states - a live rogue with the Stand Down control, and the stood-down hold with the
+// Resume control - into a SELF-CONTAINED page (style.css inlined) written to the
+// session scratchpad, so the loud banner can be screenshotted without the appliance.
+// Preview-only; the scratchpad file is outside the repo, so nothing is embedded.
+func TestZZPreviewRogueBanner(t *testing.T) {
+	if os.Getenv("GGO_PREVIEW") != "1" {
+		t.Skip("preview-only")
+	}
+	ctx := context.Background()
+
+	css, err := os.ReadFile("../static/style.css")
+	if err != nil {
+		t.Fatalf("read style.css: %v", err)
+	}
+
+	rogue := []AlertRow{{
+		Severity: "err",
+		Title:    "Rogue DHCP server detected",
+		Detail:   "192.0.2.7 (9c:1f:80:de:ad:be) on eth0 is answering DHCP - devices may lease from the wrong server. Stand our DHCP down to stop the conflict.",
+		Action:   "standdown",
+	}}
+	held := []AlertRow{{
+		Severity: "warn",
+		Title:    "DHCP stood down by operator",
+		Detail:   "This appliance is not serving DHCP. Resume once the rogue server is disconnected.",
+		Action:   "resume",
+	}}
+
+	var b strings.Builder
+	b.WriteString(`<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="csrf-token" content="preview"><title>Rogue stand-down banner preview</title><style>`)
+	b.Write(css)
+	b.WriteString(`</style></head><body><main class="container"><h2>Rogue detected (Stand Down control)</h2>`)
+	_ = BackendAlert(rogue).Render(ctx, &b)
+	b.WriteString(`<h2>Stood down by operator (Resume control)</h2>`)
+	_ = BackendAlert(held).Render(ctx, &b)
+	b.WriteString(`</main></body></html>`)
+
+	out := "/tmp/claude-1000/-home-timo-Projects-ggo-kea-dhcp/cc96fcce-b4b0-40c3-bf75-cd654ff9e0cc/scratchpad/track-sd/preview_rogue_banner.html"
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write preview: %v", err)
+	}
+	t.Logf("wrote %s", out)
+}

@@ -71,7 +71,9 @@ templ Base(d PageData) {
 // reservations/pinning unavailable, dynamic leases keep serving), or the Wi-Fi
 // uplink (warning). The wrapper is always present as an empty morph target and
 // renders rows only when something is wrong, so a healthy box shows nothing
-// (#backend-alert:empty{display:none}). Netmon signals go to the header pill, not here.
+// (#backend-alert:empty{display:none}). Netmon signals go to the header pill, not here -
+// with one deliberate exception: a rogue DHCP server is loud enough to earn a row here
+// too, carrying the operator's Stand Down / Resume control (see rogueAlertRows).
 templ BackendAlert(rows []AlertRow) {
 	<div id="backend-alert">
 		for _, a := range rows {
@@ -83,9 +85,37 @@ templ BackendAlert(rows []AlertRow) {
 						<span class="alert-detail">{ a.Detail }</span>
 					}
 				</div>
+				switch a.Action {
+					case "standdown":
+						@standDownForm()
+					case "resume":
+						@resumeForm()
+				}
 			</div>
 		}
 	</div>
+}
+
+// standDownForm is the "Stand Down DHCP" control shown inside the rogue-server
+// alert. Native POST (not a Datastar action) so it works after any morph; the
+// CSRF token is read from the page <meta> at submit time because the live-broadcast
+// strip carries an empty token (same pattern as the pinning forms). A confirm
+// guards the accidental click - standing down stops DHCP on every scope.
+templ standDownForm() {
+	<form class="alert-action" method="post" action="/rogue/standdown" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content;return confirm('Stop serving DHCP on all scopes? Devices keep their current leases but get no new ones until you resume.')">
+		<input type="hidden" name="csrf_token" value=""/>
+		<button class="btn btn-sm btn-danger" type="submit">@Icon("power") Stand Down DHCP</button>
+	</form>
+}
+
+// resumeForm is the "Resume DHCP" control shown while DHCP is stood down. Same
+// native-POST + meta-CSRF pattern as standDownForm; no confirm - resuming service
+// is the safe, intended recovery.
+templ resumeForm() {
+	<form class="alert-action" method="post" action="/rogue/resume" onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+		<input type="hidden" name="csrf_token" value=""/>
+		<button class="btn btn-sm btn-primary" type="submit">@Icon("radio-tower") Resume DHCP</button>
+	</form>
 }
 
 // KeaToastSlot is the morph target (#kea-toast-slot) the live hub patches on a Kea
