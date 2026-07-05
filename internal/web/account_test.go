@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -83,6 +84,71 @@ func TestAccountSaveMinLength(t *testing.T) {
 	})
 	if userPasswordHash(t, s, "admin") != before {
 		t.Fatal("a mismatched confirmation was accepted")
+	}
+}
+
+// TestAccountSaveRejectsBadUsername proves the username format guard (3-32
+// characters, no whitespace) rejects malformed names before any change lands,
+// even with the correct current password.
+func TestAccountSaveRejectsBadUsername(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedAdmin(t, s, "correct horse battery staple")
+	sid, err := s.createSession("admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	for _, name := range []string{
+		"ab",                    // too short
+		strings.Repeat("x", 33), // too long
+		"has space",             // space
+		"has\ttab",              // tab
+	} {
+		accountRequest(t, s, sid, url.Values{
+			"username":         {name},
+			"current_password": {"correct horse battery staple"},
+		})
+		var n int
+		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&n); err != nil || n != 1 {
+			t.Fatalf("username %q: admin row = %d (err=%v), want the rename rejected", name, n, err)
+		}
+		if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'CHANGE_USERNAME'").Scan(&n); err != nil || n != 0 {
+			t.Fatalf("username %q: CHANGE_USERNAME audit rows = %d (err=%v), want none", name, n, err)
+		}
+	}
+}
+
+// TestAccountSaveRejectsTakenUsername proves a rename to a name another admin
+// already holds is refused, leaving both rows intact.
+func TestAccountSaveRejectsTakenUsername(t *testing.T) {
+	s, _ := newTestServer(t)
+	seedAdmin(t, s, "correct horse battery staple")
+	h, err := hashPassword("another password entirely")
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('stagehand', ?)", h); err != nil {
+		t.Fatalf("seed second admin: %v", err)
+	}
+	sid, err := s.createSession("admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	accountRequest(t, s, sid, url.Values{
+		"username":         {"stagehand"},
+		"current_password": {"correct horse battery staple"},
+	})
+
+	var n int
+	if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("admin row = %d (err=%v), want the rename refused", n, err)
+	}
+	if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'stagehand'").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("stagehand rows = %d (err=%v), want the original left untouched", n, err)
+	}
+	if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'CHANGE_USERNAME'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("CHANGE_USERNAME audit rows = %d (err=%v), want none", n, err)
 	}
 }
 
