@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"ggo-kea-dhcp/internal/db"
@@ -200,5 +202,16 @@ func (s *Server) factoryWipeDB() error {
 	s.lastSeen = map[string]int64{}
 	s.lastSeenWritten = map[string]int64{}
 	s.lastSeenMu.Unlock()
+	// The snapshot FILES belong to the rows the wipe just deleted; without this
+	// they survive every factory reset and accumulate forever (the prior job's
+	// rendered configs also linger for the next owner to read). Best-effort,
+	// after the commit: a remove failure leaves orphans, never a failed reset.
+	if entries, err := os.ReadDir(s.cfg.SnapshotDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				_ = os.Remove(filepath.Join(s.cfg.SnapshotDir, e.Name()))
+			}
+		}
+	}
 	return nil
 }

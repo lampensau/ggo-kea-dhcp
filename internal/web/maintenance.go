@@ -38,14 +38,16 @@ func (s *Server) maybeRunMaintenance() {
 }
 
 // pruneSnapshots keeps the newest snapshotKeepCount config_snapshots rows and
-// deletes the rest, files included.
+// deletes the rest, files included. One statement, DELETE ... RETURNING: a
+// separate select-then-delete let a snapshot inserted between the two lose its
+// row while its file survived as a permanent orphan. The cursor over the
+// RETURNING rows is drained before any further statement (the pool is capped at
+// one connection - buildBackup's closure pattern).
 func (s *Server) pruneSnapshots() {
-	// Collect the victims' paths BEFORE any further statement: the SQLite pool is
-	// capped at one connection, so issuing a query while a *sql.Rows cursor is
-	// open deadlocks the control plane (buildBackup's closure pattern).
 	paths, err := func() ([]string, error) {
 		rows, err := s.sqlite.Query(
-			"SELECT path FROM config_snapshots ORDER BY id DESC LIMIT -1 OFFSET ?", snapshotKeepCount)
+			"DELETE FROM config_snapshots WHERE id NOT IN (SELECT id FROM config_snapshots ORDER BY id DESC LIMIT ?) RETURNING path",
+			snapshotKeepCount)
 		if err != nil {
 			return nil, err
 		}
@@ -60,18 +62,11 @@ func (s *Server) pruneSnapshots() {
 		return out, rows.Err()
 	}()
 	if err != nil {
-		log.Printf("[maintenance] list old snapshots: %v", err)
+		log.Printf("[maintenance] prune snapshots: %v", err)
 		return
 	}
 	if len(paths) == 0 {
 		return
-	}
-
-	if _, err := s.sqlite.Exec(
-		"DELETE FROM config_snapshots WHERE id NOT IN (SELECT id FROM config_snapshots ORDER BY id DESC LIMIT ?)",
-		snapshotKeepCount); err != nil {
-		log.Printf("[maintenance] prune snapshot rows: %v", err)
-		return // keep the files while their rows still exist
 	}
 	for _, p := range paths {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {

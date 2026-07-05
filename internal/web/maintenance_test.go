@@ -164,3 +164,28 @@ func TestMaintenanceIntervalGate(t *testing.T) {
 		t.Errorf("elapsed call did not sweep (rows=%d, want 0)", n)
 	}
 }
+
+// A factory reset must remove the snapshot FILES with their rows - they carry
+// the prior deployment's rendered configs.
+func TestFactoryResetRemovesSnapshotFiles(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.cfg.SnapshotDir = t.TempDir()
+
+	p := filepath.Join(s.cfg.SnapshotDir, "kea-dhcp4.1.conf")
+	if err := os.WriteFile(p, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sqlite.Exec("INSERT INTO config_snapshots (reason, path) VALUES ('test', ?)", p); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.factoryWipeDB(); err != nil {
+		t.Fatalf("factoryWipeDB: %v", err)
+	}
+	if n := countRows(t, s, "config_snapshots"); n != 0 {
+		t.Errorf("snapshot rows after reset = %d", n)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Error("snapshot file survived the factory reset")
+	}
+}
