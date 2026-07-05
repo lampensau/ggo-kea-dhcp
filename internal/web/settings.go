@@ -64,6 +64,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}))
 }
 
+// settingsDeferredMsg tells the operator a save persisted but did NOT converge
+// (another configuration change holds the box). There is no queue that re-applies
+// the values when it frees, so the message asks for an explicit re-save rather
+// than implying an automatic retry that never comes.
+const settingsDeferredMsg = "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them."
+
 func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.handleError(w, r, "invalid form data", http.StatusBadRequest)
@@ -176,6 +182,16 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 
 	// Live convergence is only safe pre-ACTIVE - never bounce links during a
 	// live show. In ACTIVE the saved values take effect on the next apply/reset.
+	if state == db.StateConfiguring {
+		// An apply/switch is mid-flight (the route stays reachable in CONFIGURING).
+		// The values are persisted but no reconcile can run now, and whether the
+		// in-flight apply picks them up depends on where it happened to be - so
+		// give the same honest deferred message the guard-busy paths use instead
+		// of a success flash that implies the change is live.
+		s.setFlash(w, r, settingsDeferredMsg, "info")
+		s.redirectHTMX(w, r, "/settings")
+		return
+	}
 	if state == db.StateOnboarding || state == db.StateFactory {
 		ipChanged := newCIDR != "" && newCIDR != oldCIDR
 		delay := time.Duration(0)
@@ -188,7 +204,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// yet live and to save again once the in-flight change completes (rather than
 		// implying an automatic retry that never comes).
 		if !s.beginReconcile() {
-			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, settingsDeferredMsg, "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}
@@ -212,7 +228,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 			// persisted but the reconcile did NOT run - tell the operator, don't let
 			// the success flash imply the change is live.
 			log.Printf("[settings] soft reconcile deferred - a configuration change is in progress")
-			s.setFlash(w, r, "Settings saved but NOT yet applied - another configuration change is in progress. Save again once it finishes to apply them.", "info")
+			s.setFlash(w, r, settingsDeferredMsg, "info")
 			s.redirectHTMX(w, r, "/settings")
 			return
 		}
