@@ -15,6 +15,13 @@ const systemCommandDelay = 1500 * time.Millisecond
 // Settings danger zone), behind a confirm dialog. The box keeps its address, so
 // the response is a same-origin reconnect interstitial.
 func (s *Server) handleSystemReboot(w http.ResponseWriter, r *http.Request) {
+	// Re-auth like the other danger-zone actions: a click-through confirm alone must
+	// not take DHCP down for the whole floor.
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "SYSTEM_REBOOT", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	_ = s.sqlite.LogAudit(s.getActor(r), "SYSTEM_REBOOT", "appliance", "", "", "SUCCESS")
 	log.Println("[System] Reboot requested from the danger zone")
 	s.respondSystemInterstitial(w,
@@ -27,6 +34,13 @@ func (s *Server) handleSystemReboot(w http.ResponseWriter, r *http.Request) {
 // handleSystemPowerOff powers the appliance off. Terminal "safe to unplug" page,
 // no reconnect poll - the box stays off until it is physically power-cycled.
 func (s *Server) handleSystemPowerOff(w http.ResponseWriter, r *http.Request) {
+	// Re-auth like the other danger-zone actions: powering off a headless Pi needs
+	// physical intervention to recover, so a click-through confirm alone is not enough.
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "SYSTEM_POWEROFF", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	_ = s.sqlite.LogAudit(s.getActor(r), "SYSTEM_POWEROFF", "appliance", "", "", "SUCCESS")
 	log.Println("[System] Shutdown requested from the danger zone")
 	s.respondSystemInterstitial(w,

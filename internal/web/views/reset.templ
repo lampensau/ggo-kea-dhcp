@@ -33,12 +33,12 @@ templ ResetDangerZone(csrf string) {
 	@confirmDialog(confirmDialogOpts{
 		ID: "dlg-reboot", Title: "Reboot this appliance?", Action: "/system/reboot", CSRF: csrf,
 		Body: "DHCP is unavailable while the box restarts (about a minute). This page reconnects automatically once it is back. No configuration is changed.",
-		Confirm: "Reboot", Danger: false,
+		Confirm: "Reboot", Danger: false, RequirePassword: true,
 	})
 	@confirmDialog(confirmDialogOpts{
 		ID: "dlg-poweroff", Title: "Shut down this appliance?", Action: "/system/poweroff", CSRF: csrf,
 		Body: "The box powers off and DHCP stops until you physically power-cycle the device. There is no remote way to turn it back on.",
-		Confirm: "Shut Down", Danger: true,
+		Confirm: "Shut Down", Danger: true, RequirePassword: true,
 	})
 	@confirmDialog(confirmDialogOpts{
 		ID: "dlg-routine", Title: "Reset to Onboarding?", Action: "/reset/routine", CSRF: csrf,
@@ -55,8 +55,9 @@ templ ResetDangerZone(csrf string) {
 type confirmDialogOpts struct {
 	ID, Title, Action, CSRF, Body, Confirm string
 	Danger                                 bool
-	// RequirePassword adds a current-password re-auth field to the form, for the most
-	// destructive actions (factory reset) where a click-through confirm is not enough.
+	// RequirePassword adds a current-password re-auth field to the form, for the
+	// danger-zone actions (reboot, shutdown, factory reset) where a click-through
+	// confirm is not enough.
 	RequirePassword bool
 }
 
