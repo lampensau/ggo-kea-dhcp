@@ -158,6 +158,9 @@ func (d *staticInPoolDetector) Consume(f Frame, now time.Time) {
 	ip := ip4ToU32(spa)
 	h := d.hosts[ip]
 	if h == nil {
+		if len(d.hosts) >= maxStaticPoolHosts {
+			evictStalest(d.hosts, func(h *arpHost) time.Time { return h.pres.lastSeen })
+		}
 		h = &arpHost{pres: newPresence(0, d.absence), ip: ip, ipStr: ipString(spa), firstSeen: now}
 		d.hosts[ip] = h
 	}

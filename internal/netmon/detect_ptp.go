@@ -84,6 +84,9 @@ func (d *ptpDetector) Consume(f Frame, now time.Time) {
 	}
 	gm := dom.gms[identity]
 	if gm == nil {
+		if len(dom.gms) >= maxPTPGMs {
+			evictStalest(dom.gms, func(g *ptpGM) time.Time { return g.pres.lastSeen })
+		}
 		gm = &ptpGM{pres: newPresence(0, d.absence), identity: hex64(identity)}
 		dom.gms[identity] = gm
 	}

@@ -67,6 +67,11 @@ func parseARPSender(f []byte) (ip [4]byte, mac [6]byte, ok bool) {
 	if arp[0] != 0x00 || arp[1] != 0x01 || arp[2] != etherTypeIPv4>>8 || arp[3] != etherTypeIPv4&0xff || arp[4] != 6 || arp[5] != 4 {
 		return ip, mac, false
 	}
+	// Only a real request (1) or reply (2) proves the sender is live; any other
+	// opcode is malformed or non-ARP-over-ARP noise and must not mark an IP seen.
+	if op := uint16(arp[6])<<8 | uint16(arp[7]); op != 1 && op != 2 {
+		return ip, mac, false
+	}
 	copy(mac[:], arp[8:14]) // sender hardware address
 	copy(ip[:], arp[14:18]) // sender protocol address
 	return ip, mac, true
@@ -82,8 +87,25 @@ type reachTracker struct {
 
 func newReachTracker() *reachTracker { return &reachTracker{seen: make(map[[4]byte]time.Time)} }
 
+// maxReachEntries caps the tracker: the key is the ARP sender IP, which an on-LAN
+// attacker fully controls, so a spoofed flood must not grow the map unbounded.
+// Well above any real /24-ish served population.
+const maxReachEntries = 1024
+
 func (t *reachTracker) record(ip [4]byte, now time.Time) {
 	t.mu.Lock()
+	if _, ok := t.seen[ip]; !ok && len(t.seen) >= maxReachEntries {
+		// Evict the stalest entry so real, recently-seen hosts survive a flood.
+		first := true
+		var oldK [4]byte
+		var oldT time.Time
+		for k, ts := range t.seen {
+			if first || ts.Before(oldT) {
+				oldK, oldT, first = k, ts, false
+			}
+		}
+		delete(t.seen, oldK)
+	}
 	t.seen[ip] = now
 	t.mu.Unlock()
 }

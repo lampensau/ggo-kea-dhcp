@@ -366,3 +366,43 @@ func TestProbeSweepSkipsLeasedThisCycle(t *testing.T) {
 		}
 	}
 }
+
+// TestParseARPSenderOpcode proves only genuine requests (1) and replies (2)
+// mark a sender live: a frame with any other opcode must not forge presence
+// for an IP (which would make ProbeHost refuse a legitimate re-IP onto it).
+func TestParseARPSenderOpcode(t *testing.T) {
+	f := buildARPRequest([6]byte{2, 0, 0, 0, 0, 1}, [4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 20})
+	f[21] = 3 // not a request/reply
+	if _, _, ok := parseARPSender(f); ok {
+		t.Fatal("bogus opcode must not parse as a live sender")
+	}
+	f[21] = 2 // reply
+	if _, _, ok := parseARPSender(f); !ok {
+		t.Fatal("reply opcode must parse")
+	}
+}
+
+// TestReachTrackerCapped proves a flood of unique spoofed sender IPs cannot
+// grow the tracker past its cap, and the at-cap insert evicts the stalest
+// entry while a freshly re-seen one survives.
+func TestReachTrackerCapped(t *testing.T) {
+	tr := newReachTracker()
+	base := time.Unix(1000, 0)
+	ip := func(i int) [4]byte { return [4]byte{10, 2, byte(i >> 8), byte(i)} }
+
+	for i := 0; i < maxReachEntries; i++ {
+		tr.record(ip(i), base.Add(time.Duration(i)*time.Millisecond))
+	}
+	tr.record(ip(0), base.Add(10*time.Second))               // refresh the oldest
+	tr.record(ip(maxReachEntries), base.Add(11*time.Second)) // insert at cap
+
+	if len(tr.seen) > maxReachEntries {
+		t.Fatalf("tracker grew past cap: %d", len(tr.seen))
+	}
+	if _, ok := tr.seen[ip(0)]; !ok {
+		t.Fatal("freshly re-seen entry was evicted")
+	}
+	if _, ok := tr.seen[ip(1)]; ok {
+		t.Fatal("stalest entry survived the at-cap insert")
+	}
+}

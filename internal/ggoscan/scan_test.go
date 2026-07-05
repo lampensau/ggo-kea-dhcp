@@ -2,10 +2,12 @@ package ggoscan
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"regexp"
 	"testing"
+	"time"
 )
 
 // deviceReply builds a G-G device-info reply: header + body with name@0, MAC@0x12,
@@ -164,3 +166,28 @@ func TestNoUndeclaredEmitter(t *testing.T) {
 
 // macStr formats 6 bytes as a colon-separated MAC for building test devices by value.
 func macStr(b [6]byte) string { return net.HardwareAddr(b[:]).String() }
+
+// TestInventoryCapped proves a flood of unique spoofed MACs (the inventory is fed
+// from an open UDP socket) cannot grow the census past its cap, and the at-cap
+// insert evicts the stalest device while a freshly re-seen one survives.
+func TestInventoryCapped(t *testing.T) {
+	inv := newInventory()
+	base := time.Unix(1000, 0)
+	mac := func(i int) string { return fmt.Sprintf("00:1f:80:20:%02x:%02x", i>>8, i&0xff) }
+
+	for i := 0; i < maxInventory; i++ {
+		inv.record(Device{MAC: mac(i)}, base.Add(time.Duration(i)*time.Millisecond))
+	}
+	inv.record(Device{MAC: mac(0)}, base.Add(10*time.Second))            // refresh the oldest
+	inv.record(Device{MAC: mac(maxInventory)}, base.Add(11*time.Second)) // insert at cap
+
+	if len(inv.devices) > maxInventory {
+		t.Fatalf("inventory grew past cap: %d", len(inv.devices))
+	}
+	if _, ok := inv.devices[mac(0)]; !ok {
+		t.Fatal("freshly re-seen device was evicted")
+	}
+	if _, ok := inv.devices[mac(1)]; ok {
+		t.Fatal("stalest device survived the at-cap insert")
+	}
+}
