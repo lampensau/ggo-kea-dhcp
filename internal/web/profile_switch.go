@@ -261,6 +261,13 @@ func (s *Server) finishSwitch(plan switchPlan, actor string) {
 
 // revertActiveFlag flips the active profile back to prevProfileID (or leaves no
 // profile active when it is 0) after a failed switch, in one transaction.
+// Deliberately all-or-nothing, which CHANGES the double-fault semantics: if the
+// re-activation UPDATE fails, the whole revert rolls back and the FAILED target
+// stays active=1, so the next boot retries the failed profile (and fails again,
+// still serving the restored on-disk conf). The prior code committed the
+// deactivation alone in that case, leaving NO active profile - which reads as an
+// empty appliance and, with the zero-scopes rescue, demotes a serving box to
+// onboarding. Retrying a known-bad profile is the safer double-fault.
 func (s *Server) revertActiveFlag(prevProfileID int) error {
 	rtx, err := s.sqlite.Begin()
 	if err != nil {

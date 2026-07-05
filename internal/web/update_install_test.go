@@ -199,7 +199,11 @@ func TestUpdateInstallGuardChain(t *testing.T) {
 			t.Fatalf("expected an UPDATE_INSTALL SUCCESS audit, got %q err=%v", res, err)
 		}
 		// An apply attempted mid-update is refused with the update-specific message.
-		if _, err := s.beginApply("p", nil, UplinkConfig{}); err == nil || !strings.Contains(err.Error(), "software update") {
+		// A VALID candidate, so the refusal provably comes from the updating check
+		// (which sits after render+validate), not from a validation error.
+		scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "generic"}}
+		scopes[0].Plan = seedDefaultPlan(scopes[0])
+		if _, err := s.beginApply("p", scopes, UplinkConfig{}); err == nil || !strings.Contains(err.Error(), "software update") {
 			t.Fatalf("beginApply during an update: %v", err)
 		}
 		s.releaseUpdateGuards()

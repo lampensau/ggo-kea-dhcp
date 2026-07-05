@@ -51,12 +51,14 @@ const softAPWlanIP = "172.31.255.1"
 const reconcileWatchdog = 60 * time.Second
 
 // reconcilePassDeadline bounds one whole reconcile pass end-to-end: every Kea and
-// MariaDB operation inside reconcileActive/reconcileOnboarding shares this context,
-// so a black-holing backend (a half-open MariaDB TCP connection has no read
-// deadline of its own) fails the pass instead of hanging the apply goroutine - and
-// with it the mutation guard - forever. Generous on purpose: the privileged
-// commands (nmcli etc.) are bounded per-command by the Commander, and a genuinely
-// slow-but-recovering pass must not be turned into a rollback.
+// MariaDB operation inside reconcileActive/reconcileOnboarding shares this
+// context. Each individual operation already carries a driver bound (the Kea
+// client's 10s HTTP timeout; the MariaDB DSN's 5s dial / 10s read defaults), so
+// this is a belt-and-braces ceiling on the pass as a whole - many bounded waits
+// and retries stacked in one pass must still release the mutation guard in
+// bounded time. Generous on purpose: the privileged commands (nmcli etc.) are
+// bounded per-command by the Commander, and a genuinely slow-but-recovering pass
+// must not be turned into a rollback.
 const reconcilePassDeadline = 5 * time.Minute
 
 // resumeApplyAttempts / resumeApplyBackoff bound how hard a boot-time resume of an
@@ -678,7 +680,13 @@ func (s *Server) writeAndReloadKea(ctx context.Context, configStr string) error 
 			if rerr := s.net.RestartService(keaServiceName); rerr != nil {
 				return fmt.Errorf("reload kea: socket unreachable and restart failed: %v (reload: %w)", rerr, err)
 			}
-			if perr := s.waitKeaReachable(ctx, 5, time.Second); perr != nil {
+			// The restart already made the on-disk config live, so the liveness probe
+			// gets its own small budget rather than the pass ctx: near the pass
+			// deadline an inherited ctx would fail this probe instantly and report a
+			// spurious failure (in an apply, a rollback) over a load that succeeded.
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer probeCancel()
+			if perr := s.waitKeaReachable(probeCtx, 5, time.Second); perr != nil {
 				return fmt.Errorf("reload kea: restarted %s but it is still unreachable: %w", keaServiceName, perr)
 			}
 			// The restart re-read our file, so the new config is now live - no second

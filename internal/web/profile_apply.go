@@ -42,12 +42,6 @@ type applyPlan struct {
 // the appliance untouched (state still ONBOARDING, uplink credentials restored,
 // apply guard cleared).
 func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink UplinkConfig) (applyPlan, error) {
-	// A running self-update holds the shared guard too, but name it explicitly -
-	// "apply in progress" would be a lie while the box is mid-update.
-	if s.updating.Load() {
-		return applyPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
-	}
-
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
 
 	host, user, dbpass, name := config.ParseMariaDSN(s.cfg.MariaDBDSN)
@@ -76,13 +70,19 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 		return applyPlan{}, fmt.Errorf("Generated configuration failed validation (kea-dhcp4 -t): %w", err)
 	}
 
+	// A running self-update holds the shared guard too, but name it explicitly -
+	// "apply in progress" would be a lie while the box is mid-update. Checked
+	// HERE, after the up-to-30s render+kea -t, so an update that started while we
+	// were validating still gets its own message (beginSwitch orders the same way).
+	if s.updating.Load() {
+		return applyPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
+	}
 	// Claim the shared mutation guard only now that the candidate validated, and
 	// BEFORE any persistent artifact (uplink capture, conf snapshot, profile rows),
 	// so every irreversible step below is serialized by one apply. Claiming after
-	// the up-to-30s render+kea -t means a doomed candidate never locks the control
-	// plane, and a busy guard doesn't mask the real validation feedback (beginSwitch
-	// orders the same way). Cleared by finishApply's defer, or endReconcile on an
-	// early error.
+	// the validation means a doomed candidate never locks the control plane, and a
+	// busy guard doesn't mask the real validation feedback. Cleared by
+	// finishApply's defer, or endReconcile on an early error.
 	if !s.beginReconcile() {
 		return applyPlan{}, fmt.Errorf("A profile apply is already in progress.")
 	}
@@ -312,6 +312,12 @@ type rollbackSpec struct {
 // must attempt all of them even when one fails, and a silent skip is how a box
 // boots with no active profile.
 func (s *Server) rollbackFailed(p rollbackSpec) {
+	// Ordering: tables first, then the snapshot conf, then the lifecycle state.
+	// A crash mid-rollback therefore leaves the state at CONFIGURING with the
+	// tables already reverted, and the boot resume completes the PREVIOUS
+	// profile (or falls back to onboarding when there is none) - reverting the
+	// state first would instead let a crash strand the failed profile's rows
+	// under a final state.
 	if err := p.revertTables(); err != nil {
 		log.Printf("[%s] rollback: revert profile table: %v", p.tag, err)
 	}
