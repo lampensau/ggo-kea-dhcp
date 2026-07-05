@@ -291,9 +291,8 @@ func (d *greengoHDetector) Snapshot() DetectorSnapshot {
 	return s
 }
 
-// asciiTrim returns the bytes up to the first NUL as a string (config names are
-// NUL-padded ASCII), through the shared printableID funnel - the name is wire
-// bytes that flow into the audit log.
+// asciiTrim returns the bytes up to the first NUL, through the shared
+// printableID funnel - the name is wire bytes that flow into the audit log.
 func asciiTrim(b []byte) string {
 	before, _, _ := bytes.Cut(b, []byte{0})
 	return printableID(before)

@@ -56,3 +56,21 @@ func TestWireNameDecodersFiltered(t *testing.T) {
 		t.Fatalf("clean config name = %q, want verbatim", got)
 	}
 }
+
+// One crafted frame must not plant a multi-KB blob into an audit row: the
+// funnel truncates past maxWireName in both render modes.
+func TestPrintableIDLengthCapped(t *testing.T) {
+	long := make([]byte, 4*maxWireName)
+	for i := range long {
+		long[i] = 'a'
+	}
+	if got := printableID(long); len(got) != maxWireName+2 || got[len(got)-2:] != ".." {
+		t.Errorf("printable blob len=%d tail=%q, want cap+marker", len(got), got[len(got)-2:])
+	}
+	long[0] = 0x1b // force the hex rendering
+	if got := printableID(long); len(got) > maxWireName*3+2 {
+		t.Errorf("hex blob len=%d, want capped", len(got))
+	} else if got[len(got)-2:] != ".." {
+		t.Errorf("hex blob lacks the truncation marker: %q", got[len(got)-8:])
+	}
+}

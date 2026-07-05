@@ -145,9 +145,19 @@ func (d *lldpDetector) parseCDP(frame []byte) {
 	}
 }
 
+// maxWireName caps how much of a wire-derived identifier survives into audit
+// rows and Network Health fields - a single crafted frame must not plant a
+// multi-KB blob there. Real switch/source names are far shorter.
+const maxWireName = 96
+
 // printableID copies a byte slice to a string, rendering it as MAC-style hex when
-// it is not printable text (so a binary chassis/port id is still readable).
+// it is not printable text (so a binary chassis/port id is still readable) and
+// truncating past maxWireName with a ".." marker.
 func printableID(v []byte) string {
+	truncated := false
+	if len(v) > maxWireName {
+		v, truncated = v[:maxWireName], true
+	}
 	printable := len(v) > 0
 	for _, c := range v {
 		if c < 0x20 || c > 0x7e {
@@ -156,15 +166,21 @@ func printableID(v []byte) string {
 		}
 	}
 	if printable {
+		if truncated {
+			return string(v) + ".."
+		}
 		return string(v)
 	}
 	const hex = "0123456789abcdef"
-	buf := make([]byte, 0, len(v)*3)
+	buf := make([]byte, 0, len(v)*3+2)
 	for i, c := range v {
 		if i > 0 {
 			buf = append(buf, ':')
 		}
 		buf = append(buf, hex[c>>4], hex[c&0x0f])
+	}
+	if truncated {
+		buf = append(buf, '.', '.')
 	}
 	return string(buf)
 }
