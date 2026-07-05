@@ -77,7 +77,7 @@ func (s *Server) endReconcile() { s.applying.Store(false) }
 // is the single entry point for the fire-and-forget reconciles triggered by
 // settings saves and resets - serialized against apply/switch by the shared guard.
 func (s *Server) scheduleReconcileHeld(label string, delay time.Duration, mode ReconcileMode, profileID int) {
-	go func() {
+	go s.runRecoveredAudited("reconcile-"+label, func() {
 		defer s.endReconcile()
 		if delay > 0 {
 			time.Sleep(delay)
@@ -94,7 +94,7 @@ func (s *Server) scheduleReconcileHeld(label string, delay time.Duration, mode R
 			log.Printf("[reconcile:%s] reported: %v", label, err)
 			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", label, "", err.Error(), "WARNING")
 		}
-	}()
+	})
 }
 
 // ReconcileApplianceState is the single authority that makes runtime network +
@@ -378,7 +378,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// actually drops wlan0 - converge fully owns the uplink state.
 	switch {
 	case hasUplink && !s.net.IsWifiUplinkActive():
-		go s.connectUplink(upSSID, upPass)
+		go s.runRecoveredAudited("uplink-connect", func() { s.connectUplink(upSSID, upPass) })
 	case !hasUplink:
 		_ = s.net.DisconnectWifiUplink()
 	}
@@ -424,7 +424,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 		for _, ip := range s.dns.StartZone(bindIPs) {
 			_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed, retrying on the sampler tick", "WARNING")
 		}
-		go s.primeDNSZone()
+		go s.runRecoveredAudited("dns-zone-prime", s.primeDNSZone)
 	}
 
 	return errors.Join(errs...)
