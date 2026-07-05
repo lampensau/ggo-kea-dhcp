@@ -17,7 +17,7 @@ func TestPersistProfileEntersConfiguringAtomically(t *testing.T) {
 	}
 	var plan applyPlan
 	scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "greengo"}}
-	if err := s.persistProfile("beta", scopes, &plan); err != nil {
+	if err := s.persistProfile("beta", scopes, UplinkConfig{}, &plan); err != nil {
 		t.Fatalf("persistProfile: %v", err)
 	}
 	if plan.newProfileID == 0 {
@@ -56,7 +56,7 @@ func TestPersistProfileStashesSameName(t *testing.T) {
 	var plan applyPlan
 	plan.prevProfileID = int(prevID)
 	scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "greengo"}}
-	if err := s.persistProfile("alpha", scopes, &plan); err != nil {
+	if err := s.persistProfile("alpha", scopes, UplinkConfig{}, &plan); err != nil {
 		t.Fatalf("persistProfile: %v", err)
 	}
 
@@ -100,6 +100,46 @@ func TestPersistProfileStashesSameName(t *testing.T) {
 	}
 	if err := s.sqlite.QueryRow("SELECT COUNT(*) FROM profiles WHERE name = 'alpha'").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("want exactly one profile named alpha after rollback (n=%d err=%v)", n, err)
+	}
+}
+
+// TestFailedApplyRestoresUplink proves a failed apply restores the box-level WiFi
+// uplink credentials it wrote mid-apply: persistProfile commits the NEW uplink with
+// the profile (the reconcile reads it from app_state), so finishApply's rollback
+// must put the prior credentials back - otherwise the rollback reconcile
+// reconnects wlan0 to the failed profile's uplink.
+func TestFailedApplyRestoresUplink(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	prior := map[string]string{"uplink_enabled": "1", "uplink_ssid": "old-net", "uplink_pass": "old-pass"}
+	if err := s.sqlite.SetStates(prior); err != nil {
+		t.Fatalf("seed uplink: %v", err)
+	}
+
+	scopes := []ScopeConfig{{CIDR: "10.0.0.0/24", Preset: "generic"}}
+	scopes[0].Plan = seedDefaultPlan(scopes[0])
+	plan, err := s.beginApply("beta", scopes, UplinkConfig{Enabled: true, SSID: "new-net", Password: "new-pass"})
+	if err != nil {
+		t.Fatalf("beginApply: %v", err)
+	}
+	// Mid-apply the new credentials must be persisted (the reconcile reads them).
+	if ssid, _ := s.sqlite.GetState("uplink_ssid"); ssid != "new-net" {
+		t.Fatalf("mid-apply uplink_ssid = %q, want new-net", ssid)
+	}
+
+	// The test server's Kea endpoint is unreachable, so the ModeApply reconcile
+	// fails and finishApply takes its rollback path.
+	s.finishApply(plan, "beta", "test")
+
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateOnboarding {
+		t.Fatalf("post-rollback state = %q, want ONBOARDING", st)
+	}
+	for k, want := range prior {
+		if got, _ := s.sqlite.GetState(k); got != want {
+			t.Errorf("%s = %q after failed apply, want %q", k, got, want)
+		}
 	}
 }
 

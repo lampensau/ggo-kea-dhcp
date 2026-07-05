@@ -66,9 +66,9 @@ func TestFlashCookieFlags(t *testing.T) {
 }
 
 // TestSettingsSaveActiveGuardHeld proves a soft change saved in ACTIVE while
-// another reconcile holds the guard tells the operator the change is NOT yet
-// applied, instead of the plain success flash (the values persist, but there is
-// no queue that re-applies them when the guard frees).
+// another reconcile holds the guard is refused OUTRIGHT: nothing persists (a value
+// saved mid-apply would be silently clobbered by the apply's failure rollback,
+// which restores the pre-apply uplink keys) and the operator is told to retry.
 func TestSettingsSaveActiveGuardHeld(t *testing.T) {
 	s, _ := newTestServer(t)
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
@@ -102,8 +102,13 @@ func TestSettingsSaveActiveGuardHeld(t *testing.T) {
 	if f == nil {
 		t.Fatal("flash did not decode")
 	}
-	if !strings.Contains(f.Message, "NOT yet applied") || f.Type != "info" {
-		t.Errorf("guard-held save flashed %q (%s), want the not-yet-applied notice", f.Message, f.Type)
+	if !strings.Contains(f.Message, "NOT saved") || f.Type != "info" {
+		t.Errorf("guard-held save flashed %q (%s), want the not-saved notice", f.Message, f.Type)
+	}
+	// The refused save must not have persisted anything: persisting before the
+	// guard was the race that let an apply rollback clobber a mid-apply save.
+	if got, _ := s.sqlite.GetState("lease_lifetime"); got == form.Get("lease_lifetime") {
+		t.Errorf("refused save persisted lease_lifetime=%q anyway", got)
 	}
 }
 

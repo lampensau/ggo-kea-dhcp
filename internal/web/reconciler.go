@@ -701,11 +701,7 @@ func (s *Server) migrateUplinkToBoxLevel() {
 	if !ok || cfg.SSID == "" {
 		return
 	}
-	en := "0"
-	if cfg.Enabled {
-		en = "1"
-	}
-	if err := s.sqlite.SetStates(map[string]string{"uplink_ssid": cfg.SSID, "uplink_pass": cfg.Password, "uplink_enabled": en}); err != nil {
+	if err := s.sqlite.SetStates(uplinkState(cfg.Enabled, cfg.SSID, cfg.Password)); err != nil {
 		log.Printf("[migrate] seed box-level uplink: %v", err)
 		return
 	}

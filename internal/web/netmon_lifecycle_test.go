@@ -111,7 +111,7 @@ func TestMulticastSniff_PersistRoundTrip(t *testing.T) {
 		{Preset: "greengo", CIDR: "10.0.0.0/24", MulticastSniff: true},
 		{Preset: "dante", VlanID: 20, CIDR: "10.0.20.0/24", MulticastSniff: false},
 	}
-	if err := s.persistProfile("rt", scopes, plan); err != nil {
+	if err := s.persistProfile("rt", scopes, UplinkConfig{}, plan); err != nil {
 		t.Fatalf("persistProfile: %v", err)
 	}
 	loaded, err := s.loadScopeConfigs(plan.newProfileID)
