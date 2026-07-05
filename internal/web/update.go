@@ -365,8 +365,13 @@ func (s *Server) buildUpdateView(csrf string) views.UpdateView {
 }
 
 // handleUpdateCheck is the Settings card's Check Now: one synchronous manual
-// check, result surfaced as a flash toast.
+// check, result surfaced as a flash toast. Gated on ACTIVE like the background
+// loop - the box makes no update requests while onboarding or isolated.
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if state, _ := s.sqlite.GetState(db.LifecycleStateKey); state != db.StateActive {
+		s.redirectHTMX(w, r, "/settings")
+		return
+	}
 	newer, err := s.checkForUpdate(true)
 	switch {
 	case err != nil:
