@@ -89,23 +89,31 @@ func Run(cfg *config.Config) Result {
 // checkKeaBinary verifies kea-dhcp4 is installed and is the supported 3.0.x series
 // (2.x and 3.2+ differ in config/flex-id behavior this appliance depends on).
 func checkKeaBinary() Check {
-	const name = "Kea binary"
 	if !kea.Installed() {
-		return Check{name, Fail, "kea-dhcp4 not found in PATH or sbin - install isc-kea-dhcp4-server"}
+		return keaBinaryStatus(false, "", nil)
 	}
 	v, err := kea.Version()
-	if err != nil {
-		return Check{name, Warn, fmt.Sprintf("present but version unreadable: %v", err)}
+	return keaBinaryStatus(true, v, err)
+}
+
+// keaBinaryStatus is the pure decision (clockStatus pattern): installed at all,
+// version readable, and inside the supported series.
+func keaBinaryStatus(installed bool, version string, verr error) Check {
+	const name = "Kea binary"
+	if !installed {
+		return Check{name, Fail, "kea-dhcp4 not found in PATH or sbin - install isc-kea-dhcp4-server"}
 	}
-	if !strings.HasPrefix(v, "3.0.") {
-		return Check{name, Fail, fmt.Sprintf("found Kea %s but this appliance requires the 3.0.x series", v)}
+	if verr != nil {
+		return Check{name, Warn, fmt.Sprintf("present but version unreadable: %v", verr)}
 	}
-	return Check{name, OK, "version " + v}
+	if !strings.HasPrefix(version, "3.0.") {
+		return Check{name, Fail, fmt.Sprintf("found Kea %s but this appliance requires the 3.0.x series", version)}
+	}
+	return Check{name, OK, "version " + version}
 }
 
 // checkHooks verifies the required hook libraries exist in the detected hooks dir.
 func checkHooks() Check {
-	const name = "Kea hooks"
 	dir := kea.HooksDir()
 	var missing []string
 	for _, lib := range kea.RequiredHooks {
@@ -113,6 +121,12 @@ func checkHooks() Check {
 			missing = append(missing, lib)
 		}
 	}
+	return hooksStatus(dir, missing)
+}
+
+// hooksStatus is the pure decision over the probed missing-library list.
+func hooksStatus(dir string, missing []string) Check {
+	const name = "Kea hooks"
 	dir = strings.TrimRight(dir, "/")
 	if len(missing) > 0 {
 		return Check{name, Fail, fmt.Sprintf("missing in %s: %s", dir, strings.Join(missing, ", "))}
@@ -123,15 +137,24 @@ func checkHooks() Check {
 // checkKeaSocket verifies the Kea control socket answers. Warn (not Fail): Kea may
 // simply not be started yet at boot; the runtime health monitor tracks it ongoing.
 func checkKeaSocket(cfg *config.Config) Check {
-	const name = "Kea control socket"
 	secret, err := cfg.GetKeaSecret()
 	if err != nil {
-		return Check{name, Warn, fmt.Sprintf("cannot read API secret: %v", err)}
+		return keaSocketStatus(cfg.KeaAPIURL, err, nil)
 	}
-	if err := kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(context.Background()); err != nil {
-		return Check{name, Warn, fmt.Sprintf("%s unreachable: %v", cfg.KeaAPIURL, err)}
+	return keaSocketStatus(cfg.KeaAPIURL, nil, kea.NewClient(cfg.KeaAPIURL, "gui", secret).Ping(context.Background()))
+}
+
+// keaSocketStatus is the pure decision: Warn (not Fail) throughout, because Kea
+// may simply not be started yet at boot and the runtime health monitor tracks it.
+func keaSocketStatus(url string, secretErr, pingErr error) Check {
+	const name = "Kea control socket"
+	if secretErr != nil {
+		return Check{name, Warn, fmt.Sprintf("cannot read API secret: %v", secretErr)}
 	}
-	return Check{name, OK, "reachable at " + cfg.KeaAPIURL}
+	if pingErr != nil {
+		return Check{name, Warn, fmt.Sprintf("%s unreachable: %v", url, pingErr)}
+	}
+	return Check{name, OK, "reachable at " + url}
 }
 
 // checkTools verifies the privileged binaries the network layer shells out to.
@@ -141,29 +164,42 @@ func checkTools() []Check {
 	tools := []string{"nmcli", "nft", "ip", "hostapd", "iw", "systemctl"}
 	var checks []Check
 	for _, t := range tools {
-		if network.ToolPresent(t) {
-			checks = append(checks, Check{"Tool: " + t, OK, "installed"})
-		} else {
-			checks = append(checks, Check{"Tool: " + t, Fail, "not found in PATH or sbin"})
-		}
+		checks = append(checks, toolStatus(t, network.ToolPresent(t)))
 	}
 	return checks
+}
+
+// toolStatus is the pure decision for one privileged tool's presence.
+func toolStatus(tool string, present bool) Check {
+	if present {
+		return Check{"Tool: " + tool, OK, "installed"}
+	}
+	return Check{"Tool: " + tool, Fail, "not found in PATH or sbin"}
 }
 
 // checkMariaDB verifies the reservation database is reachable and initialized.
 // Warn (not Fail): Kea still serves dynamic leases without it; only reservations
 // and port pinning are unavailable.
 func checkMariaDB(cfg *config.Config) Check {
-	const name = "Reservation database (MariaDB)"
 	m, err := db.ConnectMariaDB(cfg.MariaDBDSN)
 	if err != nil {
-		return Check{name, Warn, fmt.Sprintf("connect failed: %v", err)}
+		return mariadbStatus(cfg.MariaDBDSN, err, nil)
 	}
 	defer m.Close()
-	if err := m.VerifySchema(context.Background()); err != nil {
-		return Check{name, Warn, fmt.Sprintf("schema not ready: %v", err)}
+	return mariadbStatus(cfg.MariaDBDSN, nil, m.VerifySchema(context.Background()))
+}
+
+// mariadbStatus is the pure decision: Warn (not Fail) throughout, because Kea
+// still serves dynamic leases without the reservation database.
+func mariadbStatus(dsn string, connectErr, schemaErr error) Check {
+	const name = "Reservation database (MariaDB)"
+	if connectErr != nil {
+		return Check{name, Warn, fmt.Sprintf("connect failed: %v", connectErr)}
 	}
-	return Check{name, OK, "connected, hosts table present (" + config.RedactedMariaDSN(cfg.MariaDBDSN) + ")"}
+	if schemaErr != nil {
+		return Check{name, Warn, fmt.Sprintf("schema not ready: %v", schemaErr)}
+	}
+	return Check{name, OK, "connected, hosts table present (" + config.RedactedMariaDSN(dsn) + ")"}
 }
 
 // checkKeaConfDir verifies the app can write kea-dhcp4.conf - a hard requirement for
@@ -204,6 +240,11 @@ const (
 // features, not core DHCP - and a process running as root holds them implicitly.
 func checkCaps() []Check {
 	eff, err := readCapEff()
+	return capsStatus(eff, err)
+}
+
+// capsStatus is the pure decision over the probed effective-capability mask.
+func capsStatus(eff uint64, err error) []Check {
 	if err != nil {
 		return []Check{{"Linux capabilities", Warn, fmt.Sprintf("cannot read /proc/self/status: %v", err)}}
 	}
@@ -228,16 +269,25 @@ func capCheck(name string, eff uint64, bit uint) Check {
 // permission error is folded into the CAP_NET_BIND_SERVICE story instead of
 // blamed on a conflicting service.
 func checkPort53() Check {
-	const name = "UDP port 53 (local DNS)"
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 53})
-	if err != nil {
-		if errors.Is(err, os.ErrPermission) {
-			return Check{name, Warn, "bind denied - CAP_NET_BIND_SERVICE missing (granted via systemd AmbientCapabilities)"}
-		}
-		return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind: %v", err)}
+	if err == nil {
+		_ = conn.Close()
 	}
-	_ = conn.Close()
-	return Check{name, OK, "available"}
+	return port53Status(err)
+}
+
+// port53Status is the pure decision over the loopback bind outcome: a permission
+// error is the missing-capability story, any other error means a wildcard binder
+// (systemd-resolved, dnsmasq) is squatting the port.
+func port53Status(err error) Check {
+	const name = "UDP port 53 (local DNS)"
+	if err == nil {
+		return Check{name, OK, "available"}
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return Check{name, Warn, "bind denied - CAP_NET_BIND_SERVICE missing (granted via systemd AmbientCapabilities)"}
+	}
+	return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind: %v", err)}
 }
 
 // checkClock reports the reliability of the time source, which lease expiry
