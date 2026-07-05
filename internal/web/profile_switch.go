@@ -95,7 +95,7 @@ func (s *Server) handleProfileActivate(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 
-	go s.finishSwitch(plan, actor)
+	go s.runRecoveredReconcile("finish-switch", func() { s.finishSwitch(plan, actor) })
 }
 
 // handleProfileDelete removes a saved (non-active) profile. The active profile is
