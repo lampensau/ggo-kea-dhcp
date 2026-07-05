@@ -17,29 +17,30 @@ templ ScopeServices(v ScopeServicesView) {
 		<div class="scope-services-body">
 			<div class="grid-3">
 				<div class="form-group">
-					<label class="form-label">Gateway (optional)</label>
-					<input class="form-control mono" type="text" name={ svcField(v, "gateway") } value={ v.Gateway } placeholder={ v.DerivedGateway }/>
+					<label class="form-label" for={ svcID(v, "gateway") }>Gateway (optional)</label>
+					<input class="form-control mono" id={ svcID(v, "gateway") } type="text" name={ svcField(v, "gateway") } value={ v.Gateway } placeholder={ v.DerivedGateway }/>
 				</div>
 				<div class="form-group">
-					<label class="form-label">DNS servers (optional)</label>
-					<input class="form-control mono" type="text" name={ svcField(v, "dns") } value={ v.DNS } placeholder="comma-separated IPs"/>
+					<label class="form-label" for={ svcID(v, "dns") }>DNS servers (optional)</label>
+					<input class="form-control mono" id={ svcID(v, "dns") } type="text" name={ svcField(v, "dns") } value={ v.DNS } placeholder="comma-separated IPs"/>
 				</div>
 				<div class="form-group">
-					<label class="form-label">Lease override (seconds)</label>
-					<input class="form-control" type="number" name={ svcField(v, "lease") } value={ v.Lease } placeholder={ itoa(v.GlobalLease) } min="30" max="86400"/>
+					<label class="form-label" for={ svcID(v, "lease") }>Lease override (seconds)</label>
+					<input class="form-control" id={ svcID(v, "lease") } type="number" name={ svcField(v, "lease") } value={ v.Lease } placeholder={ itoa(v.GlobalLease) } min="30" max="86400"/>
 				</div>
 				<div class="form-group">
 					<label class="form-label">
 						Local DNS
 						<span class="info-tip" tabindex="0" role="note" aria-label="What the local DNS handout does">
 							@Icon("info")
-							<span class="info-tip-text">Hands this appliance out as the scope's DNS server, so device names resolve on the network (bpx-19.dhcp.greengo.digital and .inv). Other lookups are forwarded to the uplink's resolver when one exists. Setup and verification steps: docs/dns.md.</span>
+							<span class="info-tip-text">Hands this appliance out as the scope's DNS server so Green-GO device names resolve on the network (e.g. bpx-19.dhcp.greengo.digital); other lookups are forwarded to the uplink's resolver when one exists. Leave "DNS servers (optional)" blank to use this - a value there overrides the toggle and is handed to clients instead.</span>
 						</span>
 					</label>
 					// Same switch-with-state-text shape as the wizard's multicast toggle
-					// (the mc-on/mc-off classes drive the Enabled/Disabled label).
+					// (the mc-on/mc-off classes drive the Enabled/Disabled label); the visible
+					// state text is not the accessible name, so aria-label carries the purpose.
 					<label class="switch scope-mcast-toggle">
-						<input type="checkbox" name={ svcField(v, "local_dns") } value="true" checked?={ v.LocalDNS }/>
+						<input type="checkbox" aria-label="Local DNS" name={ svcField(v, "local_dns") } value="true" checked?={ v.LocalDNS }/>
 						<span class="track"></span>
 						<span class="thumb"></span>
 						<span class="scope-mcast-text mc-on">Enabled</span>
@@ -62,8 +63,8 @@ templ optionEditor(fieldPrefix string, rows []ScopeOptionRow) {
 		<div class="svc-opt-rows">
 			for _, row := range rows {
 				<div class="grid-2 svc-opt-row">
-					<input class="form-control mono" type="text" name={ optField(fieldPrefix, "opt_name") } value={ row.Name } list="ggo-dhcp-opt-names" placeholder="option name (e.g. ntp-servers)"/>
-					<input class="form-control mono" type="text" name={ optField(fieldPrefix, "opt_data") } value={ row.Data } placeholder="value"/>
+					<input class="form-control mono" type="text" aria-label="DHCP option name" name={ optField(fieldPrefix, "opt_name") } value={ row.Name } list="ggo-dhcp-opt-names" placeholder="option name (e.g. ntp-servers)"/>
+					<input class="form-control mono" type="text" aria-label="DHCP option value" name={ optField(fieldPrefix, "opt_data") } value={ row.Data } placeholder="value"/>
 				</div>
 			}
 		</div>

@@ -208,7 +208,7 @@ templ scopeTemplate() {
 						</span>
 					</label>
 					<label class="switch scope-mcast-toggle">
-						<input type="checkbox" name="scopes[__ID__][multicast_sniff]" value="true"/>
+						<input type="checkbox" aria-label="Multicast inspect" name="scopes[__ID__][multicast_sniff]" value="true"/>
 						<span class="track"></span>
 						<span class="thumb"></span>
 						<span class="scope-mcast-text mc-on">Enabled</span>
@@ -221,7 +221,7 @@ templ scopeTemplate() {
 			// the pool-plan footer must cover this card). FieldPrefix "scopes[__ID__]"
 			// matches the wizard's cloned names; no SaveAction (saved through the big
 			// /setup/apply form). Edit Configuration restores values via ggoApplyImported.
-			@ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]"})
+			@ScopeServices(ScopeServicesView{FieldPrefix: "scopes[__ID__]", RegionID: "svc-__ID__"})
 			<div class="scope-pools">
 				// data-init (NOT data-on:load) is what fires when this node is CLONED
 				// into the DOM: data-on:load only runs during Datastar's initial page

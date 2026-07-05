@@ -32,7 +32,7 @@ type PoolScopeView struct {
 // only on /pools (the morph target for re-rendering after that scope's save).
 type ScopeServicesView struct {
 	FieldPrefix    string // "" (/pools) or "scopes[__ID__]" (wizard)
-	RegionID       string // morph target on /pools, e.g. "svc-0"; "" in the wizard
+	RegionID       string // panel id, unique per scope: "svc-0" (/pools morph target) or "svc-__ID__" (wizard)
 	Gateway        string
 	DNS            string
 	LocalDNS       bool   // hand this appliance out as the scope's DNS server
@@ -54,6 +54,13 @@ func svcField(v ScopeServicesView, name string) string {
 		return name
 	}
 	return v.FieldPrefix + "[" + name + "]"
+}
+
+// svcID builds a DOM id for a services control so each visible label can associate
+// with its input via for/id (a11y). RegionID is unique per panel ("svc-N" on /pools,
+// "svc-__ID__" in the wizard, made unique when the template is cloned per scope).
+func svcID(v ScopeServicesView, name string) string {
+	return v.RegionID + "-" + name
 }
 
 // optionRows returns the per-scope saved option rows plus ONE blank row to type into.
