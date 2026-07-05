@@ -16,12 +16,13 @@ import (
 func TestFlexIDRoundTrip(t *testing.T) {
 	// Kea's client-id: 0x00 + "GGO-Edge-10/4" (a pre-delimiter / single-sub-option
 	// flex-id). decodePortIdentity must strip the zero byte; a printable flex-id with
-	// no 0x1f delimiter surfaces whole under the remote-id half, and the opaque Key is
-	// the printable text itself.
+	// no 0x1f delimiter surfaces whole under the remote-id half for DISPLAY, while
+	// the opaque Key is always colon-hex so it can never be misdecoded (a printable
+	// flex-id that looks like colon-hex, e.g. an ASCII MAC, decoded wrongly before).
 	clientID := "00:47:47:4f:2d:45:64:67:65:2d:31:30:2f:34"
 	id, ok := decodePortIdentity(clientID)
-	if !ok || id.Key != "GGO-Edge-10/4" || id.RemoteID != "GGO-Edge-10/4" {
-		t.Fatalf("decodePortIdentity(%q) = %+v ok=%v, want Key/remote GGO-Edge-10/4", clientID, id, ok)
+	if !ok || id.Key != "47:47:4f:2d:45:64:67:65:2d:31:30:2f:34" || id.RemoteID != "GGO-Edge-10/4" {
+		t.Fatalf("decodePortIdentity(%q) = %+v ok=%v, want hex Key + remote GGO-Edge-10/4", clientID, id, ok)
 	}
 	// The stored reservation identifier = the 13-byte flex-id (NOT 14, no leading 0).
 	raw := flexIDToBytes(id.Key)
@@ -44,16 +45,17 @@ func TestFlexIDRoundTrip(t *testing.T) {
 }
 
 func TestMergePortRowsPinnedOnly(t *testing.T) {
-	labels := map[string]string{"ab/cd": "Door Panel"}
+	key := bytesToPortIdentity([]byte("ab/cd")) // maps are keyed by the opaque hex key
+	labels := map[string]string{key: "Door Panel"}
 	pinned := map[string]db.HostReservation{
-		"ab/cd": {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
+		key: {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
 	}
 	rows := mergePortRows(labels, pinned, nil, nil, 0)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
 	r := rows[0]
-	if r.PortIdentity != "ab/cd" || r.IPAddress != "1.2.3.4" || r.SubnetID != 7 ||
+	if r.PortIdentity != key || r.IPAddress != "1.2.3.4" || r.SubnetID != 7 ||
 		r.Hostname != "panel" || r.Label != "Door Panel" || !r.Pinned || r.HWAddress != "-" {
 		t.Errorf("pinned row wrong: %+v", r)
 	}
@@ -61,7 +63,7 @@ func TestMergePortRowsPinnedOnly(t *testing.T) {
 
 func TestMergePortRowsLeaseFillsPinned(t *testing.T) {
 	pinned := map[string]db.HostReservation{
-		"ab/cd": {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
+		bytesToPortIdentity([]byte("ab/cd")): {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
 	}
 	// 0x00 + hex of "ab/cd" (the flex-id form) so the lease maps onto the pinned port.
 	leases := []kea.ActiveLease{{ClientID: "0061622f6364", HWAddress: "aa:bb:cc:dd:ee:ff"}}
@@ -81,7 +83,7 @@ func TestMergePortRowsUnpinnedLease(t *testing.T) {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
 	r := rows[0]
-	if r.PortIdentity != "ab/cd" || r.Pinned || r.IPAddress != "9.9.9.9" {
+	if r.PortIdentity != bytesToPortIdentity([]byte("ab/cd")) || r.Pinned || r.IPAddress != "9.9.9.9" {
 		t.Errorf("unpinned lease row wrong: %+v", r)
 	}
 }
@@ -138,9 +140,10 @@ func TestMergePortRowsPrefersNewFormat(t *testing.T) {
 // blanked (an empty pinned port) while its operator Label and reserved IP survive. The
 // device's new learnable row on port B is kept.
 func TestMergePortRowsPinnedDeviceMovedAway(t *testing.T) {
-	labels := map[string]string{"ab/cd": "Door Panel"}
+	key := bytesToPortIdentity([]byte("ab/cd"))
+	labels := map[string]string{key: "Door Panel"}
 	pinned := map[string]db.HostReservation{
-		"ab/cd": {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
+		key: {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
 	}
 	leases := []kea.ActiveLease{
 		// Lingering old lease on the pinned port "ab/cd", older cltt.
@@ -188,5 +191,67 @@ func TestMergePortRowsLastSeenStale(t *testing.T) {
 	r := rows[0]
 	if r.LastSeen != now-30*24*60*60 || r.LastSeenText != "30d ago" || !r.Stale {
 		t.Errorf("stale pinned row wrong: LastSeen=%d text=%q stale=%v", r.LastSeen, r.LastSeenText, r.Stale)
+	}
+}
+
+// TestFlexIDKeyRoundTripUnambiguous pins the key-encoding contract for
+// arbitrary flex-id byte shapes: flexIDToBytes(bytesToPortIdentity(b)) must
+// return exactly b, for every relay out there - not just the delimited
+// remote+circuit shape our own identifier expression builds. The named cases
+// are real-world: a lone delimiter byte (a relay whose present Option-82
+// sub-options are empty), a single-byte circuit-id, and a pre-upgrade
+// non-delimited flex-id that is an ASCII-text MAC - printable AND colon-hex
+// shaped, which the old printable-first encoding decoded to the wrong bytes.
+func TestFlexIDKeyRoundTripUnambiguous(t *testing.T) {
+	cases := [][]byte{
+		{0x1f},                       // lone delimiter: both sub-options present but empty
+		{0x05},                       // single-byte binary circuit-id
+		{0x31, 0x66},                 // ASCII "1f" - must not collide with the byte 0x1f
+		[]byte("aa:bb:cc:dd:ee:ff"),  // ASCII MAC remote-id (printable, colon-hex shaped)
+		[]byte("00:47"),              // short printable colon-hex lookalike
+		[]byte("GGO-Edge-10\x1f4/7"), // the normal delimited shape
+		[]byte("switch/Gi1/0/4"),     // plain printable legacy flex-id
+		{0x00, 0xff, 0x10},           // arbitrary binary
+	}
+	for _, b := range cases {
+		key := bytesToPortIdentity(b)
+		got := flexIDToBytes(key)
+		if string(got) != string(b) {
+			t.Errorf("round-trip %x: key %q decoded to %x", b, key, got)
+		}
+	}
+}
+
+// TestFetchPortLabelsTranslatesLegacyKeys proves labels stored under the old
+// printable key form (before the key became always-hex) stay attached to their
+// ports: fetchPortLabels re-encodes them on read to the hex key the rest of the
+// page now derives, with no migration.
+func TestFetchPortLabelsTranslatesLegacyKeys(t *testing.T) {
+	s, _ := newTestServer(t)
+	seed := map[string]string{
+		"switch/Gi1/0/4":    "Stage Left", // legacy printable key
+		"61:62:2f:63:64":    "Door Panel", // current hex key, kept as-is
+		"aa:bb:cc:dd:ee:ff": "FOH Sw",     // legacy printable key that LOOKS like hex (ASCII MAC)
+	}
+	for k, v := range seed {
+		if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES (?, ?)", k, v); err != nil {
+			t.Fatalf("seed %q: %v", k, err)
+		}
+	}
+	labels, err := s.fetchPortLabels()
+	if err != nil {
+		t.Fatalf("fetchPortLabels: %v", err)
+	}
+	if got := labels[bytesToPortIdentity([]byte("switch/Gi1/0/4"))]; got != "Stage Left" {
+		t.Errorf("legacy printable key not translated: %v", labels)
+	}
+	if got := labels["61:62:2f:63:64"]; got != "Door Panel" {
+		t.Errorf("hex key must pass through untouched: %v", labels)
+	}
+	// The colon-hex-shaped ASCII key is INDISTINGUISHABLE from a real hex key, so
+	// it passes through as-is - the accepted residual for legacy rows only (new
+	// keys are always genuine hex). Pinned here so the trade-off is deliberate.
+	if got := labels["aa:bb:cc:dd:ee:ff"]; got != "FOH Sw" {
+		t.Errorf("hex-shaped legacy key should pass through: %v", labels)
 	}
 }

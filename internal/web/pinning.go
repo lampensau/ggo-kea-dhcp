@@ -20,16 +20,17 @@ import (
 )
 
 // colonHexRe matches a lowercase/uppercase colon-separated hex octet string like
-// "00:47:4f" - the form Kea reports a binary flex-id / client-id in.
-var colonHexRe = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2})+$`)
+// "00:47:4f" (a single bare octet like "1f" included) - the form
+// bytesToPortIdentity renders every key in.
+var colonHexRe = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2})*$`)
 
-// flexIDToBytes converts a port identity as shown in the UI back to the RAW flex-id
-// bytes Kea stores in (and matches against) dhcp_identifier. A colon-hex identity (a
-// binary flex-id, e.g. "00:47:47:..") is hex-decoded to its bytes; a printable
-// identity (e.g. "switch/Gi1/0/4") is its own ASCII bytes. This is the crux of
-// port pinning: Kea matches the reservation against the raw flex-id bytes, so
-// storing the ASCII colon-hex string (the old bug) never matched and the device
-// kept getting a dynamic lease.
+// flexIDToBytes converts a port-identity key back to the RAW flex-id bytes Kea
+// stores in (and matches against) dhcp_identifier. Every key bytesToPortIdentity
+// produces is colon-hex, so the hex decode is the whole contract; the ASCII
+// fallback only catches a malformed hand-posted value. This is the crux of port
+// pinning: Kea matches the reservation against the raw flex-id bytes, so a key
+// that decodes to the wrong bytes never matches and the device keeps getting a
+// dynamic lease.
 func flexIDToBytes(portIdentity string) []byte {
 	if colonHexRe.MatchString(portIdentity) {
 		if b, err := hex.DecodeString(strings.ReplaceAll(portIdentity, ":", "")); err == nil {
@@ -41,12 +42,16 @@ func flexIDToBytes(portIdentity string) []byte {
 
 // bytesToPortIdentity renders raw flex-id bytes as the opaque port-identity KEY
 // (the value posted in pin/unpin/label forms and used to match reservations and
-// labels). A printable flex-id is its own text; anything else (including a
-// delimited remote+circuit flex-id, which carries a non-printable 0x1f) is
-// lowercase colon-hex, which flexIDToBytes round-trips back to the same bytes.
+// labels): ALWAYS lowercase colon-hex, so flexIDToBytes round-trips every byte
+// shape exactly. The key is deliberately not the printable text even when the
+// flex-id is printable - a printable identifier that happens to look like
+// colon-hex (an ASCII-text MAC remote-id, "aa:bb:cc:dd:ee:ff") would otherwise
+// decode to the wrong bytes, and a lone binary octet ("1f") would collide with
+// the two-char ASCII string. Humans never see the key: the UI shows the decoded
+// remote/circuit halves (portIdent.RemoteID/CircuitID).
 func bytesToPortIdentity(b []byte) string {
-	if s := string(b); s != "" && isPrintableASCII(s) {
-		return s
+	if len(b) == 0 {
+		return ""
 	}
 	return colonHex(b)
 }
@@ -110,6 +115,13 @@ func (s *Server) fetchPortLabels() (map[string]string, error) {
 	for rows.Next() {
 		var portID, lbl string
 		if rows.Scan(&portID, &lbl) == nil {
+			// Translate a legacy key on read: before the key became always-hex, a
+			// printable flex-id was stored as its own text, whose raw bytes are that
+			// ASCII (the old flexIDToBytes contract). Re-encoding on read keeps old
+			// labels attached to their ports without a migration.
+			if !colonHexRe.MatchString(portID) {
+				portID = colonHex([]byte(portID))
+			}
 			labels[portID] = lbl
 		}
 	}
