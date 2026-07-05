@@ -385,9 +385,26 @@ func (inv *inventory) clear() {
 	inv.mu.Unlock()
 }
 
+// maxInventory caps the device census: it is fed from an open UDP socket keyed
+// by a claimed MAC, so a spoofed flood must not grow it unbounded across the
+// 15-minute TTL. Well above any real Green-GO installation.
+const maxInventory = 512
+
 func (inv *inventory) record(d Device, now time.Time) {
 	d.LastSeen = now
 	inv.mu.Lock()
+	if _, ok := inv.devices[d.MAC]; !ok && len(inv.devices) >= maxInventory {
+		// Evict the stalest entry so real, recently-seen devices survive a flood.
+		first := true
+		var oldK string
+		var oldT time.Time
+		for k, dev := range inv.devices {
+			if first || dev.LastSeen.Before(oldT) {
+				oldK, oldT, first = k, dev.LastSeen, false
+			}
+		}
+		delete(inv.devices, oldK)
+	}
 	inv.devices[d.MAC] = d
 	inv.mu.Unlock()
 }

@@ -116,6 +116,9 @@ func (d *rogueDHCPDetector) Consume(f Frame, now time.Time) {
 	}
 	srv := d.servers[opts.serverID]
 	if srv == nil {
+		if len(d.servers) >= maxRogueServers {
+			evictStalest(d.servers, func(s *rogueServer) time.Time { return s.pres.lastSeen })
+		}
 		srv = &rogueServer{pres: newPresence(0, d.absence), ip: ipString(opts.serverID)}
 		d.servers[opts.serverID] = srv
 	}

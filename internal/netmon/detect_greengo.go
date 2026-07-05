@@ -180,6 +180,9 @@ func (d *greengoDetector) see(sha [6]byte, ip uint32, ipStr string, vlan int, no
 	mac := macString(sha)
 	dev := d.devices[mac]
 	if dev == nil {
+		if len(d.devices) >= maxGgoDevices {
+			evictStalest(d.devices, func(g *ggoDevice) time.Time { return g.pres.lastSeen })
+		}
 		dev = &ggoDevice{pres: newPresence(0, d.absence), mac: mac, family: ggoFamily(sha)}
 		d.devices[mac] = dev
 	}

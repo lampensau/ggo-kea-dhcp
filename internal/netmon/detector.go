@@ -44,6 +44,36 @@ type Detector interface {
 	Snapshot() DetectorSnapshot
 }
 
+// Presence-map ceilings. These maps are keyed by wire fields an on-LAN attacker
+// fully controls (DHCP server-id, ARP sender IP, source MAC, PTP clock identity),
+// so each enforces a hard entry cap independent of the governor's load shedding.
+// Sized generously above any legitimate population.
+const (
+	maxRogueServers    = 64
+	maxStaticPoolHosts = 1024
+	maxGgoDevices      = 512
+	maxPTPGMs          = 32 // per domain; the domain map itself is uint8-keyed (bounded)
+)
+
+// evictStalest makes room in a full presence map by deleting the entry with the
+// oldest last-seen time. Under a spoof flood each fake key is seen once, so the
+// fakes are the stalest and real, recently-sighted entries survive.
+// ponytail: O(n) scan on insert at cap; fine at these sizes, switch to a heap
+// only if caps ever grow past a few thousand.
+func evictStalest[K comparable, V any](m map[K]V, lastSeen func(V) time.Time) {
+	first := true
+	var oldK K
+	var oldT time.Time
+	for k, v := range m {
+		if t := lastSeen(v); first || t.Before(oldT) {
+			oldK, oldT, first = k, t, false
+		}
+	}
+	if !first {
+		delete(m, oldK)
+	}
+}
+
 // presence is the shared edge-trigger helper detectors use to track whether a
 // single subject (a querier, an LLDP neighbor, a squatter) is currently present.
 //
