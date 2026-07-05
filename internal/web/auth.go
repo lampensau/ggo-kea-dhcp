@@ -108,10 +108,9 @@ func verifyPassword(stored, pw string) bool {
 
 // reauthCurrentPassword verifies the request's "current_password" field against the
 // logged-in actor's stored hash. It gates the most destructive authenticated actions
-// (factory reset, backup restore) so a click-through confirm alone can't wipe or
-// overwrite the box. ok is false (with a user-facing reason) on a missing actor, an
-// unreadable credential, or a wrong password. Mirrors the account-change check in
-// handleSettingsSave.
+// (factory reset, backup restore) and the account credential change (handleAccountSave)
+// so a click-through confirm alone can't wipe or overwrite the box. ok is false (with a
+// user-facing reason) on a missing actor, an unreadable credential, or a wrong password.
 func (s *Server) reauthCurrentPassword(r *http.Request) (ok bool, reason string) {
 	actor := s.getActor(r)
 	if actor == "" {

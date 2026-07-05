@@ -52,6 +52,12 @@ func TestStateRedirectFor_Extra(t *testing.T) {
 		{db.StateOnboarding, "/leases", "/setup"},
 		{db.StateOnboarding, "/", "/setup"},
 		{db.StateOnboarding, "/audit", "/setup"},
+		// The account dialog is ACTIVE-only: a rename/password change is not part
+		// of onboarding, so /account/save is not whitelisted and bounces to /setup;
+		// once ACTIVE it proceeds. Pinned so a future whitelist edit can't silently
+		// expose credential changes during first-boot.
+		{db.StateOnboarding, "/account/save", "/setup"},
+		{db.StateActive, "/account/save", ""},
 		// CONFIGURING only blocks the wizard; everything else proceeds.
 		{db.StateConfiguring, "/setup/apply", "/dashboard"},
 		{db.StateConfiguring, "/leases", ""},

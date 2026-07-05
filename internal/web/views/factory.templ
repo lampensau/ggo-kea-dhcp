@@ -23,7 +23,7 @@ templ Factory(v FactoryView) {
 						<label class="form-label" for="password">Password</label>
 						<div class="pw-field">
 							<input class="form-control" id="password" name="password" type="password" data-attr:type="$showpw ? 'text' : 'password'" data-bind="pw" autocomplete="new-password" required/>
-							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" aria-label="Show password" title="Show password">
+							<button type="button" class="pw-reveal" data-on:click="$showpw = !$showpw" data-attr:aria-pressed="$showpw" aria-label="Show password" title="Show password">
 								<span data-show="!$showpw">@Icon("eye")</span>
 								<span data-show="$showpw">@Icon("eye-off")</span>
 							</button>

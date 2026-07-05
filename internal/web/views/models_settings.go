@@ -26,8 +26,6 @@ type SettingsView struct {
 	UplinkPassword string
 	// LeaseLifetime is the active-profile DHCP lease lifetime in seconds.
 	LeaseLifetime int
-	// Username is the current administrator's name (the rename field's value).
-	Username string
 }
 
 // --- Setup wizard ---
