@@ -48,6 +48,10 @@ type Snapshot struct {
 	// LiveMACs are the source MACs seen on this interface within the liveness window
 	// (lowercase, colon-separated) - the passive basis for per-lease online/offline.
 	LiveMACs []string
+	// UnleasedPoolHosts are ARP-active hosts holding an in-pool address with no Kea
+	// lease (see staticInPoolDetector.unleasedPoolHosts) - the lease table shows them
+	// as "awaiting renewal" (or "static in pool" once Flagged).
+	UnleasedPoolHosts []PoolHost
 }
 
 // SnapshotStore is the concurrency boundary between the monitor goroutines

@@ -53,39 +53,7 @@ templ Diagnostics(v DiagnosticsView) {
 			<div class="pool-head">
 				<h3 class="no-margin">System &amp; audit events</h3>
 			</div>
-			if len(v.Logs) == 0 {
-				<div class="empty">
-					@Icon("scroll-text")
-					<div class="empty-title">No audit entries yet</div>
-					<div>Administrative activity will be recorded here.</div>
-				</div>
-			} else {
-				// Rows are native <details>: the summary is a CSS-grid "table row" (fixed
-				// columns, no wrapping - detail truncates), expanding to a prose explanation.
-				// Each row has a stable anchor (id="audit-<id>") so the header pill can deep
-				// link to the latest alert (see auditJumpScript). The list scrolls inside a
-				// capped height instead of growing the page.
-				<div class="audit-list">
-					<div class="audit-head">
-						<span>Time</span><span>Actor</span><span>Action</span><span>Detail</span><span>Result</span><span aria-hidden="true"></span>
-					</div>
-					<div class="audit-scroll">
-						for _, l := range v.Logs {
-							<details class="audit-row" id={ "audit-" + itoa(l.ID) } data-result={ l.Result }>
-								<summary class="audit-summary">
-									<span class="mono audit-time">{ l.Timestamp }</span>
-									<span class="audit-actor">{ l.Actor }</span>
-									<span><span class="badge badge-class">{ auditActionLabel(l.Action) }</span></span>
-									<span class="audit-detail">{ auditSummary(l) }</span>
-									@auditResult(l.Result)
-									<span class="audit-chevron" aria-hidden="true">@Icon("chevron-down")</span>
-								</summary>
-								<div class="audit-body">{ auditExplain(l) }</div>
-							</details>
-						}
-					</div>
-				</div>
-			}
+			@DiagAuditLog(v.Logs)
 		</div>
 		@auditJumpScript()
 	}
@@ -95,6 +63,48 @@ templ Diagnostics(v DiagnosticsView) {
 // header pill's link when a warning/error is live) it finds the newest non-OK row; with
 // #audit-<id> it targets that exact row. The row's <details> is opened, scrolled into the
 // capped-height list, and briefly highlighted. Framework-free; runs on load + hashchange.
+// DiagAuditLog is the diagnostics audit list, a live region (#diag-audit): the SSE
+// ticker re-broadcasts it change-only, so a new SYSTEM event (netmon warn, firmware
+// mismatch, backend transition) appears without a manual reload. Rows are native
+// <details>: the summary is a CSS-grid "table row" (fixed columns, no wrapping -
+// detail truncates), expanding to a prose explanation. Each row has a stable anchor
+// (id="audit-<id>") so the header pill can deep link to the latest alert (see
+// auditJumpScript). The list scrolls inside a capped height instead of growing the
+// page. A morph on a new entry closes any expanded row (the open attribute is
+// client-set) - acceptable for a log feed.
+templ DiagAuditLog(logs []AuditRow) {
+	<div id="diag-audit">
+		if len(logs) == 0 {
+			<div class="empty">
+				@Icon("scroll-text")
+				<div class="empty-title">No audit entries yet</div>
+				<div>Administrative activity will be recorded here.</div>
+			</div>
+		} else {
+			<div class="audit-list">
+				<div class="audit-head">
+					<span>Time</span><span>Actor</span><span>Action</span><span>Detail</span><span>Result</span><span aria-hidden="true"></span>
+				</div>
+				<div class="audit-scroll">
+					for _, l := range logs {
+						<details class="audit-row" id={ "audit-" + itoa(l.ID) } data-result={ l.Result }>
+							<summary class="audit-summary">
+								<span class="mono audit-time">{ l.Timestamp }</span>
+								<span class="audit-actor">{ l.Actor }</span>
+								<span><span class="badge badge-class">{ auditActionLabel(l.Action) }</span></span>
+								<span class="audit-detail">{ auditSummary(l) }</span>
+								@auditResult(l.Result)
+								<span class="audit-chevron" aria-hidden="true">@Icon("chevron-down")</span>
+							</summary>
+							<div class="audit-body">{ auditExplain(l) }</div>
+						</details>
+					}
+				</div>
+			</div>
+		}
+	</div>
+}
+
 templ auditJumpScript() {
 	<script>
 		(function () {

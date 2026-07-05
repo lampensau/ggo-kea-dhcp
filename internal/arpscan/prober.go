@@ -35,6 +35,12 @@ const (
 	// set doesn't fill the socket send buffer and shed its tail to ENOBUFS.
 	probeSendBatch = 32
 	probeSendPace  = 2 * time.Millisecond
+	// sweepChunk is how many pool addresses each probe cycle sweeps beyond the lease
+	// set. The sweep is the discovery seed for hosts holding an address WITHOUT a
+	// lease (purged by a clock step, wiped, or plain static): nothing else would ever
+	// probe them after a restart, so they would stay invisible until they renew. At 32
+	// per 10s cycle a full /24 pool is covered in ~80s for ~3 extra broadcasts/s.
+	sweepChunk = 32
 )
 
 // Spec is one served interface to probe: the interface name, the sender L2/L3
@@ -46,7 +52,14 @@ type Spec struct {
 	SrcIP    [4]byte
 	SrcMAC   [6]byte
 	LeaseIPs func() []string
+	// Sweep is the scope's dynamic pool ranges (inclusive), rotated through at
+	// sweepChunk addresses per cycle in addition to LeaseIPs - the discovery seed for
+	// online hosts that hold a pool address without a lease.
+	Sweep []SweepRange
 }
+
+// SweepRange is one inclusive IPv4 range [Lo,Hi] (big-endian uint32) to sweep.
+type SweepRange struct{ Lo, Hi uint32 }
 
 // Transport is the raw-L2 send/receive seam. The real implementation (Linux AF_PACKET,
 // ARP-only BPF) is OpenAFPacket; tests inject a fake. Receive returns the next ARP
@@ -174,6 +187,9 @@ type ifaceRunner struct {
 	probes    *probeWaiters
 	quit      chan struct{}
 	wg        sync.WaitGroup
+	// sweepCursor is the rotating offset into the concatenated Sweep ranges (sendLoop
+	// goroutine only).
+	sweepCursor int
 }
 
 func (r *ifaceRunner) start() {
@@ -208,27 +224,68 @@ func (r *ifaceRunner) sendLoop() {
 
 func (r *ifaceRunner) probeOnce() {
 	sent := 0
+	probed := map[[4]byte]bool{}
 	for _, ipStr := range r.spec.LeaseIPs() {
 		ip, ok := ipv4Bytes(ipStr)
 		if !ok {
 			continue
 		}
-		if err := r.transport.Send(buildARPRequest(r.spec.SrcMAC, r.spec.SrcIP, ip)); err != nil {
-			// Best-effort per IP: a transient send error (e.g. ENOBUFS under buffer
-			// pressure) must not abandon the rest of this cycle, or every other leased
-			// device would age out of the reachability window and flip offline. Pause
-			// briefly so a full socket buffer can drain instead of hammering it. A real
-			// socket close instead ends recvLoop via Receive; Stop/Start re-establishes.
-			time.Sleep(probeSendPace)
-			continue
-		}
-		// Drip across a large lease set so the burst doesn't fill the send buffer in the
-		// first place (which is what triggers the ENOBUFS tail above). Cheap: at one
-		// pause per batch, even hundreds of leases add only a few ms per cycle.
-		if sent++; sent%probeSendBatch == 0 {
-			time.Sleep(probeSendPace)
+		probed[ip] = true
+		r.probeIP(ip, &sent)
+	}
+	// Sweep the next chunk of the pool ranges, skipping addresses this cycle already
+	// probed. This is what (re)discovers online hosts with no lease - after a restart
+	// nothing else would ever ARP them, so they'd never reach netmon's awaiting set.
+	total := 0
+	for _, sr := range r.spec.Sweep {
+		if sr.Hi >= sr.Lo {
+			total += int(sr.Hi-sr.Lo) + 1
 		}
 	}
+	if total == 0 {
+		return
+	}
+	n := min(sweepChunk, total)
+	for i := 0; i < n; i++ {
+		ip := sweepIPAt(r.spec.Sweep, (r.sweepCursor+i)%total)
+		if probed[ip] {
+			continue
+		}
+		r.probeIP(ip, &sent)
+	}
+	r.sweepCursor = (r.sweepCursor + n) % total
+}
+
+// probeIP sends one who-has, keeping the cycle's pacing/error semantics: a transient
+// send error (e.g. ENOBUFS under buffer pressure) must not abandon the rest of the
+// cycle, or every other device would age out of the reachability window and flip
+// offline - pause briefly so a full buffer can drain instead of hammering it. The
+// batch drip keeps a large set from filling the send buffer in the first place.
+func (r *ifaceRunner) probeIP(ip [4]byte, sent *int) {
+	if err := r.transport.Send(buildARPRequest(r.spec.SrcMAC, r.spec.SrcIP, ip)); err != nil {
+		time.Sleep(probeSendPace)
+		return
+	}
+	*sent++
+	if *sent%probeSendBatch == 0 {
+		time.Sleep(probeSendPace)
+	}
+}
+
+// sweepIPAt resolves a flat offset into the concatenated sweep ranges to its address.
+func sweepIPAt(ranges []SweepRange, off int) [4]byte {
+	for _, sr := range ranges {
+		if sr.Hi < sr.Lo {
+			continue
+		}
+		size := int(sr.Hi-sr.Lo) + 1
+		if off < size {
+			v := sr.Lo + uint32(off)
+			return [4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+		}
+		off -= size
+	}
+	return [4]byte{} // unreachable when off < total
 }
 
 // recvLoop records the sender IP of every ARP frame the transport delivers (the BPF

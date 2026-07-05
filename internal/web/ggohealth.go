@@ -241,7 +241,9 @@ func (s *Server) attachFirmware(h *views.NetHealthView, snap ggoscan.Snapshot) {
 	s.ggoFwMu.Lock()
 	scopes := s.ggoFwScopes
 	s.ggoFwMu.Unlock()
-	for _, f := range firmwareFindings(snap.Devices, scopes) {
+	findings := firmwareFindings(snap.Devices, scopes)
+	s.auditFirmwareTransition(findings)
+	for _, f := range findings {
 		attached := map[*views.NetHealthIface]bool{} // two unavailable ifaces share one fallback card - attach once
 		for _, iface := range f.ifaces {
 			ifc := availableIface(h, iface)
@@ -256,6 +258,35 @@ func (s *Server) attachFirmware(h *views.NetHealthView, snap ggoscan.Snapshot) {
 			ifc.WarnCount++
 			sortNetHealthRows(ifc.Rows)
 		}
+	}
+}
+
+// auditFirmwareTransition records the firmware-mismatch state's edges in the audit
+// log. The mismatch was card-only, which broke the status-pill → audit-log trail:
+// the pill counted a warning the log never mentioned. Keyed on the row title (the
+// release census), so a genuine census change (a device upgraded) re-audits while
+// the every-render calls stay silent. attachFirmware runs from concurrent render
+// paths; the signature compare-and-set is serialized under ggoFwMu.
+func (s *Server) auditFirmwareTransition(findings []fwFinding) {
+	sig := ""
+	if len(findings) > 0 {
+		sig = findings[0].row.Title
+	}
+	s.ggoFwMu.Lock()
+	prev := s.ggoFwLastSig
+	if sig == prev {
+		s.ggoFwMu.Unlock()
+		return
+	}
+	s.ggoFwLastSig = sig
+	s.ggoFwMu.Unlock()
+	if sig != "" {
+		// After carries the per-device roster (name · IP · version, tip-capped) so the
+		// audit entry names the involved clients, not just the release census.
+		roster := strings.Join(findings[0].row.DetailRows, ", ")
+		_ = s.sqlite.LogAudit("SYSTEM", "Mixed Green-GO firmware", strings.TrimPrefix(sig, "Mixed firmware: "), "uniform", roster, "WARNING")
+	} else if prev != "" {
+		_ = s.sqlite.LogAudit("SYSTEM", "Green-GO firmware mismatch cleared", strings.TrimPrefix(prev, "Mixed firmware: "), "mixed", "uniform", "INFO")
 	}
 }
 

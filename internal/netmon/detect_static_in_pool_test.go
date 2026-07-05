@@ -165,3 +165,72 @@ func TestStaticInPool_ObserveOnly(t *testing.T) {
 		t.Fatalf("flagged without a lease snapshot: %v", ev)
 	}
 }
+
+// TestStaticInPool_UnleasedPoolHosts proves the awaiting-renewal enumeration: an
+// unleased in-pool host is listed DURING the warm-up (Flagged=false, while the warn
+// stays suppressed), flips Flagged once the detector concludes it is static, and the
+// usual exclusions (leased / infra / out-of-pool / no lease snapshot / stale lease
+// view) keep everything else out.
+func TestStaticInPool_UnleasedPoolHosts(t *testing.T) {
+	pool, _ := ParsePoolRange("10.0.0.20-10.0.0.200")
+	leases := func() []LeasedAddr { return []LeasedAddr{{IP: "10.0.0.50"}} }
+	d := newStaticInPoolDetector("eth0", []PoolRange{pool}, []uint32{u32("10.0.0.1")}, leases, 120*time.Second, 0)
+	mac := [6]byte{0xde, 0xad, 0xbe, 0xef, 0x00, 0x42}
+
+	// During warm-up: leased .50, infra .1, out-of-pool .250 and unleased .42 are all
+	// active; only .42 shows, unflagged, and no warn event fires.
+	d.Consume(arpFrame(2, mac, [4]byte{10, 0, 0, 42}), at(1*time.Second))
+	d.Consume(arpFrame(2, [6]byte{0, 0, 0, 0, 0, 0x50}, [4]byte{10, 0, 0, 50}), at(1*time.Second))
+	d.Consume(arpFrame(2, [6]byte{0, 0, 0, 0, 0, 0x01}, [4]byte{10, 0, 0, 1}), at(1*time.Second))
+	d.Consume(arpFrame(2, [6]byte{0, 0, 0, 0, 0xfa, 0x00}, [4]byte{10, 0, 0, 250}), at(1*time.Second))
+	if ev := d.Tick(at(1 * time.Second)); len(ev) != 0 {
+		t.Fatalf("warn fired during warm-up: %v", ev)
+	}
+	hosts := d.unleasedPoolHosts()
+	if len(hosts) != 1 || hosts[0].IP != "10.0.0.42" || hosts[0].Flagged {
+		t.Fatalf("expected one unflagged awaiting host .42, got %+v", hosts)
+	}
+	if hosts[0].MAC == "" {
+		t.Fatal("awaiting host missing MAC")
+	}
+
+	// Past warm-up the same host is concluded static: still listed, now Flagged.
+	d.Consume(arpFrame(2, mac, [4]byte{10, 0, 0, 42}), at(staticWarmup+10*time.Second))
+	if ev := d.Tick(at(staticWarmup + 10*time.Second)); len(ev) != 1 || ev[0].Severity != SevWarn {
+		t.Fatalf("expected the static warn after warm-up, got %v", ev)
+	}
+	hosts = d.unleasedPoolHosts()
+	if len(hosts) != 1 || !hosts[0].Flagged {
+		t.Fatalf("expected the host Flagged after warm-up, got %+v", hosts)
+	}
+}
+
+// TestStaticInPool_UnleasedPoolHostsGuards covers the "cannot prove unleased" guards:
+// no lease snapshot at all, and a lease view older than the host's first sighting.
+func TestStaticInPool_UnleasedPoolHostsGuards(t *testing.T) {
+	pool, _ := ParsePoolRange("10.0.0.20-10.0.0.200")
+
+	// No lease snapshot: never enumerate.
+	d := newStaticInPoolDetector("eth0", []PoolRange{pool}, nil, nil, 120*time.Second, 0)
+	d.Consume(arpFrame(2, [6]byte{1, 2, 3, 4, 5, 6}, [4]byte{10, 0, 0, 42}), at(1*time.Second))
+	d.Tick(at(1 * time.Second))
+	if hosts := d.unleasedPoolHosts(); hosts != nil {
+		t.Fatalf("enumerated without a lease snapshot: %+v", hosts)
+	}
+
+	// Stale lease view: a host first seen AFTER the last refresh may already hold a
+	// lease the cached snapshot missed - it must not be listed until a refresh
+	// post-dating it confirms it is unleased.
+	d2 := newStaticInPoolDetector("eth0", []PoolRange{pool}, nil, func() []LeasedAddr { return nil }, 120*time.Second, 0)
+	d2.Tick(at(1 * time.Second)) // snapshot at t=1s
+	d2.Consume(arpFrame(2, [6]byte{1, 2, 3, 4, 5, 7}, [4]byte{10, 0, 0, 60}), at(10*time.Second))
+	d2.Tick(at(10 * time.Second)) // no refresh yet (30s cadence)
+	if hosts := d2.unleasedPoolHosts(); len(hosts) != 0 {
+		t.Fatalf("enumerated on a stale lease view: %+v", hosts)
+	}
+	d2.Consume(arpFrame(2, [6]byte{1, 2, 3, 4, 5, 7}, [4]byte{10, 0, 0, 60}), at(32*time.Second))
+	d2.Tick(at(32 * time.Second)) // refresh post-dates the host - now provably unleased
+	if hosts := d2.unleasedPoolHosts(); len(hosts) != 1 || hosts[0].IP != "10.0.0.60" {
+		t.Fatalf("expected .60 after a fresh lease view, got %+v", hosts)
+	}
+}

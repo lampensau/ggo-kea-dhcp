@@ -60,8 +60,10 @@ templ ImportReservationsForm(csrf string) {
 
 // LeasesBody is the live region (#leases-body), reused as the SSE/search fragment.
 // Every row shows its real remaining lease time (the device renews and keeps the same
-// fixed IP - the lease still counts down); only a row with NO active lease (an offline
-// reservation) shows a "—" expiry. A reserved row carries a filled-pin indicator next
+// fixed IP - the lease still counts down); a row with NO active lease shows a "—"
+// expiry (an offline reservation) or a state badge (an online host awaiting its DHCP
+// renewal after a lease purge, or a concluded static-in-pool device - see
+// LeaseRow.NoLeaseState). A reserved row carries a filled-pin indicator next
 // to its IP and a Remove-reservation action; a dynamic row offers Reserve + Release. A
 // row behind a pinned switch port (PortPinned) shows the switch-port marker, offers no
 // Reserve and a disabled delete - its IP is governed by the port pin, managed on the
@@ -83,7 +85,7 @@ templ LeasesBody(rows []LeaseRow, csrf string, canReserve bool) {
 				<tr>
 					<td class="mono">
 						if l.Presence != "" {
-							<span class={ "status-dot", "lease-dot", presenceDot(l.Presence) } title={ presenceTitle(l.Presence) } role="img" aria-label={ presenceTitle(l.Presence) }></span>
+							<span class={ "status-dot", "lease-dot", leaseDot(l) } title={ leaseDotTitle(l) } role="img" aria-label={ leaseDotTitle(l) }></span>
 						}
 						{ l.IPAddress }
 						if l.PortPinned {
@@ -95,13 +97,21 @@ templ LeasesBody(rows []LeaseRow, csrf string, canReserve bool) {
 					<td class="mono">{ l.HWAddress }</td>
 					<td>{ orDash(l.Hostname) }</td>
 					<td><span class="badge" title={ l.Class }>{ ClassDisplay(l.Class).Label }</span></td>
-					<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>
-						if l.ExpiresIn != "" {
-							{ l.ExpiresIn }
-						} else {
-							<span class="text-muted">—</span>
-						}
-					</td>
+					if l.NoLeaseState != "" {
+						// No data-expires: the countdown script rewrites every
+						// [data-expires] cell's text and would stomp the badge.
+						<td class="mono">
+							<span class={ "badge", noLeaseBadgeClass(l.NoLeaseState) } title={ noLeaseTitle(l.NoLeaseState) }>{ noLeaseBadgeText(l.NoLeaseState) }</span>
+						</td>
+					} else {
+						<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>
+							if l.ExpiresIn != "" {
+								{ l.ExpiresIn }
+							} else {
+								<span class="text-muted">—</span>
+							}
+						</td>
+					}
 					<td class="mono">
 						if l.LastSeenText != "" {
 							<span title={ "Last active " + l.LastSeenText }>{ l.LastSeenText }</span>
@@ -133,7 +143,9 @@ templ LeasesBody(rows []LeaseRow, csrf string, canReserve bool) {
 										aria-label={ "Reserve " + l.IPAddress }
 									>@Icon("pin")</button>
 								}
-								@releaseButton(l.IPAddress)
+								if l.NoLeaseState == "" {
+									@releaseButton(l.IPAddress)
+								}
 							}
 						</div>
 					</td>

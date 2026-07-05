@@ -116,6 +116,27 @@ func presenceDot(presence string) string {
 	return "" // offline → neutral/muted dot
 }
 
+// leaseDot is the row-aware presence-dot variant: a no-lease row (awaiting renewal /
+// static in pool) gets the amber warn dot so it never reads as a plain healthy
+// lease; normal rows keep the presence-driven color.
+func leaseDot(l LeaseRow) string {
+	if l.NoLeaseState != "" {
+		return "warn"
+	}
+	return presenceDot(l.Presence)
+}
+
+// leaseDotTitle is the row-aware hover/aria text for the presence dot.
+func leaseDotTitle(l LeaseRow) string {
+	switch l.NoLeaseState {
+	case "awaiting":
+		return "Online but holds no DHCP lease - awaiting renewal"
+	case "static":
+		return "Online but holds no DHCP lease - static address in pool"
+	}
+	return presenceTitle(l.Presence)
+}
+
 // presenceTitle is the hover/aria text for the lease availability dot - "online"/
 // "offline" alone is terse, so spell out what the passive monitor means by it.
 func presenceTitle(presence string) string {

@@ -52,18 +52,37 @@ func (s *Server) presenceByIP() (reachable map[string]bool, available bool) {
 // already-collected ARP presence set, keyed by the row's IP, so a dashboard build that
 // needs presence in several places (recent leases, the lease table) shares one prober
 // snapshot. A no-op when probing is unavailable, leaving Presence "" so the UI shows no
-// (misleading) indicator.
+// (misleading) indicator. Rows with Presence already set are left alone: an
+// awaiting-renewal row is online by passive observation, and the prober never probes
+// its (unleased) IP, so it would wrongly flip to offline here.
 func (s *Server) markLeasePresenceWith(reachable map[string]bool, available bool, rows []views.LeaseRow) {
 	if !available {
 		return
 	}
 	for i := range rows {
+		if rows[i].Presence != "" {
+			continue
+		}
 		if reachable[rows[i].IPAddress] {
 			rows[i].Presence = "online"
 		} else {
 			rows[i].Presence = "offline"
 		}
 	}
+}
+
+// awaitingPoolHosts reads the netmon snapshots for the unleased in-pool host set, for
+// the page/search paths that don't run a full collectNetSnapshot. Nil when netmon is
+// absent (dev sandbox) - the lease table simply shows no awaiting rows.
+func (s *Server) awaitingPoolHosts() []netmon.PoolHost {
+	if s.netmon == nil {
+		return nil
+	}
+	var out []netmon.PoolHost
+	for _, snap := range s.netmon.SnapshotAll() {
+		out = append(out, snap.UnleasedPoolHosts...)
+	}
+	return out
 }
 
 // normalizeMAC lowercases and strips separators so MACs from Kea leases and from
@@ -151,7 +170,35 @@ func (s *Server) buildArpSpecs(scopes []ScopeConfig) []arpscan.Spec {
 	// a single GetLeases instead of one per interface. It is the global active-lease
 	// set; the prober probes by IP, so every interface can use the same list (a lease
 	// IP on the wrong segment simply never answers).
-	leaseIPs := s.leaseIPs
+	//
+	// Awaiting-renewal hosts (in-pool, no lease) are probed too. On a quiet network
+	// the devices' only regular ARP is the reply our own prober elicits, and netmon's
+	// awaiting list is fed by exactly that ARP - so after a lease purge, probing only
+	// lease IPs would let every purged host age out of netmon's presence within its
+	// 120s window and vanish from the lease table. Probing them closes the loop: a
+	// host that answers stays listed, one that is really gone stops answering and
+	// drops out of both the awaiting set and the probe set.
+	leaseIPs := func() []string {
+		leased := s.leaseIPs()
+		aw := s.awaitingPoolHosts()
+		if len(aw) == 0 {
+			return leased
+		}
+		// Copy - the memoized lease slice is shared across consumers, so it must
+		// never be appended to in place.
+		ips := make([]string, len(leased), len(leased)+len(aw))
+		copy(ips, leased)
+		have := make(map[string]bool, len(leased))
+		for _, ip := range leased {
+			have[ip] = true
+		}
+		for _, h := range aw {
+			if !have[h.IP] {
+				ips = append(ips, h.IP)
+			}
+		}
+		return ips
+	}
 	seen := map[string]bool{}
 	var specs []arpscan.Spec
 	for _, sc := range scopes {
@@ -179,7 +226,18 @@ func (s *Server) buildArpSpecs(scopes []ScopeConfig) []arpscan.Spec {
 		} else if ip4 := kea.IncIP(ipnet.IP, 1).To4(); ip4 != nil {
 			copy(srcIP[:], ip4)
 		}
-		specs = append(specs, arpscan.Spec{Iface: iface, SrcIP: srcIP, SrcMAC: mac, LeaseIPs: leaseIPs})
+		// The scope's dynamic pool ranges as the prober's slow discovery sweep: it is
+		// what finds an online host holding a pool address with NO lease (purged /
+		// wiped / static) - such an IP is in nobody's lease set, so nothing else would
+		// ever probe it, and after a restart it would stay invisible to netmon until
+		// the device renewed on its own. Same pool source as the netmon specs.
+		var sweep []arpscan.SweepRange
+		for _, row := range poolDataForScope(sc, nil) {
+			if r, ok := netmon.ParsePoolRange(row.IPRange); ok {
+				sweep = append(sweep, arpscan.SweepRange{Lo: r.Lo, Hi: r.Hi})
+			}
+		}
+		specs = append(specs, arpscan.Spec{Iface: iface, SrcIP: srcIP, SrcMAC: mac, LeaseIPs: leaseIPs, Sweep: sweep})
 	}
 	return specs
 }
@@ -365,6 +423,10 @@ type netSnapshotData struct {
 	// from the SAME ggoscan snapshot as the firmware rows so a dashboard build takes
 	// one scanner snapshot, not one per consumer (firmware rows + lease-name overlay).
 	GgoNames map[string]string
+	// Awaiting is the concatenated per-interface set of ARP-active in-pool hosts with
+	// no Kea lease (netmon's UnleasedPoolHosts) - shown as "awaiting renewal" rows in
+	// the lease table.
+	Awaiting []netmon.PoolHost
 }
 
 // buildNetSignals reads the monitor's per-interface snapshots once and maps them
@@ -426,6 +488,7 @@ func (s *Server) collectNetSnapshot() netSnapshotData {
 	if s.netmon != nil {
 		for _, snap := range s.netmon.SnapshotAll() {
 			s.addInterfaceSnapshot(&ns.Signals, snap)
+			ns.Awaiting = append(ns.Awaiting, snap.UnleasedPoolHosts...)
 		}
 	}
 	if s.ggoscan != nil {

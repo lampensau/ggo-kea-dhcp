@@ -84,6 +84,10 @@ type greengoDetector struct {
 	leasedSet   map[uint32]bool
 	haveLeases  bool
 	warming     bool // last Tick's warm-up state, read by Snapshot
+	// noLeaseAudited is the count last announced via a no-lease audit event (0 =
+	// clear announced/never flagged); events fire only on the 0↔nonzero edges so the
+	// audit log gets one trace per episode, not one per count change.
+	noLeaseAudited int
 
 	devices map[string]*ggoDevice // keyed by MAC string
 }
@@ -242,6 +246,43 @@ func (d *greengoDetector) Tick(now time.Time) []Event {
 			events = append(events, d.clearEvent(dev))
 		}
 	}
+	// The no-lease warn (an Evenution device active without a DHCP lease - purged,
+	// wiped, or statically addressed) was card-only, which broke the status-pill →
+	// audit-log trail: the pill counted a warning the log never mentioned. Audit its
+	// 0↔nonzero edges via the same isNoLease predicate as Snapshot's warn row.
+	noLease, ips := 0, []string(nil)
+	for _, m := range macs {
+		if dev, ok := d.devices[m]; ok && d.isNoLease(dev) {
+			noLease++
+			if len(ips) < 3 {
+				ips = append(ips, dev.ipStr)
+			}
+		}
+	}
+	switch {
+	case noLease > 0 && d.noLeaseAudited == 0:
+		target := strings.Join(ips, ", ")
+		if noLease > len(ips) {
+			target += " +" + itoa(noLease-len(ips)) + " more"
+		}
+		events = append(events, Event{
+			Action:   "Evenution devices without DHCP lease",
+			Target:   target,
+			Before:   "leased",
+			After:    itoa(noLease) + " unleased",
+			Severity: SevWarn,
+		})
+		d.noLeaseAudited = noLease
+	case noLease == 0 && d.noLeaseAudited > 0:
+		events = append(events, Event{
+			Action:   "Evenution no-lease warning cleared",
+			Target:   itoa(d.noLeaseAudited) + " " + plural(d.noLeaseAudited, "device", "devices"),
+			Before:   "unleased",
+			After:    "leased",
+			Severity: SevInfo,
+		})
+		d.noLeaseAudited = 0
+	}
 	return events
 }
 
@@ -253,6 +294,16 @@ func (d *greengoDetector) clearEvent(dev *ggoDevice) Event {
 		After:    "none",
 		Severity: SevInfo,
 	}
+}
+
+// isNoLease reports whether dev counts toward the no-lease warn: present on the
+// served VLAN (a foreign-VLAN device is reported as foreign, never as no-lease),
+// routable (not link-local), and provably unleased (post warm-up, with a lease set
+// held). The ONE predicate shared by Tick's audit edge and Snapshot's warn row, so
+// the audit log and the card cannot drift apart.
+func (d *greengoDetector) isNoLease(dev *ggoDevice) bool {
+	return dev.present && dev.vlan == d.servedVID && !dev.linkLocal &&
+		!d.warming && d.haveLeases && !d.leasedSet[dev.ip]
 }
 
 func (d *greengoDetector) Snapshot() DetectorSnapshot {
@@ -287,7 +338,7 @@ func (d *greengoDetector) Snapshot() DetectorSnapshot {
 		switch {
 		case dev.flagged: // link-local, warm-up-gated (set in Tick)
 			linkLocal++
-		case !d.warming && !dev.linkLocal && d.haveLeases && !d.leasedSet[dev.ip]:
+		case d.isNoLease(dev):
 			noLease++
 		}
 	}
