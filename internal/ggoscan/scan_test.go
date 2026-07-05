@@ -191,3 +191,26 @@ func TestInventoryCapped(t *testing.T) {
 		t.Fatal("stalest device survived the at-cap insert")
 	}
 }
+
+// TestAsciiTrimFiltersWireBytes pins the printable funnel on the scanner's
+// wire-derived strings: control bytes never pass into the audit/census/DNS
+// sinks (a hostile field renders as bounded hex), clean names pass through,
+// and NUL padding still trims.
+func TestAsciiTrimFiltersWireBytes(t *testing.T) {
+	if got := asciiTrim([]byte("Beltpack-07\x00\x00")); got != "Beltpack-07" {
+		t.Errorf("clean padded name = %q, want Beltpack-07", got)
+	}
+	got := asciiTrim([]byte{0x1b, '[', '2', 'J', 0x07})
+	for _, c := range got {
+		if c < 0x20 || c > 0x7e {
+			t.Fatalf("control bytes leaked through the funnel: %q", got)
+		}
+	}
+	if got != "1b:5b:32:4a:07" {
+		t.Errorf("hostile field = %q, want its colon-hex", got)
+	}
+	long := asciiTrim(append(bytes.Repeat([]byte{'a'}, 200), 0))
+	if len(long) != maxWireString+2 || long[:2] != "aa" || long[len(long)-2:] != ".." {
+		t.Errorf("overlong field not capped with marker: len %d %q", len(long), long[:10])
+	}
+}
