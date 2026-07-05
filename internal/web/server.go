@@ -33,6 +33,26 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
+// deviceScanner is the subset of *ggoscan.Scanner the web layer drives. Declaring the
+// field as an interface lets a test inject a fake inventory and capture the reboot send
+// without opening a real socket. *ggoscan.Scanner satisfies it.
+type deviceScanner interface {
+	Start([]ggoscan.Spec)
+	Stop()
+	Snapshot() ggoscan.Snapshot
+	SendReboot(ip string) error
+}
+
+// presenceProber is the subset of *arpscan.Prober the web layer drives, seamed for the
+// same reason: a test can report presence and the live MAC at an IP. *arpscan.Prober
+// satisfies it.
+type presenceProber interface {
+	Start([]arpscan.Spec)
+	Stop()
+	Snapshot() arpscan.Snapshot
+	ProbeHost(ip string) (mac string, alive bool)
+}
+
 type Server struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB
@@ -53,11 +73,11 @@ type Server struct {
 	// on the leases/dashboard views. Runs only while ACTIVE, started/stopped beside
 	// netmon. (netmon stays passive; this is the active counterpart that reliably
 	// reaches quiet devices a passive capture never sees.)
-	arp *arpscan.Prober
+	arp presenceProber
 	// ggoscan is the active Green-GO device scanner (6464 device-scan): a firmware/model
 	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
 	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
-	ggoscan *ggoscan.Scanner
+	ggoscan deviceScanner
 	// ggoFwMu guards ggoFwScopes: the greengo-preset scopes the scanner targets
 	// (iface + subnet), refreshed on every startGgoScan. Used to attribute
 	// firmware-mismatch findings to the owning scope's Network Health sub-card.

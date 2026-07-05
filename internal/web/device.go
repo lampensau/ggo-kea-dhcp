@@ -12,15 +12,19 @@ import (
 // instead of at the device's next DHCP renewal. The reboot is a physical-world side
 // effect, so it is always operator-initiated and always audited.
 //
-// Trust boundary: the posted IP is client state and is never trusted. The handler
-// re-derives, from the IP alone, that the address really maps to a currently-reachable
-// Green-GO client - it must be in the scan inventory (or hold a current lease/pin whose
-// MAC the scanner knows) AND be answering ARP right now. Anything else is refused with
-// 403 and audited, so an arbitrary IP can't be turned into a reboot of some other host.
+// Trust boundary: the posted IP and MAC are client state and are never trusted for the
+// Green-GO identity decision. The handler re-derives, from the IP alone, the device that
+// actually holds the address right now - the MAC on its live Kea lease (or, once released,
+// the MAC answering ARP at the IP), which must be a known Green-GO client. The posted MAC
+// is then a freshness gate: it must equal that live MAC. This closes the re-issue window
+// where the pool hands the just-released address to a different device between the offer
+// and the confirm - the live MAC no longer matches, so the reboot is refused, not aimed at
+// the wrong host. Any mismatch or unbacked IP is refused with 403 and audited.
 func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	back := formReturn(r, "/dashboard")
 	ip := strings.TrimSpace(r.FormValue("ip"))
+	postedMAC := normalizeMAC(strings.TrimSpace(r.FormValue("mac")))
 
 	parsed := net.ParseIP(ip)
 	if parsed == nil || parsed.To4() == nil {
@@ -28,18 +32,22 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, ok := s.rebootEligible(r.Context(), ip)
+	name, liveMAC, ok := s.rebootEligible(r.Context(), ip)
 	if !ok {
 		// Not a reachable Green-GO client we manage: refuse and record the attempt.
 		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", ip, "", "not a reachable Green-GO device", "WARNING")
 		s.handleError(w, r, ip+" is not a reachable Green-GO device, so there is nothing to reboot.", http.StatusForbidden)
 		return
 	}
-
-	if s.ggoscan == nil {
-		s.handleError(w, r, "The Green-GO scanner is not running, so the device can't be rebooted right now.", http.StatusServiceUnavailable)
+	// Freshness gate: the device the operator was offered must still be the one at the
+	// address. A blank or mismatched posted MAC means the address moved (or the request
+	// was forged), so refuse rather than reboot whoever holds the IP now.
+	if postedMAC == "" || postedMAC != liveMAC {
+		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", ip, postedMAC, "device at address changed since the offer ("+liveMAC+" now holds it)", "WARNING")
+		s.handleError(w, r, "The device at "+ip+" changed since this was offered, so the reboot was not sent.", http.StatusForbidden)
 		return
 	}
+
 	if err := s.ggoscan.SendReboot(ip); err != nil {
 		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", name+" -> "+ip, "", err.Error(), "ERROR")
 		s.handleError(w, r, "Could not reach "+ip+" to reboot it: "+err.Error(), http.StatusBadGateway)
@@ -50,29 +58,35 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 	s.redirectHTMX(w, r, back)
 }
 
-// rebootEligible re-derives, server-side, whether ip is a currently-reachable Green-GO
-// client this appliance manages, returning its display name when so. Eligibility needs
-// both a Green-GO identity for the address and live ARP presence: the identity comes
-// from the scan inventory or, as a fallback, a current lease/pin at that IP whose MAC
-// the scanner recognizes; presence comes from the active prober. Never consults the
-// posted form beyond the IP.
-func (s *Server) rebootEligible(ctx context.Context, ip string) (string, bool) {
+// rebootEligible re-derives, server-side, the Green-GO client that currently holds ip,
+// returning its display name and normalized live MAC when so. Eligibility is anchored to
+// the address's live occupant, not the scan inventory's (up-to-15-min-stale) IP mapping:
+// the MAC comes from the current Kea lease at ip, or - covering the just-released case
+// where the lease is gone but the device is still physically there - from an ARP probe of
+// the address. That MAC must belong to a known Green-GO device, and the address must be
+// answering ARP right now. Never consults the posted form. The returned MAC is the
+// freshness anchor the handler matches the posted MAC against.
+func (s *Server) rebootEligible(ctx context.Context, ip string) (name, liveMAC string, ok bool) {
 	reachable, available := s.presenceByIP()
 	if !available || !reachable[ip] {
-		return "", false // can't confirm the device is online - don't reboot into the void
+		return "", "", false // can't confirm the device is online - don't reboot into the void
 	}
-	// Primary: the scan inventory maps the address straight to a Green-GO device.
-	if dev, ok := s.ggoDeviceByIP(ip); ok {
-		return rebootDeviceName(dev), true
-	}
-	// Fallback: a current lease or pin at the IP whose MAC the scanner knows (covers a
-	// device whose lease was just evicted so it no longer answers a scan under this IP).
-	if mac := s.macAtIP(ctx, ip); mac != "" {
-		if dev, ok := s.ggoDeviceByMAC(mac); ok {
-			return rebootDeviceName(dev), true
+	mac := s.macAtIP(ctx, ip)
+	if mac == "" && s.arp != nil {
+		// Lease already gone (a release): the device is still on the wire, so ARP tells
+		// us who actually answers at the address now.
+		if m, alive := s.arp.ProbeHost(ip); alive {
+			mac = m
 		}
 	}
-	return "", false
+	if mac == "" {
+		return "", "", false // nothing ties the address to a device
+	}
+	dev, ok := s.ggoDeviceByMAC(mac)
+	if !ok {
+		return "", "", false // the address's live occupant is not a known Green-GO client
+	}
+	return rebootDeviceName(dev), normalizeMAC(mac), true
 }
 
 // macAtIP finds the MAC currently at ip from the control plane: an active Kea lease,

@@ -13,8 +13,9 @@ import templruntime "github.com/a-h/templ/runtime"
 // It renders the reboot confirm dialog and its opener, and - when the page's flash
 // carries a target device (set after a reserve / re-pin / release that moved an
 // online Green-GO device) - auto-opens the dialog on load, prefilled with the
-// device. The dialog is a native POST form to /device/reboot; the server re-checks
-// eligibility from the IP alone, so the form only needs to carry the IP.
+// device. The dialog is a native POST form to /device/reboot; the server re-derives
+// eligibility from the IP and matches the posted MAC against the live occupant, so
+// the form carries both the IP and the target MAC.
 func RebootMount(csrf string, flash *Flash) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -45,14 +46,14 @@ func RebootMount(csrf string, flash *Flash) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if flash != nil && flash.Device != nil {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "   <div data-init=\"window.ggoRebootOpen(el.dataset.ip, el.dataset.name)\" data-ip=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "   <div data-init=\"window.ggoRebootOpen(el.dataset.ip, el.dataset.name, el.dataset.mac)\" data-ip=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var2 string
 			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.ResolveAttributeValue(flash.Device.IP)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 17, Col: 97}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 18, Col: 113}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var2)
 			if templ_7745c5c3_Err != nil {
@@ -65,13 +66,26 @@ func RebootMount(csrf string, flash *Flash) templ.Component {
 			var templ_7745c5c3_Var3 string
 			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.ResolveAttributeValue(flash.Device.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 17, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 18, Col: 145}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var3)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" hidden></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" data-mac=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var4 string
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.ResolveAttributeValue(flash.Device.MAC)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 18, Col: 175}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var4)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" hidden></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -100,25 +114,25 @@ func rebootDialog(csrf string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var4 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var4 == nil {
-			templ_7745c5c3_Var4 = templ.NopComponent
+		templ_7745c5c3_Var5 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var5 == nil {
+			templ_7745c5c3_Var5 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<dialog id=\"reboot-dialog\" aria-labelledby=\"reboot-dialog-title\"><form method=\"post\" action=\"/device/reboot\" data-busy><input type=\"hidden\" name=\"csrf_token\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<dialog id=\"reboot-dialog\" aria-labelledby=\"reboot-dialog-title\"><form method=\"post\" action=\"/device/reboot\" data-busy><input type=\"hidden\" name=\"csrf_token\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var5 string
-		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrf)
+		var templ_7745c5c3_Var6 string
+		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrf)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 28, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/reboot.templ`, Line: 29, Col: 54}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var5)
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var6)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\"> <input type=\"hidden\" name=\"return\"> <input type=\"hidden\" name=\"ip\"><div class=\"dialog-head\" id=\"reboot-dialog-title\">Reboot this device to apply now?</div><div class=\"dialog-body\"><p>The device re-requests DHCP straight away and picks up its new address, instead of waiting for its next renewal. Its audio and comms drop for a few seconds while it restarts.</p><dl class=\"kv\"><dt>Device</dt><dd id=\"reboot-dialog-name\"></dd><dt>IP</dt><dd class=\"mono\" id=\"reboot-dialog-ip\"></dd></dl></div><div class=\"dialog-foot\"><button type=\"button\" class=\"btn btn-secondary\" onclick=\"this.closest('dialog').close()\">Not Now</button> <button type=\"submit\" class=\"btn btn-primary\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"> <input type=\"hidden\" name=\"return\"> <input type=\"hidden\" name=\"ip\"> <input type=\"hidden\" name=\"mac\"><div class=\"dialog-head\" id=\"reboot-dialog-title\">Reboot this device to apply now?</div><div class=\"dialog-body\"><p>The device re-requests DHCP straight away and picks up its new address, instead of waiting for its next renewal. Its audio and comms drop for a few seconds while it restarts.</p><dl class=\"kv\"><dt>Device</dt><dd id=\"reboot-dialog-name\"></dd><dt>IP</dt><dd class=\"mono\" id=\"reboot-dialog-ip\"></dd></dl></div><div class=\"dialog-foot\"><button type=\"button\" class=\"btn btn-secondary\" onclick=\"this.closest('dialog').close()\">Not Now</button> <button type=\"submit\" class=\"btn btn-primary\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -126,7 +140,7 @@ func rebootDialog(csrf string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "Reboot Device</button></div></form></dialog>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "Reboot Device</button></div></form></dialog>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -152,12 +166,12 @@ func rebootScript() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var6 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var6 == nil {
-			templ_7745c5c3_Var6 = templ.NopComponent
+		templ_7745c5c3_Var7 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var7 == nil {
+			templ_7745c5c3_Var7 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<script>\n\t\twindow.ggoRebootOpen = function (ip, name) {\n\t\t\tvar d = document.getElementById(\"reboot-dialog\");\n\t\t\tif (!d || !ip) return;\n\t\t\td.querySelector(\"[name=ip]\").value = ip;\n\t\t\tvar ret = d.querySelector(\"[name=return]\");\n\t\t\tif (ret) ret.value = location.pathname;\n\t\t\tdocument.getElementById(\"reboot-dialog-ip\").textContent = ip;\n\t\t\tdocument.getElementById(\"reboot-dialog-name\").textContent = name || ip;\n\t\t\td.showModal();\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<script>\n\t\twindow.ggoRebootOpen = function (ip, name, mac) {\n\t\t\tvar d = document.getElementById(\"reboot-dialog\");\n\t\t\tif (!d || !ip) return;\n\t\t\td.querySelector(\"[name=ip]\").value = ip;\n\t\t\tvar m = d.querySelector(\"[name=mac]\");\n\t\t\tif (m) m.value = mac || \"\";\n\t\t\tvar ret = d.querySelector(\"[name=return]\");\n\t\t\tif (ret) ret.value = location.pathname;\n\t\t\tdocument.getElementById(\"reboot-dialog-ip\").textContent = ip;\n\t\t\tdocument.getElementById(\"reboot-dialog-name\").textContent = name || ip;\n\t\t\td.showModal();\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

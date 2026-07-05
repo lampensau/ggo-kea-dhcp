@@ -132,8 +132,8 @@ func (s *Server) ggoDeviceByMAC(mac string) (ggoscan.Device, bool) {
 }
 
 // ggoDeviceByIP returns the scanned Green-GO device answering at ip, if known. Used
-// by the reboot handler to re-derive - from the IP alone, never from client state -
-// that the address really is a Green-GO client before sending it a reboot.
+// by the release-path reboot offer (rebootOfferForIP) to prefill the dialog; the
+// handler itself re-derives eligibility from the live MAC at the address, not this map.
 func (s *Server) ggoDeviceByIP(ip string) (ggoscan.Device, bool) {
 	if s.ggoscan == nil || ip == "" {
 		return ggoscan.Device{}, false

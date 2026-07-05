@@ -5,8 +5,9 @@ package views
 // It renders the reboot confirm dialog and its opener, and - when the page's flash
 // carries a target device (set after a reserve / re-pin / release that moved an
 // online Green-GO device) - auto-opens the dialog on load, prefilled with the
-// device. The dialog is a native POST form to /device/reboot; the server re-checks
-// eligibility from the IP alone, so the form only needs to carry the IP.
+// device. The dialog is a native POST form to /device/reboot; the server re-derives
+// eligibility from the IP and matches the posted MAC against the live occupant, so
+// the form carries both the IP and the target MAC.
 templ RebootMount(csrf string, flash *Flash) {
 	@rebootDialog(csrf)
 	@rebootScript()
@@ -14,7 +15,7 @@ templ RebootMount(csrf string, flash *Flash) {
 		// data-init fires once on load (Datastar), opening the dialog for the device
 		// the just-completed change moved. The values ride data attributes rather than
 		// script interpolation so the opener reads them straight off the element.
-		<div data-init="window.ggoRebootOpen(el.dataset.ip, el.dataset.name)" data-ip={ flash.Device.IP } data-name={ flash.Device.Name } hidden></div>
+		<div data-init="window.ggoRebootOpen(el.dataset.ip, el.dataset.name, el.dataset.mac)" data-ip={ flash.Device.IP } data-name={ flash.Device.Name } data-mac={ flash.Device.MAC } hidden></div>
 	}
 }
 
@@ -28,6 +29,7 @@ templ rebootDialog(csrf string) {
 			<input type="hidden" name="csrf_token" value={ csrf }/>
 			<input type="hidden" name="return"/>
 			<input type="hidden" name="ip"/>
+			<input type="hidden" name="mac"/>
 			<div class="dialog-head" id="reboot-dialog-title">Reboot this device to apply now?</div>
 			<div class="dialog-body">
 				<p>The device re-requests DHCP straight away and picks up its new address, instead of waiting for its next renewal. Its audio and comms drop for a few seconds while it restarts.</p>
@@ -48,10 +50,12 @@ templ rebootDialog(csrf string) {
 // the server redirects back here), fills the display fields, and shows the dialog.
 templ rebootScript() {
 	<script>
-		window.ggoRebootOpen = function (ip, name) {
+		window.ggoRebootOpen = function (ip, name, mac) {
 			var d = document.getElementById("reboot-dialog");
 			if (!d || !ip) return;
 			d.querySelector("[name=ip]").value = ip;
+			var m = d.querySelector("[name=mac]");
+			if (m) m.value = mac || "";
 			var ret = d.querySelector("[name=return]");
 			if (ret) ret.value = location.pathname;
 			document.getElementById("reboot-dialog-ip").textContent = ip;

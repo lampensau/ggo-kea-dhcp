@@ -8,8 +8,55 @@ import (
 	"strings"
 	"testing"
 
+	"ggo-kea-dhcp/internal/arpscan"
 	"ggo-kea-dhcp/internal/ggoscan"
 )
+
+// fakeScanner is an injectable deviceScanner: a fixed inventory and a capture of the
+// reboot sends, so a handler test never opens a real socket.
+type fakeScanner struct {
+	devices []ggoscan.Device
+	sent    []string // IPs SendReboot was asked to reach
+	sendErr error
+}
+
+func (f *fakeScanner) Start([]ggoscan.Spec) {}
+func (f *fakeScanner) Stop()                {}
+func (f *fakeScanner) Snapshot() ggoscan.Snapshot {
+	return ggoscan.Snapshot{Devices: f.devices, Available: true}
+}
+func (f *fakeScanner) SendReboot(ip string) error {
+	f.sent = append(f.sent, ip)
+	return f.sendErr
+}
+
+// fakeProber is an injectable presenceProber: a fixed reachable set and per-IP MAC,
+// so a test can put a device at an address and answer an on-demand probe.
+type fakeProber struct {
+	reachable map[string]bool
+	macAt     map[string]string
+}
+
+func (f *fakeProber) Start([]arpscan.Spec) {}
+func (f *fakeProber) Stop()                {}
+func (f *fakeProber) Snapshot() arpscan.Snapshot {
+	return arpscan.Snapshot{ReachableIPs: f.reachable, Available: true}
+}
+func (f *fakeProber) ProbeHost(ip string) (string, bool) {
+	m, ok := f.macAt[ip]
+	return m, ok
+}
+
+// lastRebootAudit returns the newest DEVICE_REBOOT audit row's result and target.
+func lastRebootAudit(t *testing.T, s *Server) (result, target string, found bool) {
+	t.Helper()
+	for _, a := range s.fetchRecentActivity(50) {
+		if a.Action == "DEVICE_REBOOT" {
+			return a.Result, a.Target, true
+		}
+	}
+	return "", "", false
+}
 
 // TestFlashDeviceRoundTrip proves the extended flash cookie carries the reboot-offer
 // device context (mac/ip/name) alongside the message, and getFlash reads it back.
@@ -56,8 +103,8 @@ func TestGetFlashBareStringFallback(t *testing.T) {
 // (no arp prober, no scanner) can never confirm reachability, so eligibility fails.
 func TestRebootRefusesUnknownIP(t *testing.T) {
 	s, _ := newTestServer(t)
-	if name, ok := s.rebootEligible(context.Background(), "10.0.0.20"); ok {
-		t.Errorf("rebootEligible allowed an unbacked IP (name %q)", name)
+	if name, mac, ok := s.rebootEligible(context.Background(), "10.0.0.20"); ok {
+		t.Errorf("rebootEligible allowed an unbacked IP (name %q mac %q)", name, mac)
 	}
 }
 
@@ -82,5 +129,104 @@ func TestRebootHandlerRejectsBadIP(t *testing.T) {
 	s.handleDeviceReboot(rec, req)
 	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusBadRequest {
 		t.Errorf("bad-IP reboot status = %d, want a rejection", rec.Code)
+	}
+}
+
+// postReboot drives the handler with a form body (the CSRF middleware is bypassed by
+// calling the handler directly, like the other handler tests).
+func postReboot(t *testing.T, s *Server, ip, mac string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	body := "ip=" + ip + "&mac=" + mac
+	req := httptest.NewRequest("POST", "/device/reboot", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.handleDeviceReboot(rec, req)
+	return rec
+}
+
+// rebootServerWithDevice wires a Server whose ARP prober puts one Green-GO device at
+// ip (lease absent, so the handler falls to the ARP probe - the just-released path)
+// and whose scanner knows that MAC as a Green-GO client.
+func rebootServerWithDevice(t *testing.T, ip, mac, name string) (*Server, *fakeScanner) {
+	t.Helper()
+	s, _ := newTestServer(t)
+	sc := &fakeScanner{devices: []ggoscan.Device{{MAC: mac, Name: name, IP: ip}}}
+	s.ggoscan = sc
+	s.arp = &fakeProber{
+		reachable: map[string]bool{ip: true},
+		macAt:     map[string]string{ip: mac},
+	}
+	return s, sc
+}
+
+// TestRebootMACMismatchRefused is the TOCTOU gate: the operator was offered a reboot
+// for one device, but by confirm time the address is answered by a different MAC (the
+// pool re-issued it). The posted MAC no longer matches the live occupant, so the reboot
+// must be refused and audited, never sent.
+func TestRebootMACMismatchRefused(t *testing.T) {
+	ip := "10.0.0.20"
+	live := "00:1f:80:aa:bb:cc" // who actually holds .20 now
+	s, sc := rebootServerWithDevice(t, ip, live, "BPX 19666")
+
+	// The operator confirms with the MAC of the device that USED to be at .20.
+	postReboot(t, s, ip, "00:1f:80:11:22:33")
+
+	if len(sc.sent) != 0 {
+		t.Fatalf("reboot was sent to %v despite a MAC mismatch", sc.sent)
+	}
+	result, _, found := lastRebootAudit(t, s)
+	if !found || result != "WARNING" {
+		t.Errorf("mismatch audit = %q (found %v), want a WARNING", result, found)
+	}
+}
+
+// TestRebootMissingMACRefused proves a confirm without a target MAC (a forged or
+// pre-freshness-gate request) is refused even when a valid Green-GO device is at the IP.
+func TestRebootMissingMACRefused(t *testing.T) {
+	ip := "10.0.0.20"
+	mac := "00:1f:80:aa:bb:cc"
+	s, sc := rebootServerWithDevice(t, ip, mac, "BPX 19666")
+
+	postReboot(t, s, ip, "")
+
+	if len(sc.sent) != 0 {
+		t.Fatalf("reboot sent with no target MAC: %v", sc.sent)
+	}
+	if result, _, found := lastRebootAudit(t, s); !found || result != "WARNING" {
+		t.Errorf("no-MAC audit = %q (found %v), want a WARNING", result, found)
+	}
+}
+
+// TestRebootSuccess is the positive path: a known Green-GO device answers ARP at the
+// IP with the same MAC the operator confirmed, so the reboot is sent once and audited
+// SUCCESS. Exercises the just-released flow (no lease, MAC via the ARP probe).
+func TestRebootSuccess(t *testing.T) {
+	ip := "10.0.0.20"
+	mac := "00:1f:80:aa:bb:cc"
+	s, sc := rebootServerWithDevice(t, ip, mac, "BPX 19666")
+
+	// A mixed-case, colon-form posted MAC must still match (normalized comparison).
+	postReboot(t, s, ip, "00:1F:80:AA:BB:CC")
+
+	if len(sc.sent) != 1 || sc.sent[0] != ip {
+		t.Fatalf("reboot sends = %v, want exactly [%s]", sc.sent, ip)
+	}
+	result, target, found := lastRebootAudit(t, s)
+	if !found || result != "SUCCESS" {
+		t.Errorf("success audit = %q (found %v), want SUCCESS", result, found)
+	}
+	if !strings.Contains(target, "bpx-19666") {
+		t.Errorf("audit target = %q, want the sanitized device name", target)
+	}
+}
+
+// TestRebootUnbackedIPRefused proves an IP with no online device behind it (nil scanner
+// and prober) is refused with a WARNING audit and never sent.
+func TestRebootUnbackedIPRefused(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := postReboot(t, s, "10.0.0.99", "00:1f:80:aa:bb:cc")
+	_ = rec
+	if result, _, found := lastRebootAudit(t, s); !found || result != "WARNING" {
+		t.Errorf("unbacked audit = %q (found %v), want a WARNING", result, found)
 	}
 }
