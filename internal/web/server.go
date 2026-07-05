@@ -158,6 +158,15 @@ type Server struct {
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
+	// done is closed on shutdown to end the background loops (live ticker,
+	// metrics sampler, MariaDB probe, update check + kicked checks + result
+	// watcher, clock watch) before main's deferred sqlite.Close runs - otherwise
+	// they keep querying a closing database on every service restart and
+	// self-update. bgWG counts those goroutines so stopBackground can JOIN them:
+	// signalling alone leaves a loop already past its select free to issue
+	// multi-statement work into the closing database.
+	done chan struct{}
+	bgWG sync.WaitGroup
 	// lastMaint is when the storage-maintenance pass (snapshot/audit/session
 	// pruning) last ran. Touched only by the metrics sampler goroutine.
 	lastMaint time.Time
@@ -258,6 +267,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.loginThrottle = newLoginThrottle()
 	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
+	s.done = make(chan struct{})
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = map[string]int64{}
@@ -521,7 +531,38 @@ func (s *Server) Start() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
+		s.stopBackground()
 		return nil
+	}
+}
+
+// stopBackground halts every background service and ticker loop before Start
+// returns, so main's deferred sqlite.Close never races goroutines still issuing
+// queries. Closing done ends the loops at their next select, and the Wait joins
+// them - a loop already mid-body finishes it first (each body is bounded: opCtx
+// on the Kea/DB calls, the Commander timeout on shell-outs), so the join is
+// bounded too, well inside systemd's stop timeout. The service Stops are
+// idempotent, matching the reconciler's own teardown paths.
+func (s *Server) stopBackground() {
+	close(s.done)
+	s.bgWG.Wait()
+	if s.netmon != nil {
+		s.netmon.Stop()
+	}
+	if s.arp != nil {
+		s.arp.Stop()
+	}
+	if s.ggoscan != nil {
+		s.ggoscan.Stop()
+	}
+	if s.dns != nil {
+		s.dns.Stop()
+	}
+	if s.trunkProbe != nil {
+		s.trunkProbe.Stop()
+	}
+	if s.rogueProbe != nil {
+		s.rogueProbe.Stop()
 	}
 }
 

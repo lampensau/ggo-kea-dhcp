@@ -32,12 +32,19 @@ const clockWatchInterval = 30 * time.Second
 // magnitude. Polling (not a timerfd) keeps it pure-stdlib; the latency does not
 // matter for an audit trail.
 func (s *Server) startClockWatch() {
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
 		last := time.Now()
 		synced := clockDisciplined()
 		t := time.NewTicker(clockWatchInterval)
 		defer t.Stop()
-		for range t.C {
+		for {
+			select {
+			case <-t.C:
+			case <-s.done:
+				return
+			}
 			// Recover per tick so a transient panic degrades one reading instead of
 			// crashing the whole process (an unrecovered goroutine panic is fatal),
 			// matching the metrics sampler's sampleOnceSafe.
