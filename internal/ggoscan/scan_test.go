@@ -99,14 +99,17 @@ func TestOnlyEmitsScanAndReboot(t *testing.T) {
 // frameDeclRe matches a package-level fixed frame literal declaration.
 var frameDeclRe = regexp.MustCompile(`(?m)^var (\w+) = \[\]byte\{`)
 
-// sendCallRe matches every send call, capturing the payload argument (its first token).
+// sendCallRe matches a WriteToUDP call whose payload is a bare identifier.
 var sendCallRe = regexp.MustCompile(`WriteToUDP\((\w+),`)
 
-// TestNoUndeclaredEmitter locks down the source itself so a THIRD emitter can't slip in
-// past the two pinned frames: it scans scan.go and asserts that (a) exactly two frame
-// literals are declared, and (b) every send call transmits one of those two - not a
-// newly introduced payload. Byte-pinning the two frames (above) does not catch a new
-// variable sent from a new call site; this does.
+// TestNoUndeclaredEmitter is a best-effort source tripwire, not a proof. It scans
+// scan.go and checks that exactly two frame literals are declared (scanFrame,
+// rebootFrame) and that every WriteToUDP call it can see transmits one of them. This
+// catches the common accidental mistake - a new frame variable sent from a new
+// WriteToUDP call site. Because it is a regex over one file, it does NOT rule out an
+// inline []byte{...} payload, a send through another method (Write/WriteMsgUDP), or a
+// call added in a different file in the package. It narrows the gap, it does not close
+// it; the byte-pinned frame checks above remain the real guarantee about frame content.
 func TestNoUndeclaredEmitter(t *testing.T) {
 	src, err := os.ReadFile("scan.go")
 	if err != nil {
