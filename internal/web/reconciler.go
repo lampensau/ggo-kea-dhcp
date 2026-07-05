@@ -53,6 +53,17 @@ const softAPWlanIP = "172.31.255.1"
 // calls are not context-aware - but a log line beats a silent hang.
 const reconcileWatchdog = 60 * time.Second
 
+// reconcilePassDeadline bounds one whole reconcile pass end-to-end: every Kea and
+// MariaDB operation inside reconcileActive/reconcileOnboarding shares this
+// context. Each individual operation already carries a driver bound (the Kea
+// client's 10s HTTP timeout; the MariaDB DSN's 5s dial / 10s read defaults), so
+// this is a belt-and-braces ceiling on the pass as a whole - many bounded waits
+// and retries stacked in one pass must still release the mutation guard in
+// bounded time. Generous on purpose: the privileged commands (nmcli etc.) are
+// bounded per-command by the Commander, and a genuinely slow-but-recovering pass
+// must not be turned into a rollback.
+const reconcilePassDeadline = 5 * time.Minute
+
 // resumeApplyAttempts / resumeApplyBackoff bound how hard a boot-time resume of an
 // interrupted apply retries before falling back to ONBOARDING, so a transient
 // cold-boot error (Kea socket / eth0 not up yet) doesn't discard an applied profile.
@@ -230,10 +241,34 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 	return state == db.StateConfiguring && mode == ModeConverge
 }
 
+// stopActiveMonitors tears down every ACTIVE-only background service: the passive
+// network monitor, the ARP presence prober, the Green-GO scanner, and the port-53
+// DNS listeners (bound to the outgoing profile's scope addresses, so they must
+// drop before any re-IP; reconcileActive rebinds on the new addresses). The single
+// teardown used by every ACTIVE-exit path - finishApply, beginSwitch, and
+// reconcileOnboarding - so a lifecycle fix cannot land in one path and strand the
+// others. All stops are idempotent and nil-safe.
+func (s *Server) stopActiveMonitors() {
+	if s.netmon != nil {
+		s.netmon.Stop()
+	}
+	if s.arp != nil {
+		s.arp.Stop()
+	}
+	if s.ggoscan != nil {
+		s.ggoscan.Stop()
+	}
+	if s.dns != nil {
+		s.dns.Stop()
+	}
+}
+
 // reconcileOnboarding brings up the onboarding environment: eth0 management IP,
 // wlan0 SoftAP, torn-down NAT, and the ungrouped dynamic Kea scope. No captive DNS
 // redirector runs here - it is only stopped (see the no-DNS note below).
 func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+	defer cancel()
 	var errs []error
 	cidr := s.onboardingCIDR()
 	ssid, pass := s.softAPSettings()
@@ -255,17 +290,10 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 		errs = append(errs, fmt.Errorf("softap: %w", err))
 	}
 
-	// Leaving ACTIVE: stop the passive monitor and the active ARP prober (both run only
-	// in ACTIVE). Beside s.dns.Stop()'s onboarding lifecycle; idempotent if nothing runs.
-	if s.netmon != nil {
-		s.netmon.Stop()
-	}
-	if s.arp != nil {
-		s.arp.Stop()
-	}
-	if s.ggoscan != nil {
-		s.ggoscan.Stop()
-	}
+	// Leaving ACTIVE: stop the passive monitor, ARP prober, Green-GO scanner, and the
+	// port-53 listeners (no DNS is served during onboarding - see the no-DNS note
+	// below). Idempotent if nothing runs.
+	s.stopActiveMonitors()
 	// Onboarding-only: passively sniff eth0 for tagged VLANs so the wizard's link badge can
 	// tell the operator the switch port is a trunk. Best-effort (no CAP_NET_RAW -> inert).
 	if s.trunkProbe != nil {
@@ -292,11 +320,6 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if _, err := net.InterfaceByName("wlan0"); err == nil {
 		wlanIP = softAPWlanIP
 	}
-	// Leaving ACTIVE (or re-entering onboarding): the port-53 owner goes quiet, per
-	// the no-DNS-during-onboarding intent above.
-	if s.dns != nil {
-		s.dns.Stop()
-	}
 
 	// Onboarding Kea config. Deliberately carries NO MariaDB backend (see
 	// RenderOnboarding): eth0 DHCP must come up regardless of MariaDB state.
@@ -307,7 +330,7 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	})
 	if err != nil {
 		errs = append(errs, fmt.Errorf("render onboarding: %w", err))
-	} else if werr := s.writeAndReloadKea(cfgStr); werr != nil {
+	} else if werr := s.writeAndReloadKea(ctx, cfgStr); werr != nil {
 		errs = append(errs, werr)
 	} else if mode == ModeApply {
 		// A reset (ModeApply) must not inherit the prior job's leases: the memfile lease
@@ -315,7 +338,7 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 		// from them - would otherwise persist. Wipe now that Kea is up with the onboarding
 		// config. Best-effort: a wipe failure must not fail the reset. (A first onboarding
 		// has no leases, so this is a harmless no-op there.)
-		if werr := s.kea.WipeLeases(context.Background()); werr != nil {
+		if werr := s.kea.WipeLeases(ctx); werr != nil {
 			log.Printf("[Reconcile] onboarding lease wipe failed: %v", werr)
 		}
 	}
@@ -326,6 +349,8 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 // reconcileActive brings up all served interfaces, renders+reloads the profile
 // Kea config, and applies (or tears down) uplink NAT.
 func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+	defer cancel()
 	var errs []error
 
 	// Leaving onboarding: the trunk and rogue-DHCP probes are onboarding-only hints, and
@@ -354,7 +379,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// that fails here re-stamps rows for a config that won't load, but the next
 	// reconcile re-derives them, and a reconcile-time validation failure is
 	// environmental (every reconcile would fail, not just this one).
-	s.remapReservationSubnets(context.Background(), scopes, mode)
+	s.remapReservationSubnets(ctx, scopes, mode)
 
 	if mode == ModeApply {
 		_ = s.net.DeleteApplianceConnections()
@@ -403,7 +428,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	cfgStr, rerr := s.keaConfigForState(scopes)
 	if rerr != nil {
 		errs = append(errs, fmt.Errorf("render profile: %w", rerr))
-	} else if werr := s.writeAndReloadKea(cfgStr); werr != nil {
+	} else if werr := s.writeAndReloadKea(ctx, cfgStr); werr != nil {
 		errs = append(errs, werr)
 	} else {
 		reloadOK = true
@@ -431,7 +456,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// did not accept. Skipped while stood down - the holdoff config serves no pool,
 	// so there is nothing to rebalance into.
 	if reloadOK && !s.dhcpStoodDown() {
-		s.rebalanceLeases(context.Background(), scopes)
+		s.rebalanceLeases(ctx, scopes)
 	}
 
 	// Passive network-health monitoring AND the active ARP presence prober run only in
@@ -649,7 +674,8 @@ func writeFileSync(path string, data []byte, perm os.FileMode) error {
 // reloads Kea. Validation happens before the live file is touched so a bad
 // render can't take Kea down on reload - this covers the boot/settings/reset
 // converge paths that don't go through handleSetupApply's own pre-apply check.
-func (s *Server) writeAndReloadKea(configStr string) error {
+// ctx bounds the Kea control-socket calls (the reconcile pass deadline).
+func (s *Server) writeAndReloadKea(ctx context.Context, configStr string) error {
 	if err := kea.TestConfig(configStr); err != nil {
 		return fmt.Errorf("kea config validation failed: %w", err)
 	}
@@ -657,7 +683,7 @@ func (s *Server) writeAndReloadKea(configStr string) error {
 	if err := writeFileSync(live, []byte(configStr), 0660); err != nil {
 		return fmt.Errorf("write kea conf: %w", err)
 	}
-	if err := s.kea.ReloadConfig(context.Background()); err != nil {
+	if err := s.kea.ReloadConfig(ctx); err != nil {
 		// If the control socket itself was unreachable (transport refused, not a
 		// command-level rejection), Kea is running a config without the :8004 HTTP
 		// socket - and config-reload can never recover that, because it needs :8004.
@@ -670,7 +696,13 @@ func (s *Server) writeAndReloadKea(configStr string) error {
 			if rerr := s.net.RestartService(keaServiceName); rerr != nil {
 				return fmt.Errorf("reload kea: socket unreachable and restart failed: %v (reload: %w)", rerr, err)
 			}
-			if perr := s.waitKeaReachable(5, time.Second); perr != nil {
+			// The restart already made the on-disk config live, so the liveness probe
+			// gets its own small budget rather than the pass ctx: near the pass
+			// deadline an inherited ctx would fail this probe instantly and report a
+			// spurious failure (in an apply, a rollback) over a load that succeeded.
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer probeCancel()
+			if perr := s.waitKeaReachable(probeCtx, 5, time.Second); perr != nil {
 				return fmt.Errorf("reload kea: restarted %s but it is still unreachable: %w", keaServiceName, perr)
 			}
 			// The restart re-read our file, so the new config is now live - no second
@@ -686,13 +718,16 @@ func (s *Server) writeAndReloadKea(configStr string) error {
 // keaServiceName is the systemd unit that runs kea-dhcp4 (the ISC Debian package).
 const keaServiceName = "isc-kea-dhcp4-server"
 
-// waitKeaReachable polls Kea's control socket until it answers or the attempts run
-// out, returning the last probe error.
-func (s *Server) waitKeaReachable(attempts int, delay time.Duration) error {
+// waitKeaReachable polls Kea's control socket until it answers, the attempts run
+// out, or ctx expires - returning the last probe error.
+func (s *Server) waitKeaReachable(ctx context.Context, attempts int, delay time.Duration) error {
 	var err error
 	for range attempts {
-		if err = s.kea.Ping(context.Background()); err == nil {
+		if err = s.kea.Ping(ctx); err == nil {
 			return nil
+		}
+		if ctx.Err() != nil {
+			return err
 		}
 		time.Sleep(delay)
 	}
