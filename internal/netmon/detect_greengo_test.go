@@ -209,3 +209,24 @@ func TestGreengoNoLease(t *testing.T) {
 		t.Fatalf("no_lease should clear after the lease appears, got %+v", s)
 	}
 }
+
+// TestGreengoNoLeaseSkipsForeignVLAN: a routable Evenution device on an UNSERVED
+// VLAN is reported as foreign by the card and must never fire the no-lease audit -
+// Tick and Snapshot share the isNoLease predicate precisely so the audit log cannot
+// warn "without DHCP lease" while the card says "foreign VLAN".
+func TestGreengoNoLeaseSkipsForeignVLAN(t *testing.T) {
+	d := newGreengoDetector("eth0", func() []LeasedAddr { return nil }, 0, 0) // serve untagged VID 0
+	bpx := [6]byte{0x00, 0x1f, 0x80, 0x20, 0x4e, 0x52}
+	start := time.Unix(1000, 0)
+	d.Consume(Frame{Data: hFrame(bpx, [4]byte{10, 20, 0, 50}, 200)}, start) // routable, VLAN 200
+	d.Tick(start)
+
+	now := start.Add(staticWarmup + time.Second)
+	d.Consume(Frame{Data: hFrame(bpx, [4]byte{10, 20, 0, 50}, 200)}, now)
+	if ev := d.Tick(now); len(ev) != 0 {
+		t.Fatalf("foreign-VLAN device must not fire the no-lease audit, got %v", ev)
+	}
+	if s := d.Snapshot(); s.Fields["no_lease"] != "" || s.Fields["foreign"] != "1" {
+		t.Fatalf("expected foreign=1 and no no_lease count, got %+v", s.Fields)
+	}
+}

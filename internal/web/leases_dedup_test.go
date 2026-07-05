@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/netmon"
 	"ggo-kea-dhcp/internal/web/views"
@@ -136,7 +137,7 @@ func TestUnifiedLeaseRowsWithPins_NoMariaDB(t *testing.T) {
 		{IPAddress: "10.0.0.99", HWAddress: "00:1f:80:20:cc:cc", SubnetID: 1, Cltt: now - 7200, ValidLft: 60},
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil, nil, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 active rows (expired dropped), got %d: %+v", len(rows), rows)
 	}
@@ -165,7 +166,7 @@ func TestUnifiedLeaseRowsWithPins_Presence(t *testing.T) {
 	}
 	reachable := map[string]bool{"10.0.0.20": true}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil, nil, nil)
 	byIP := map[string]string{}
 	for _, r := range rows {
 		byIP[r.IPAddress] = r.Presence
@@ -195,7 +196,7 @@ func TestUnifiedLeaseRowsWithPins_AwaitingRenewal(t *testing.T) {
 		{IP: "10.0.0.77", MAC: "00:1f:80:20:dd:dd", Flagged: true}, // concluded static - static row
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, true, nil, nil, awaiting)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, true, nil, nil, awaiting, nil)
 	if len(rows) != 3 {
 		t.Fatalf("expected lease + 2 awaiting rows, got %d: %+v", len(rows), rows)
 	}
@@ -231,7 +232,7 @@ func TestFilterAwaitingByMAC(t *testing.T) {
 		{IP: "10.0.0.42", MAC: "00:1f:80:20:cc:cc"},
 		{IP: "10.0.0.77", MAC: "00:1F:80:20:DD:DD"}, // reserved (case differs)
 	}
-	got := filterAwaitingByMAC(awaiting, map[string]bool{normalizeMAC("00:1f:80:20:dd:dd"): true})
+	got := filterAwaitingByMAC(awaiting, map[string]db.HostReservation{normalizeMAC("00:1f:80:20:dd:dd"): {}})
 	if len(got) != 1 || got[0].IP != "10.0.0.42" {
 		t.Fatalf("expected only .42 to survive, got %+v", got)
 	}

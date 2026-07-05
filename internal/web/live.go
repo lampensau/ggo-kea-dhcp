@@ -332,7 +332,10 @@ type liveFragment struct {
 // regions are deliberately not gated on which page each client is viewing.
 func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
 	ns := s.collectNetSnapshot() // one SnapshotAll shared by the view + lease table
-	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true)
+	// One HWReservations fetch shared by the card's awaiting suppression and the
+	// leases-body merge below (same single-fetch rationale as pinnedKeys).
+	res := s.fetchHWReservationMap(ctx)
+	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, true, res)
 
 	// Periodic-cheap regions (also refreshed on a metrics-only tick).
 	frags := s.periodicFragments(v)
@@ -349,7 +352,7 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting), "", s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting, res), "", s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 
@@ -406,7 +409,7 @@ func (s *Server) periodicFragments(v views.DashboardView) []liveFragment {
 // metrics-only tick so an idle connected client costs no MariaDB round-trips.
 func (s *Server) periodicDashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
 	ns := s.collectNetSnapshot()
-	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, false)
+	v := s.buildDashboardViewWith(ctx, views.PageData{}, leases, ns, false, nil)
 	return s.periodicFragments(v)
 }
 

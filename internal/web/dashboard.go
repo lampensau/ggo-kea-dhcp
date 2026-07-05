@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 
@@ -36,7 +37,7 @@ func (s *Server) buildDashboardView(ctx context.Context, pd views.PageData) view
 // decide nothing changed, and skip this work entirely. It collects the netmon
 // snapshot once and delegates to buildDashboardViewWith.
 func (s *Server) buildDashboardViewWithLeases(ctx context.Context, pd views.PageData, leases []kea.ActiveLease) views.DashboardView {
-	return s.buildDashboardViewWith(ctx, pd, leases, s.collectNetSnapshot(), true)
+	return s.buildDashboardViewWith(ctx, pd, leases, s.collectNetSnapshot(), true, s.fetchHWReservationMap(ctx))
 }
 
 // buildDashboardViewWith builds the dashboard view from an already-fetched lease
@@ -46,7 +47,7 @@ func (s *Server) buildDashboardViewWithLeases(ctx context.Context, pd views.Page
 // false so it refreshes the periodic-cheap regions (tiles, net-health, activity)
 // without the pinning/reservation round-trips - those regions change only on a
 // lease change or an explicit pin op, both of which build the full view.
-func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, leases []kea.ActiveLease, ns netSnapshotData, withPinning bool) views.DashboardView {
+func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, leases []kea.ActiveLease, ns netSnapshotData, withPinning bool, res map[string]db.HostReservation) views.DashboardView {
 	var profileID int
 	var profileName string
 	if err := s.sqlite.QueryRow("SELECT id, name FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID, &profileName); err != nil {
@@ -112,15 +113,11 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	// Recent-leases card: top active leases plus awaiting-renewal hosts (online but
 	// unleased after a purge - the card must not go empty while devices are up),
 	// tagged with passive online/offline. Awaiting hosts covered by a hw-address
-	// reservation are dropped so the card agrees with /leases, where the reservation
-	// row's MAC suppresses the awaiting row. Reservation MACs are fetched only on the
-	// withPinning (lease-change/page) path; the metrics-only path never broadcasts
-	// this card, so its unfiltered build is never shown.
-	awaiting := ns.Awaiting
-	if withPinning {
-		awaiting = filterAwaitingByMAC(awaiting, s.reservationMACs(ctx))
-	}
-	recent := appendAwaitingRows(buildLeaseRows(active), awaiting)
+	// reservation (res, prefetched by the caller and shared with the lease-table
+	// build) are dropped so the card agrees with /leases, where the reservation
+	// row's MAC suppresses the awaiting row. The metrics-only path passes nil - it
+	// never broadcasts this card, so its unfiltered build is never shown.
+	recent := appendAwaitingRows(buildLeaseRows(active), filterAwaitingByMAC(ns.Awaiting, res))
 	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
 	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)

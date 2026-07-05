@@ -249,15 +249,13 @@ func (d *greengoDetector) Tick(now time.Time) []Event {
 	// The no-lease warn (an Evenution device active without a DHCP lease - purged,
 	// wiped, or statically addressed) was card-only, which broke the status-pill →
 	// audit-log trail: the pill counted a warning the log never mentioned. Audit its
-	// 0↔nonzero edges (same condition Snapshot uses for the warn row).
+	// 0↔nonzero edges via the same isNoLease predicate as Snapshot's warn row.
 	noLease, ips := 0, []string(nil)
-	if !d.warming && d.haveLeases {
-		for _, m := range macs {
-			if dev, ok := d.devices[m]; ok && dev.present && !dev.linkLocal && !d.leasedSet[dev.ip] {
-				noLease++
-				if len(ips) < 3 {
-					ips = append(ips, dev.ipStr)
-				}
+	for _, m := range macs {
+		if dev, ok := d.devices[m]; ok && d.isNoLease(dev) {
+			noLease++
+			if len(ips) < 3 {
+				ips = append(ips, dev.ipStr)
 			}
 		}
 	}
@@ -298,6 +296,16 @@ func (d *greengoDetector) clearEvent(dev *ggoDevice) Event {
 	}
 }
 
+// isNoLease reports whether dev counts toward the no-lease warn: present on the
+// served VLAN (a foreign-VLAN device is reported as foreign, never as no-lease),
+// routable (not link-local), and provably unleased (post warm-up, with a lease set
+// held). The ONE predicate shared by Tick's audit edge and Snapshot's warn row, so
+// the audit log and the card cannot drift apart.
+func (d *greengoDetector) isNoLease(dev *ggoDevice) bool {
+	return dev.present && dev.vlan == d.servedVID && !dev.linkLocal &&
+		!d.warming && d.haveLeases && !d.leasedSet[dev.ip]
+}
+
 func (d *greengoDetector) Snapshot() DetectorSnapshot {
 	s := DetectorSnapshot{Kind: "greengo", Subject: d.iface}
 	present, linkLocal, noLease, confirmedServed := 0, 0, 0, 0
@@ -330,7 +338,7 @@ func (d *greengoDetector) Snapshot() DetectorSnapshot {
 		switch {
 		case dev.flagged: // link-local, warm-up-gated (set in Tick)
 			linkLocal++
-		case !d.warming && !dev.linkLocal && d.haveLeases && !d.leasedSet[dev.ip]:
+		case d.isNoLease(dev):
 			noLease++
 		}
 	}

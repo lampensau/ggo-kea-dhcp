@@ -480,7 +480,27 @@ func (s *Server) unifiedLeaseRows(ctx context.Context, leases []kea.ActiveLease)
 // pins it already fetched via unifiedLeaseRowsWithPins.
 func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool) []views.LeaseRow {
 	// /leases path: no shared scanner snapshot here, so self-fetch the name map.
-	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC(), s.awaitingPoolHosts())
+	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC(), s.awaitingPoolHosts(), s.fetchHWReservationMap(ctx))
+}
+
+// fetchHWReservationMap returns the client (hw-address) reservations keyed by
+// normalized MAC, or an empty map when MariaDB is absent or the read fails. Fetched
+// once per build and shared by the lease-row merge and the dashboard card's awaiting
+// suppression.
+func (s *Server) fetchHWReservationMap(ctx context.Context) map[string]db.HostReservation {
+	res := map[string]db.HostReservation{}
+	if s.mariadb == nil {
+		return res
+	}
+	list, err := s.mariadb.HWReservations(ctx)
+	if err != nil {
+		log.Printf("[Reservations] read failed: %v", err)
+		return res
+	}
+	for _, rsv := range list {
+		res[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = rsv
+	}
+	return res
 }
 
 // pinnedPortKeys returns the set of pinned switch-port identities (flex-id, type-4
@@ -540,20 +560,12 @@ func dedupeStaleLeases(leases []kea.ActiveLease) []kea.ActiveLease {
 // shadowed) - but a leftover hw-address reservation stays removable (see LeasesBody).
 // awaiting is netmon's passively-observed in-pool-but-unleased host set; hosts not
 // already covered by a lease or reservation row are appended as "awaiting renewal"
-// rows so a client whose lease was purged (clock step, wipe) stays visible.
-func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string, awaiting []netmon.PoolHost) []views.LeaseRow {
+// rows so a client whose lease was purged (clock step, wipe) stays visible. res is
+// the prefetched hw-address reservation map (fetchHWReservationMap) - passed in so
+// the dashboard broadcast shares ONE HWReservations query with the card build
+// instead of re-querying per consumer (same rationale as pinnedKeys).
+func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string, awaiting []netmon.PoolHost, res map[string]db.HostReservation) []views.LeaseRow {
 	rows := buildLeaseRows(dedupeStaleLeases(activeLeases(leases)))
-
-	res := map[string]db.HostReservation{}
-	if s.mariadb != nil {
-		if list, err := s.mariadb.HWReservations(ctx); err == nil {
-			for _, rsv := range list {
-				res[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = rsv
-			}
-		} else {
-			log.Printf("[Reservations] read failed: %v", err)
-		}
-	}
 
 	seen := make(map[string]bool, len(rows))
 	for i := range rows {
@@ -648,33 +660,16 @@ func appendAwaitingRows(rows []views.LeaseRow, awaiting []netmon.PoolHost) []vie
 	return rows
 }
 
-// reservationMACs returns the normalized MACs holding a client (hw-address)
-// reservation, or nil when MariaDB is absent or the read fails.
-func (s *Server) reservationMACs(ctx context.Context) map[string]bool {
-	if s.mariadb == nil {
-		return nil
-	}
-	list, err := s.mariadb.HWReservations(ctx)
-	if err != nil {
-		log.Printf("[Reservations] MAC-set read failed: %v", err)
-		return nil
-	}
-	macs := make(map[string]bool, len(list))
-	for _, rsv := range list {
-		macs[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
-	}
-	return macs
-}
-
-// filterAwaitingByMAC drops awaiting hosts whose MAC is in the given normalized-MAC
-// set (hosts a reservation already represents). A nil/empty set passes through.
-func filterAwaitingByMAC(awaiting []netmon.PoolHost, macs map[string]bool) []netmon.PoolHost {
-	if len(macs) == 0 || len(awaiting) == 0 {
+// filterAwaitingByMAC drops awaiting hosts whose normalized MAC appears in the
+// reservation map (hosts a reservation row already represents). A nil/empty map
+// passes through.
+func filterAwaitingByMAC(awaiting []netmon.PoolHost, res map[string]db.HostReservation) []netmon.PoolHost {
+	if len(res) == 0 || len(awaiting) == 0 {
 		return awaiting
 	}
 	out := make([]netmon.PoolHost, 0, len(awaiting))
 	for _, h := range awaiting {
-		if !macs[normalizeMAC(h.MAC)] {
+		if _, ok := res[normalizeMAC(h.MAC)]; !ok {
 			out = append(out, h)
 		}
 	}
