@@ -96,7 +96,9 @@ func (d *lldpDetector) parseLLDP(b []byte) {
 				}
 			}
 		case 5: // System Name
-			if s := string(v); s != "" {
+			// Same printableID funnel as the Port ID above: the name is
+			// attacker-controlled wire bytes that end up as an audit target.
+			if s := printableID(v); s != "" {
 				d.sysName = s
 			}
 		case 127: // org-specific
