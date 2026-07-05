@@ -67,6 +67,29 @@ func TestRogueDHCP_ForgedServerIDStillDetected(t *testing.T) {
 	}
 }
 
+// TestRogueDHCP_UnknownSelfMACSuppressesEmission proves the safety degrade: when
+// the box's own NIC MAC could not be read (macKnown=false) the detector cannot tell
+// its own OFFERs from a rogue's, so it emits nothing (never phantom-flagging the
+// appliance) and reports Unverified rather than a confident all-clear.
+func TestRogueDHCP_UnknownSelfMACSuppressesEmission(t *testing.T) {
+	d := newRogueDHCPDetector("eth0", [6]byte{}, false, 120*time.Second)
+
+	// Even a would-be foreign OFFER produces no event while the self-MAC is unknown -
+	// we cannot verify it is not our own, so we stay silent instead of phantom-flagging.
+	foreignMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+	d.Consume(dhcpFrameFrom(foreignMAC, [4]byte{10, 0, 0, 250}, 2), at(1*time.Second))
+	if ev := d.Tick(at(1 * time.Second)); ev != nil {
+		t.Fatalf("emitted a rogue event while self-MAC unknown: %v", ev)
+	}
+	s := d.Snapshot()
+	if s.Severity != SevInfo {
+		t.Fatalf("unverified snapshot should be SevInfo, got %+v", s)
+	}
+	if s.Severity == SevOK {
+		t.Fatal("unknown self-MAC must not report a confident all-clear")
+	}
+}
+
 // TestRogueDHCP_SuppressesOwnVLANOffers proves the mixed untagged+VLAN case: the
 // box's own OFFER on a tagged VLAN scope carries a different server-id (the VLAN
 // interface's IP) but the SAME physical NIC source MAC, so MAC-based suppression

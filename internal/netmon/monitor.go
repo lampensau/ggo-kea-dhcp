@@ -452,8 +452,8 @@ func (m *Monitor) onTick(cc capControl, available bool) {
 
 	// Dual overflow signals → governor level (see govInputs). Wire pps is
 	// deliberately not consulted for promiscuous or level: a busy-but-healthy show
-	// LAN runs enormous pps with zero drops, and that is exactly where the rogue
-	// watch must stay promiscuous.
+	// LAN runs enormous pps with zero drops, so escalating on pps would black out
+	// monitoring on exactly the networks the feature targets.
 	var tpDrops, chanDrops uint32
 	if cc != nil {
 		tpDrops, chanDrops = cc.stats()
@@ -462,19 +462,22 @@ func (m *Monitor) onTick(cc capControl, available bool) {
 	dropping := framesDropped(level)
 
 	// Promiscuous single-owner: ONE boolean recomputed here, the only caller of
-	// setPromiscuous. In ACTIVE the box always serves DHCP, so promiscuous is the
-	// steady-state default at full fidelity: a rogue server that unicasts its
-	// OFFER/ACK straight to a victim (never broadcasting) is invisible to a
-	// non-promiscuous socket, and catching exactly that is the point of the rogue
-	// detector and the shield stand-down. The tradeoff is real - the NIC now hands
-	// userspace every frame on the segment - but the in-kernel BPF still drops all
-	// but the narrow parsed set, so the userspace cost stays bounded, and the
-	// governor still owns the ceiling: it sheds promiscuous first (drops to
-	// LevelNoPromisc) the instant either overflow counter fires, so a genuine flood
-	// cannot starve Kea or the UI. Wire pps deliberately does NOT shed it (see
-	// governor.go): a busy-but-healthy show LAN runs enormous pps with zero drops,
-	// and that is precisely the network the rogue watch must stay awake on.
-	want := level == LevelFull
+	// setPromiscuous. Promiscuous exists for one legitimate purpose - capturing the
+	// multicast traffic (sACN 5568, PTP) a scope opted into via MulticastSniff - so
+	// it is gated on that opt-in, never enabled steady-state. It is deliberately NOT
+	// turned on for rogue-DHCP detection: on a switched network (the appliance's
+	// normal deployment) promiscuous only relaxes the NIC's own receive filter, not
+	// the switch's forwarding, so the unicast OFFER/ACK a rogue sends straight to
+	// another client never reaches the Pi's port regardless - that needs a SPAN /
+	// mirror port. What promiscuous WOULD add is the kernel running BPF in softirq
+	// over every frame on the segment, which yields zero ring-buffer tp_drops and so
+	// never trips this governor: unbounded, ungoverned softirq CPU competing with
+	// Kea's packet path for near-zero added rogue visibility. Rogue detection instead
+	// runs on the non-promiscuous capture (broadcast OFFERs + any OFFER/ACK directed
+	// at the box), which is the honest, switch-correct posture. When MulticastSniff
+	// IS on, the governor still owns the ceiling: it sheds promiscuous first (drops
+	// to LevelNoPromisc) the instant either overflow counter fires.
+	want := level == LevelFull && m.spec.MulticastSniff
 	if cc != nil {
 		m.applyPromiscuous(cc, want)
 	}

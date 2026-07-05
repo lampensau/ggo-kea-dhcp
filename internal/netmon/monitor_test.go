@@ -223,17 +223,42 @@ func TestMonitorManager_PromptStopDuringBackoff(t *testing.T) {
 	}
 }
 
-func TestMonitor_PromiscuousSingleOwner(t *testing.T) {
+// TestMonitor_PromiscuousOffWithoutMulticastSniff proves the switch-correct posture:
+// a plain ACTIVE scope (MulticastSniff off) never goes promiscuous, because
+// promiscuous buys near-zero rogue visibility on a switched network for real
+// ungoverned softirq cost. It is reserved for multicast capture (see below).
+func TestMonitor_PromiscuousOffWithoutMulticastSniff(t *testing.T) {
 	clk := newFakeClock(base)
 	fs := NewFakeSniffer()
 	openFn := func(string, bool, []bpf.RawInstruction) (Sniffer, error) { return fs, nil }
 	mm, _ := fastManager(openFn, clk)
 	defer mm.Stop()
 
-	// Promiscuous is the steady-state default at L0 in ACTIVE - no MulticastSniff
-	// and no duty window needed, so a rogue's unicast OFFERs to other clients are
-	// always visible.
-	mm.Start([]Spec{{Iface: "eth0"}})
+	mm.Start([]Spec{{Iface: "eth0"}}) // no MulticastSniff
+
+	// Give the tick loop time to run many ticks; promiscuous must stay OFF throughout.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		for _, on := range fs.PromiscLog() {
+			if on {
+				t.Fatalf("promiscuous enabled without MulticastSniff: %v", fs.PromiscLog())
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestMonitor_PromiscuousGatedOnMulticastSniff proves promiscuous IS enabled at L0
+// for a scope that opted into multicast sniffing (its legitimate purpose: sACN /
+// PTP multicast capture), and that the governor still sheds it first under overflow.
+func TestMonitor_PromiscuousGatedOnMulticastSniff(t *testing.T) {
+	clk := newFakeClock(base)
+	fs := NewFakeSniffer()
+	openFn := func(string, bool, []bpf.RawInstruction) (Sniffer, error) { return fs, nil }
+	mm, _ := fastManager(openFn, clk)
+	defer mm.Stop()
+
+	mm.Start([]Spec{{Iface: "eth0", MulticastSniff: true}})
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -244,7 +269,7 @@ func TestMonitor_PromiscuousSingleOwner(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	if log := fs.PromiscLog(); len(log) == 0 || !log[len(log)-1] {
-		t.Fatalf("promiscuous never enabled at L0 steady-state: %v", log)
+		t.Fatalf("promiscuous never enabled at L0 with MulticastSniff: %v", log)
 	}
 
 	// Now drive sustained overflow → governor sheds to >=L1 → promiscuous forced off.

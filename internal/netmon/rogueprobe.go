@@ -61,22 +61,27 @@ var rogueOfferFilter = func() []bpf.RawInstruction {
 // already answering on the segment the appliance is about to serve (the common
 // case: the venue's managed switch still runs its own DHCP). It feeds captured
 // frames to the same rogueDHCPDetector the ACTIVE monitor uses. The box already
-// serves its own onboarding pool on eth0, so its own OFFERs are on the wire and
-// promiscuously captured; Start reads eth0's own MAC and hands it to the detector
-// so those OFFERs are suppressed (by source MAC, not the forgeable option-54
-// server-id) and the badge never flags the appliance itself. Purely passive: it
-// sends nothing. The capture opens promiscuous so a server's unicast OFFER/ACK to
-// another client (renewals - the usual traffic on an established segment) is
-// visible, not just broadcast answers; nothing else owns the promiscuous bit
-// outside ACTIVE, and closing the socket drops the membership. Best-effort like
-// TrunkProbe: without CAP_NET_RAW it stays inert and the wizard's shield badge
-// falls back to carrier-only.
+// serves its own onboarding pool on eth0, so its own OFFERs are on the wire;
+// Start reads eth0's own MAC and hands it to the detector so those OFFERs are
+// suppressed (by source MAC, not the forgeable option-54 server-id) and the badge
+// never flags the appliance itself. Purely passive: it sends nothing.
+//
+// It reliably sees a rogue's BROADCAST OFFERs and answers directed at the box.
+// It does NOT reliably see a rogue that only unicasts OFFER/ACK to other clients:
+// on a switched segment the switch forwards those out the victim's port, not
+// ours. The capture opens promiscuous (a brief, bounded onboarding window with no
+// live show to protect), which relaxes our NIC's own receive filter but not the
+// switch's forwarding - so it does not conjure that unicast visibility; it only
+// helps on a hub or a mirror/SPAN port. Best-effort like TrunkProbe: without
+// CAP_NET_RAW it stays inert and the wizard's shield badge falls back to
+// carrier-only.
 type RogueProbe struct {
-	mu      sync.Mutex
-	det     *rogueDHCPDetector
-	sniffer Sniffer
-	quit    chan struct{}
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	det      *rogueDHCPDetector
+	sniffer  Sniffer
+	macKnown bool
+	quit     chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewRogueProbe returns an inert probe; call Start to begin capturing.
@@ -117,6 +122,7 @@ func (p *RogueProbe) begin(iface string, sn Sniffer, selfMAC [6]byte, macKnown b
 	p.mu.Lock()
 	p.det = newRogueDHCPDetector(iface, selfMAC, macKnown, 0)
 	p.sniffer = sn
+	p.macKnown = macKnown
 	p.quit = quit
 	p.mu.Unlock()
 	p.wg.Add(1)
@@ -192,18 +198,20 @@ func (p *RogueProbe) Stop() {
 	p.mu.Unlock()
 }
 
-// Watching reports whether the probe is actually capturing frames: a real
-// AF_PACKET socket is open and its read loop is live. It is false when the probe
-// is stopped (not running - e.g. the ACTIVE edit page), when the capture fell back
-// to a nop sniffer (no CAP_NET_RAW / dev sandbox), OR when the read loop died
-// fatally mid-run (markDead cleared the sniffer) - in every case Server() answers
-// "none" not because the link is clear but because nothing is being observed.
-// Callers use this to render an honest "unverified" shield rather than a confident
-// all-clear when the probe is blind.
+// Watching reports whether the probe is actually producing a trustworthy answer: a
+// real AF_PACKET socket is open, its read loop is live, AND the box's own MAC is
+// known so it can self-suppress. It is false when the probe is stopped (not running
+// - e.g. the ACTIVE edit page), when the capture fell back to a nop sniffer (no
+// CAP_NET_RAW / dev sandbox), when the read loop died fatally mid-run (markDead
+// cleared the sniffer), OR when the self-MAC could not be read (the detector then
+// suppresses emission, so a quiet Server() would be a false all-clear, not a
+// verified one). In every case Server() answers "none" not because the link is
+// clear but because nothing trustworthy is being observed. Callers use this to
+// render an honest "unverified" shield rather than a confident all-clear.
 func (p *RogueProbe) Watching() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.sniffer != nil && !isNop(p.sniffer)
+	return p.sniffer != nil && !isNop(p.sniffer) && p.macKnown
 }
 
 // Server reports the foreign DHCP server currently seen answering on the link

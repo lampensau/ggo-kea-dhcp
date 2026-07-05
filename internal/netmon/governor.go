@@ -12,7 +12,7 @@ package netmon
 // level escalation - they are the direct "are we falling behind?" measure. Wire
 // pps is deliberately NOT a signal at all: on a busy-but-healthy show LAN the
 // in-kernel BPF keeps both counters ~0 while pps is enormous, so letting pps
-// escalate (or shed the steady-state promiscuous socket) would black out
+// escalate (or shed the MulticastSniff promiscuous socket) would black out
 // monitoring on exactly the networks the feature targets.
 type govInputs struct {
 	tpDrops   uint32 // AF_PACKET PACKET_STATISTICS drops = socket-buffer overflow

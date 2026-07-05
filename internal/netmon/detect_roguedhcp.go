@@ -21,6 +21,21 @@ const defaultRogueAbsence = 120 * time.Second
 // reports the offender's IP + MAC/OUI. High severity. Passive (UDP sport 67,
 // OFFER/ACK). During ONBOARDING the same detector backs the wizard's shield badge
 // via RogueProbe, keyed on eth0's MAC (the box already serves its onboarding pool).
+//
+// Scope of what this reliably sees (do not overstate the guarantee): on a switched
+// network - the appliance's normal deployment - it detects a rogue's BROADCAST
+// OFFERs and any OFFER/ACK directed at the box itself. It CANNOT see a rogue that
+// only unicasts OFFER/ACK straight to other clients: the switch forwards those out
+// the victim's port, not ours, so they never reach the Pi. Catching that case
+// needs switch port mirroring (a SPAN port); promiscuous mode does not fix it,
+// because it relaxes only our NIC's receive filter, not the switch's forwarding.
+//
+// Self-verification is mandatory: if the box's own NIC MAC could not be read
+// (macKnown=false), the detector CANNOT tell its own OFFERs apart from a rogue's,
+// so it degrades to Unverified - it suppresses all emission rather than phantom-
+// flag the appliance itself (a phantom rogue could trip the shield stand-down and
+// self-inflict an outage). On the Pi net.InterfaceByName supplies the MAC; this
+// path is the dev-sandbox / iface-down fallback.
 type rogueDHCPDetector struct {
 	iface      string
 	selfMAC    [6]byte
@@ -50,6 +65,12 @@ func newRogueDHCPDetector(iface string, selfMAC [6]byte, macKnown bool, absence 
 }
 
 func (d *rogueDHCPDetector) Consume(f Frame, now time.Time) {
+	// Without our own MAC we cannot separate the box's own OFFERs from a rogue's, so
+	// we emit nothing rather than phantom-flag the appliance (see the type doc). The
+	// Snapshot reports Unverified in this state.
+	if !d.selfMACSet {
+		return
+	}
 	et, off, _, ok := etherInfo(f.Data)
 	if !ok || et != etherTypeIPv4 {
 		return
@@ -176,6 +197,13 @@ func (d *rogueDHCPDetector) Snapshot() DetectorSnapshot {
 		}
 	}
 	s := DetectorSnapshot{Kind: "rogue_dhcp", Subject: d.iface}
+	if !d.selfMACSet {
+		// Cannot self-verify (own NIC MAC unread): report Unverified, never a
+		// confident all-clear, since emission is suppressed and nothing is observed.
+		s.Severity = SevInfo
+		s.Text = "Rogue DHCP watch unverified (interface MAC unknown)"
+		return s
+	}
 	if len(active) == 0 {
 		s.Severity = SevOK
 		s.Text = "No rogue DHCP servers"

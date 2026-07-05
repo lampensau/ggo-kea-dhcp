@@ -48,7 +48,10 @@ func TestRogueOfferFilter(t *testing.T) {
 func TestRogueProbe_DetectsForeignOffer(t *testing.T) {
 	p := NewRogueProbe()
 	fs := NewFakeSniffer()
-	p.begin("eth0", fs, [6]byte{}, false)
+	// A known box MAC (distinct from the foreign OFFER's macTestSwitch source) so the
+	// probe can self-verify and surface the rogue.
+	boxMAC := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0xaa}
+	p.begin("eth0", fs, boxMAC, true)
 	defer p.Stop()
 
 	if ip, _, ok := p.Server(); ok {
@@ -102,16 +105,26 @@ func TestRogueProbe_WatchingReflectsRealCapture(t *testing.T) {
 		t.Fatal("inert probe reports Watching")
 	}
 
-	// A real (non-nop) capture is watching.
-	p.begin("eth0", NewFakeSniffer(), [6]byte{}, false)
+	// A real (non-nop) capture with a known self-MAC is watching.
+	boxMAC := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0xaa}
+	p.begin("eth0", NewFakeSniffer(), boxMAC, true)
 	if !p.Watching() {
 		t.Fatal("live capture does not report Watching")
 	}
 	p.Stop()
 
+	// A live capture whose self-MAC is unknown can't self-verify, so it must NOT
+	// report Watching - the detector suppresses emission and a quiet Server() would
+	// be a false all-clear. The shield then reads Unverified.
+	p.begin("eth0", NewFakeSniffer(), [6]byte{}, false)
+	if p.Watching() {
+		t.Fatal("capture with unknown self-MAC reports Watching (false all-clear)")
+	}
+	p.Stop()
+
 	// A nop sniffer (no CAP_NET_RAW / dev sandbox) is blind - not watching even
 	// though the read loop runs, because it can never see a frame.
-	p.begin("eth0", newNopSniffer(), [6]byte{}, false)
+	p.begin("eth0", newNopSniffer(), boxMAC, true)
 	if p.Watching() {
 		t.Fatal("blind nop sniffer reports Watching")
 	}
@@ -132,8 +145,9 @@ func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	p.Stop()
 	p.Stop()
 
+	boxMAC := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0xaa}
 	fs := NewFakeSniffer()
-	p.begin("eth0", fs, [6]byte{}, false)
+	p.begin("eth0", fs, boxMAC, true)
 	fs.Push(dhcpFrame(67, [4]byte{10, 0, 0, 250}, 2))
 	p.Stop()
 	if ip, _, ok := p.Server(); ok {
@@ -141,7 +155,7 @@ func TestRogueProbe_StopClearsAndIsIdempotent(t *testing.T) {
 	}
 	// A restart begins with a fresh detector (no latched sighting).
 	fs2 := NewFakeSniffer()
-	p.begin("eth0", fs2, [6]byte{}, false)
+	p.begin("eth0", fs2, boxMAC, true)
 	defer p.Stop()
 	if ip, _, ok := p.Server(); ok {
 		t.Fatalf("restarted probe inherited server %s", ip)
@@ -160,7 +174,7 @@ func (k *killSniffer) Close() error         { return nil }
 func TestRogueProbe_WatchingFalseAfterFatalDeath(t *testing.T) {
 	p := NewRogueProbe()
 	ks := &killSniffer{ch: make(chan Frame)}
-	p.begin("eth0", ks, [6]byte{}, false)
+	p.begin("eth0", ks, [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0xaa}, true)
 	defer p.Stop()
 
 	if !p.Watching() {
