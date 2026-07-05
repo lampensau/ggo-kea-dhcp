@@ -198,7 +198,11 @@ func (s *Server) sampleMetrics() {
 
 	ctx, cancel := opCtx()
 	defer cancel()
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	// Forced poll (maxAge 0): the RTT series and the Kea health signal are
+	// derived from THIS round-trip, so the sampler must never be served a
+	// cached result - it is the always-on cadence that keeps the cache warm
+	// for the read-through consumers instead.
+	leases, err := s.getLeases(ctx, 0)
 	// Record Kea reachability (the HTTP transport reached the socket) regardless of
 	// whether the lease query itself errored, and warn on a transition. This is the
 	// runtime "DHCP Server Offline" signal.

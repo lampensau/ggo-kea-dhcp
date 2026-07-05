@@ -270,7 +270,9 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 	leaseFn := func() []netmon.LeasedAddr {
 		ctx, cancel := opCtx()
 		defer cancel()
-		leases, err := s.kea.GetLeases(ctx, 1000)
+		// Read-through: detector-triggered, staleness within the TTL is fine
+		// for a static-in-pool warning.
+		leases, err := s.getLeases(ctx, leaseSrcTTL)
 		if err != nil {
 			return nil
 		}
