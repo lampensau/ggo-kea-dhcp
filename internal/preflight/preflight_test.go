@@ -102,11 +102,19 @@ func TestKeaBinaryStatus(t *testing.T) {
 			t.Errorf("%s: status=%v want %v (%s)", c.name, got.Status, c.want, got.Detail)
 		}
 	}
+	// The remediation detail is what the installer output shows the operator -
+	// pin the two actionable ones.
+	if got := keaBinaryStatus(false, "", nil); !strings.Contains(got.Detail, "isc-kea-dhcp4-server") {
+		t.Errorf("not-installed detail %q does not name the package to install", got.Detail)
+	}
+	if got := keaBinaryStatus(true, "2.6.1", nil); !strings.Contains(got.Detail, "3.0.x") {
+		t.Errorf("wrong-series detail %q does not name the required series", got.Detail)
+	}
 }
 
 func TestHooksStatus(t *testing.T) {
-	if got := hooksStatus("/usr/lib/hooks/", nil); got.Status != OK || !strings.Contains(got.Detail, "/usr/lib/hooks") {
-		t.Errorf("all present = %v %q", got.Status, got.Detail)
+	if got := hooksStatus("/usr/lib/hooks/", nil); got.Status != OK || got.Detail != "all present in /usr/lib/hooks" {
+		t.Errorf("all present = %v %q, want the trailing slash trimmed", got.Status, got.Detail)
 	}
 	got := hooksStatus("/usr/lib/hooks", []string{"libdhcp_flex_id.so"})
 	if got.Status != Fail || !strings.Contains(got.Detail, "libdhcp_flex_id.so") {
@@ -232,8 +240,10 @@ func TestRunShape(t *testing.T) {
 		KeaAPIURL:     "http://127.0.0.1:1/",
 		MariaDBDSN:    "u:p@tcp(127.0.0.1:1)/kea",
 	})
-	if len(r) < 10 {
-		t.Fatalf("Run returned %d checks, want the full probe set", len(r))
+	// Exact count: 4 Kea + 6 tools + MariaDB + 2 caps + port 53 + clock. A loose
+	// floor would let a third of the probe set vanish unnoticed.
+	if len(r) != 15 {
+		t.Fatalf("Run returned %d checks, want the full probe set of 15", len(r))
 	}
 	for i, c := range r {
 		if c.Name == "" || c.Detail == "" {
