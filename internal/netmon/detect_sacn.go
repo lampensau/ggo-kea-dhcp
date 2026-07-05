@@ -121,14 +121,15 @@ func (d *sacnDetector) Consume(f Frame, now time.Time) {
 	src.pres.sighting(now)
 }
 
-// trimName decodes a NUL-padded E1.31 source-name field.
+// trimName decodes a NUL-padded E1.31 source-name field, through the shared
+// printableID funnel - the name is wire bytes that flow into the audit log.
 func trimName(b []byte) string {
 	for i, c := range b {
 		if c == 0 {
-			return string(b[:i])
+			return printableID(b[:i])
 		}
 	}
-	return string(b)
+	return printableID(b)
 }
 
 // hexBytes formats a byte slice as lowercase hex (for the 16-byte CID).
