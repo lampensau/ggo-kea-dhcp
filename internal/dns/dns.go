@@ -73,6 +73,10 @@ type Server struct {
 	mu        sync.Mutex
 	listeners []*listener
 	bindSet   map[string]bool // current bind IPs, excluded from upstream candidates
+	desired   []string        // IPs the last StartZone asked for, for RebindMissing
+	// port is the listen port, 53 in production. A field only so tests can bind an
+	// unprivileged port; nothing outside tests changes it.
+	port int
 }
 
 // New builds a stopped server. resolvPath overrides /etc/resolv.conf ("" for
@@ -82,6 +86,7 @@ func New(resolvPath string) *Server {
 		resolv:     newResolvCache(resolvPath),
 		forwardSem: make(chan struct{}, maxInflightForwards),
 		limiter:    rateLimiter{counts: map[string]int{}},
+		port:       53,
 	}
 }
 
@@ -133,11 +138,13 @@ func (s *Server) start(bindIPs []string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bindSet = make(map[string]bool, len(bindIPs))
+	s.desired = s.desired[:0]
 	var failed []string
 	for _, ip := range bindIPs {
 		if ip == "" {
 			continue
 		}
+		s.desired = append(s.desired, ip)
 		l, err := bindListener(s, ip)
 		if err != nil {
 			log.Printf("[dns] listener on %s:53 not started: %v", ip, err)
@@ -150,6 +157,39 @@ func (s *Server) start(bindIPs []string) []string {
 		go l.serve()
 	}
 	return failed
+}
+
+// RebindMissing re-attempts a bind for every desired address that is not currently
+// listening - the self-heal for an address that was not yet present when StartZone
+// ran (its EADDRNOTAVAIL retry exhausted) but has since appeared on the interface.
+// Without this a scope whose bind lost the post-re-IP race stays dark until the next
+// full reconcile, even though the address is now up and the zone content refreshes
+// every sampler tick. One attempt per address (the caller's cadence is the retry
+// interval, so no inner sleep); a still-absent address just fails ListenUDP and is
+// left for the next call. Returns the addresses that newly bound, so the caller can
+// audit the recovery. Inert when the server is stopped (no desired set).
+func (s *Server) RebindMissing() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bindSet == nil {
+		return nil // stopped: never resurrect a deliberately torn-down listener set
+	}
+	var healed []string
+	for _, ip := range s.desired {
+		if s.bindSet[ip] {
+			continue
+		}
+		l, err := newListener(s, ip)
+		if err != nil {
+			continue // still absent / still failing: leave it for the next tick
+		}
+		s.listeners = append(s.listeners, l)
+		s.bindSet[ip] = true
+		l.wg.Add(1) // before the goroutine, so a fast stop() cannot Wait() past it
+		go l.serve()
+		healed = append(healed, ip)
+	}
+	return healed
 }
 
 // bindListener binds one address, retrying briefly on EADDRNOTAVAIL - the address
@@ -173,7 +213,7 @@ func bindListener(srv *Server, ip string) (*listener, error) {
 func (s *Server) Stop() {
 	s.mu.Lock()
 	listeners := s.listeners
-	s.listeners, s.bindSet = nil, nil
+	s.listeners, s.bindSet, s.desired = nil, nil, nil
 	s.mu.Unlock()
 	for _, l := range listeners {
 		l.stop()
@@ -202,7 +242,7 @@ func newListener(srv *Server, bindIP string) (*listener, error) {
 	if ip4 == nil {
 		return nil, &net.AddrError{Err: "not an IPv4 address", Addr: bindIP}
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip4, Port: 53})
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip4, Port: srv.port})
 	if err != nil {
 		return nil, err
 	}

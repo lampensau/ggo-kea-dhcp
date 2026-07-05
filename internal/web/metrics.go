@@ -175,6 +175,11 @@ func (s *Server) sampleMetrics() {
 		s.sysHealth.sample()
 	}
 
+	// Self-heal any DNS listener whose bind lost the post-re-IP race at apply time.
+	// Independent of Kea (like sysHealth above), so a scope's local DNS recovers even
+	// while Kea is down; inert outside ACTIVE, where the server is stopped.
+	s.healDNSBinds()
+
 	ctx, cancel := opCtx()
 	defer cancel()
 	leases, err := s.kea.GetLeases(ctx, 1000)

@@ -187,6 +187,23 @@ func ggoNamesSignature(names map[string]string) uint64 {
 	return fnv64(b.String())
 }
 
+// healDNSBinds re-attempts any served-interface DNS listener whose bind failed at
+// apply time (the address not yet present after a re-IP, EADDRNOTAVAIL retry
+// exhausted) but whose address has since appeared, so a scope's local DNS comes up
+// within the sampler cadence instead of waiting for the next full reconcile. A
+// recovered bind is audited (symmetric with the DNS_BIND_FAILED logged at apply
+// time) so the self-heal shows on Diagnostics; the original failure row is what
+// surfaces a persistent one. Inert outside ACTIVE (the server is stopped, so
+// RebindMissing has no desired set).
+func (s *Server) healDNSBinds() {
+	if s.dns == nil {
+		return
+	}
+	for _, ip := range s.dns.RebindMissing() {
+		_ = s.sqlite.LogAudit("SYSTEM", "DNS_BIND_RECOVERED", ip, "", "port 53 bind succeeded on retry", "OK")
+	}
+}
+
 // primeDNSZone fills the zone right after the ACTIVE listeners come up, so
 // device names resolve within seconds of an apply instead of waiting out the
 // first sampler tick. Best-effort.
