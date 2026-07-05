@@ -468,14 +468,21 @@ const maxTrackedSources = 512
 
 // rateLimiter is a per-source fixed-window counter: cheap, deterministic, and
 // bounded - the map resets every window and is capped within one. When the cap
-// is hit (only under a spoofed flood), sources not already tracked are refused
-// for the remainder of that window: a one-second penalty for a legitimate
-// new client at worst, while tracked clients keep their normal per-source
-// allowance.
+// is hit, sources not already tracked are refused for the remainder of that
+// window. Fail-closed is deliberate (fail-open would make the authoritative
+// path a reflector), and honestly: under a SUSTAINED spoofed flood the slots
+// refill with fakes at every window rollover, so legitimate clients that lose
+// the race - device-name resolution included - are starved for the flood's
+// whole duration, not one second. That is the accepted cost; the flood itself
+// is already an outage condition on the segment. The cap budget is global
+// across all listeners/VLANs, not per segment. capLogged edge-triggers ONE log
+// line per capped stretch so the starvation is diagnosable without per-packet
+// spam.
 type rateLimiter struct {
-	mu     sync.Mutex
-	window int64
-	counts map[string]int
+	mu        sync.Mutex
+	window    int64
+	counts    map[string]int
+	capLogged bool
 }
 
 func (r *rateLimiter) allow(source string, now time.Time) bool {
@@ -483,13 +490,20 @@ func (r *rateLimiter) allow(source string, now time.Time) bool {
 	defer r.mu.Unlock()
 	if w := now.Unix(); w != r.window {
 		r.window = w
+		r.capLogged = false
 		clear(r.counts)
 	}
-	if _, tracked := r.counts[source]; !tracked && len(r.counts) >= maxTrackedSources {
+	n, tracked := r.counts[source]
+	if !tracked && len(r.counts) >= maxTrackedSources {
+		if !r.capLogged {
+			r.capLogged = true
+			log.Printf("[dns] per-source limiter at cap (%d sources this second) - refusing untracked sources; likely a spoofed flood", maxTrackedSources)
+		}
 		return false
 	}
-	r.counts[source]++
-	return r.counts[source] <= queryLimitPerSec
+	n++
+	r.counts[source] = n
+	return n <= queryLimitPerSec
 }
 
 // hasParent reports whether name is a subdomain of parent.
