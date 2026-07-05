@@ -26,6 +26,10 @@ type applyPlan struct {
 	originState    string // lifecycle state the apply began in (revert target on failure)
 	snapPath       string
 	gatewayIP      string // the address the operator's browser reconnects to
+	// prevUplink holds the box-level uplink app_state keys as they were before
+	// beginApply overwrote them, so a failed apply can restore them - the rollback
+	// reconcile reads these keys to reconnect wlan0.
+	prevUplink map[string]string
 }
 
 // beginApply is the synchronous half of a profile apply: it renders + validates
@@ -35,7 +39,8 @@ type applyPlan struct {
 // CONFIGURING synchronously is what stops the interstitial's /dashboard probe
 // from bouncing back to /setup (routing treats CONFIGURING like ACTIVE), and
 // makes a crash before finishApply recoverable on boot. On any error it leaves
-// the appliance untouched (state still ONBOARDING, apply guard cleared).
+// the appliance untouched (state still ONBOARDING, uplink credentials restored,
+// apply guard cleared).
 func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink UplinkConfig) (applyPlan, error) {
 	// A running self-update holds the shared guard too, but name it explicitly -
 	// "apply in progress" would be a lie while the box is mid-update.
@@ -83,6 +88,13 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	// Persist the box-level WiFi uplink (one wlan0) only after the candidate
 	// validates, so a render/validate failure can't leave wlan0's credentials
 	// half-mutated. The reconcile reads these back to configure the uplink.
+	// Capture the prior values first: every later failure (here or in
+	// finishApply) must restore them, or the rollback reconcile would reconnect
+	// wlan0 to the failed profile's uplink.
+	prevUplink := make(map[string]string, 3)
+	for _, k := range []string{"uplink_enabled", "uplink_ssid", "uplink_pass"} {
+		prevUplink[k], _ = s.sqlite.GetState(k)
+	}
 	en := "0"
 	if uplink.Enabled {
 		en = "1"
@@ -95,11 +107,12 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	// Snapshot the current live config so a failed apply can be rolled back.
 	snapPath, err := s.snapshotKeaConf("pre-apply")
 	if err != nil {
+		s.restoreUplinkState(prevUplink)
 		s.endReconcile()
 		return applyPlan{}, fmt.Errorf("Failed to snapshot current configuration: %w", err)
 	}
 
-	plan := applyPlan{snapPath: snapPath, gatewayIP: gatewayIP}
+	plan := applyPlan{snapPath: snapPath, gatewayIP: gatewayIP, prevUplink: prevUplink}
 	plan.originState, _ = s.sqlite.GetState(db.LifecycleStateKey)
 	_ = s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&plan.prevProfileID)
 
@@ -107,10 +120,23 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	// transaction (synchronously, before the interstitial is flushed - this is what
 	// keeps the interstitial's /dashboard nav from bouncing back to /setup).
 	if err := s.persistProfile(profileName, scopes, &plan); err != nil {
+		s.restoreUplinkState(prevUplink)
 		s.endReconcile()
 		return applyPlan{}, err
 	}
 	return plan, nil
+}
+
+// restoreUplinkState puts the pre-apply box-level uplink keys back after a failed
+// apply, so the rollback reconcile reconnects wlan0 to the prior uplink instead of
+// the failed profile's. Log-on-error like the other best-effort rollback steps.
+func (s *Server) restoreUplinkState(prev map[string]string) {
+	if len(prev) == 0 {
+		return
+	}
+	if err := s.sqlite.SetStates(prev); err != nil {
+		log.Printf("[Apply] rollback: restore uplink credentials: %v", err)
+	}
 }
 
 // persistProfile writes the new (active) profile and its scopes in one
@@ -262,6 +288,10 @@ func (s *Server) finishApply(plan applyPlan, profileName, actor string) {
 	if err := s.rollbackProfileTables(plan, profileName); err != nil {
 		log.Printf("[Apply] rollback: revert profile table: %v", err)
 	}
+
+	// Restore the pre-apply uplink credentials BEFORE the rollback reconcile, which
+	// reads them from app_state to reconnect wlan0.
+	s.restoreUplinkState(plan.prevUplink)
 
 	// ModeApply (not Converge) so the full NM teardown removes any connection the
 	// failed forward apply created for a scope the prior profile lacks - otherwise a
