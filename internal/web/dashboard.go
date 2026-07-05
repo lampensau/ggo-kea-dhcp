@@ -117,11 +117,18 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	// build) are dropped so the card agrees with /leases, where the reservation
 	// row's MAC suppresses the awaiting row. The metrics-only path passes nil - it
 	// never broadcasts this card, so its unfiltered build is never shown.
+	//
+	// The card shows only devices that are actually there: presence is marked BEFORE
+	// the top-8 cut and prober-confirmed-offline rows are dropped (a powered-off
+	// device's lease keeps counting down on /leases, which shows everything; the
+	// dashboard is the live-room view). Unknown presence (prober unavailable) is
+	// kept - "can't tell" must not empty the card.
 	recent := appendAwaitingRows(buildLeaseRows(active), filterAwaitingByMAC(ns.Awaiting, res))
+	s.markLeasePresenceWith(ns.Live, ns.Available, recent)
+	recent = dropOfflineRows(recent)
 	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
 	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)
-	s.markLeasePresenceWith(ns.Live, ns.Available, recent)
 
 	return views.DashboardView{
 		Page:         pd,

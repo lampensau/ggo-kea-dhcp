@@ -1,6 +1,10 @@
 package web
 
-import "testing"
+import (
+	"testing"
+
+	"ggo-kea-dhcp/internal/web/views"
+)
 
 // TestLocalAuditTime verifies the audit timestamp conversion handles the format the
 // pure-Go SQLite driver actually returns (RFC3339-UTC, "...T...Z"), not just the
@@ -19,5 +23,19 @@ func TestLocalAuditTime(t *testing.T) {
 	}
 	if got := localAuditTime("not a timestamp"); got != "not a timestamp" {
 		t.Fatalf("unparseable input should pass through verbatim, got %q", got)
+	}
+}
+
+// TestDropOfflineRows: the dashboard card omits prober-confirmed-offline devices but
+// keeps online and presence-unknown rows (prober unavailable must not empty the card).
+func TestDropOfflineRows(t *testing.T) {
+	rows := []views.LeaseRow{
+		{IPAddress: "10.0.0.20", Presence: "online"},
+		{IPAddress: "10.0.0.21", Presence: "offline"},
+		{IPAddress: "10.0.0.22", Presence: ""},
+	}
+	got := dropOfflineRows(rows)
+	if len(got) != 2 || got[0].IPAddress != "10.0.0.20" || got[1].IPAddress != "10.0.0.22" {
+		t.Fatalf("expected online + unknown to survive, got %+v", got)
 	}
 }

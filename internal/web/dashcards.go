@@ -48,6 +48,19 @@ func localAuditTime(ts string) string {
 	return ts
 }
 
+// dropOfflineRows removes rows the ARP prober has confirmed offline ("offline"),
+// keeping online and unknown ("") ones - the dashboard card omits absent devices,
+// while /leases keeps showing every lease and reservation regardless of presence.
+func dropOfflineRows(rows []views.LeaseRow) []views.LeaseRow {
+	out := rows[:0]
+	for _, r := range rows {
+		if r.Presence != "offline" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // topLeases returns the first n lease rows (buildLeaseRows is IP-sorted) for the
 // dashboard's active-leases summary; the full table lives on /leases.
 func topLeases(rows []views.LeaseRow, n int) []views.LeaseRow {
