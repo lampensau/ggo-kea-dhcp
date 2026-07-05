@@ -333,7 +333,10 @@ func (s *Server) publishDashboard() {
 // setLastLeases / lastKnownLeases cache the most recent successful lease fetch
 // for the degraded (Kea-down) render paths above. lastKnownLeases returns nil
 // before the first successful fetch, which every view build already tolerates
-// (first boot renders with no leases).
+// (first boot renders with no leases). It returns the LIVE slice, not a copy:
+// callers must treat it as read-only - the ticker goroutine and event-driven
+// publishers hold it concurrently, so an in-place mutation (e.g. sorting the
+// leases themselves rather than a derived row slice) would be a data race.
 func (s *Server) setLastLeases(leases []kea.ActiveLease) {
 	s.lastLeasesMu.Lock()
 	s.lastLeases = leases
