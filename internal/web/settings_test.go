@@ -151,3 +151,83 @@ func TestSettingsSaveConfiguringDefers(t *testing.T) {
 		s.endReconcile()
 	}
 }
+
+// The deferred flash must name dropped uplink changes exactly when the submit
+// actually carried a change: enable/credential edits and the disable case (which
+// submits no uplink fields beyond the section marker), but never a lease-only
+// save from a form whose uplink section matches what is stored.
+func TestSettingsSaveConfiguringNamesDroppedUplink(t *testing.T) {
+	deferredFlash := func(t *testing.T, s *Server, form url.Values) string {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		s.handleSettingsSave(rr, req)
+		c := flashCookie(rr)
+		if c == nil {
+			t.Fatal("no flash cookie set")
+		}
+		req2 := httptest.NewRequest("GET", "/settings", nil)
+		req2.AddCookie(&http.Cookie{Name: "ggo_flash", Value: c.Value})
+		f := s.getFlash(httptest.NewRecorder(), req2)
+		if f == nil {
+			t.Fatal("flash did not decode")
+		}
+		return f.Message
+	}
+	seed := func(t *testing.T, uplinkOn bool) *Server {
+		t.Helper()
+		s, _ := newTestServer(t)
+		if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+			t.Fatal(err)
+		}
+		if uplinkOn {
+			if err := s.sqlite.SetStates(map[string]string{
+				"uplink_enabled": "1", "uplink_ssid": "VenueNet", "uplink_pass": "secret-pass",
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s
+	}
+
+	t.Run("credential change warns", func(t *testing.T) {
+		s := seed(t, false)
+		msg := deferredFlash(t, s, url.Values{
+			"lease_lifetime": {"3600"}, "uplink_form": {"1"},
+			"uplink_enabled": {"on"}, "uplink_ssid": {"VenueNet"}, "uplink_pass": {"secret-pass"},
+		})
+		if !strings.Contains(msg, "uplink") {
+			t.Errorf("flash %q does not name the dropped uplink change", msg)
+		}
+		if ssid, _ := s.sqlite.GetState("uplink_ssid"); ssid == "VenueNet" {
+			t.Error("uplink fields persisted in CONFIGURING - the warning would then be wrong the other way")
+		}
+	})
+	t.Run("disable warns despite absent fields", func(t *testing.T) {
+		s := seed(t, true)
+		// Unchecking the enable box submits NO uplink fields - only the marker.
+		msg := deferredFlash(t, s, url.Values{"lease_lifetime": {"3600"}, "uplink_form": {"1"}})
+		if !strings.Contains(msg, "uplink") {
+			t.Errorf("flash %q does not name the dropped uplink disable", msg)
+		}
+	})
+	t.Run("unchanged uplink stays quiet", func(t *testing.T) {
+		s := seed(t, true)
+		// The rendered form re-submits the stored values; only lease time changed.
+		msg := deferredFlash(t, s, url.Values{
+			"lease_lifetime": {"3600"}, "uplink_form": {"1"},
+			"uplink_enabled": {"on"}, "uplink_ssid": {"VenueNet"}, "uplink_pass": {"secret-pass"},
+		})
+		if strings.Contains(msg, "uplink") {
+			t.Errorf("flash %q warns about uplink changes that do not exist", msg)
+		}
+	})
+	t.Run("no uplink section stays quiet", func(t *testing.T) {
+		s := seed(t, false)
+		msg := deferredFlash(t, s, url.Values{"lease_lifetime": {"7200"}})
+		if strings.Contains(msg, "uplink") {
+			t.Errorf("flash %q warns although the form had no uplink section", msg)
+		}
+	})
+}
