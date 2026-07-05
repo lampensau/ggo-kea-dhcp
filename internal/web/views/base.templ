@@ -517,7 +517,7 @@ templ themeToggle() {
 templ Toast(msg, typ string) {
 	<div
 		class={ "toast", "toast-" + typ }
-		role="status"
+		role={ toastRole(typ) }
 		if typ != "error" {
 			data-init__delay.5s="el.remove()"
 		}

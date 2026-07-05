@@ -32,13 +32,18 @@ type DashboardView struct {
 
 // auditDot maps an audit_log Result to a status-dot variant for the activity feed
 // (errors red, warnings amber, OK green, info/other neutral).
+// auditDot maps an audit Result to the activity-feed dot class. Result strings
+// have drifted into synonyms over time (SUCCESS/OK, ERROR/FAILED/FAILURE), so we
+// normalize by category here rather than at every call site: any failure token is
+// red, any success token is green, WARNING is amber, and informational rows
+// (INFO, or anything unrecognized) stay neutral.
 func auditDot(result string) string {
 	switch result {
-	case "ERROR":
+	case "ERROR", "FAILED", "FAILURE":
 		return "err"
 	case "WARNING":
 		return "warn"
-	case "OK":
+	case "OK", "SUCCESS":
 		return "ok"
 	default:
 		return ""
