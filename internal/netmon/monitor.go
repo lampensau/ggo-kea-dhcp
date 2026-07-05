@@ -586,6 +586,12 @@ func (m *Monitor) publishSnapshot(level Level, available, dropping bool) {
 	}
 	for _, s := range m.detectors {
 		snap.Detectors = append(snap.Detectors, m.snapshotOne(s, dropping))
+		// The unleased-pool-host list rides in the same snapshot; skipped while frames
+		// are dropped (stale ARP state) or the detector is degraded, matching the
+		// "don't claim a status you aren't observing" rule in snapshotOne.
+		if sp, ok := s.d.(*staticInPoolDetector); ok && !s.degraded && !dropping {
+			snap.UnleasedPoolHosts = sp.unleasedPoolHosts()
+		}
 	}
 	snap.LiveMACs = m.hosts.liveWithin(m.clock())
 	m.store.Update(m.spec.Iface, snap)

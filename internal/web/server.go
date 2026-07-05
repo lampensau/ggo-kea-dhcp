@@ -65,6 +65,10 @@ type Server struct {
 	// interface cards to attach to and a stale mapping is inert.
 	ggoFwMu     sync.Mutex
 	ggoFwScopes []fwScope
+	// ggoFwLastSig is the last audited firmware-mismatch census ("" = uniform), so
+	// attachFirmware audits transitions once, not on every render (see
+	// auditFirmwareTransition).
+	ggoFwLastSig string
 	// leaseIPs is a single TTL-memoized provider of the active-lease IPs, shared by the
 	// ARP prober and the Green-GO scanner so their ~10s cycles collapse to ONE Kea
 	// GetLeases round-trip per cycle instead of one each.

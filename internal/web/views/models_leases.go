@@ -42,4 +42,35 @@ type LeaseRow struct {
 	LastSeen     int64
 	LastSeenText string
 	Stale        bool
+	// NoLeaseState marks a passively-observed host that holds this in-pool address
+	// without a Kea lease: "awaiting" (recently de-leased, expected to renew at T1) or
+	// "static" (netmon's static-in-pool verdict). "" is a normal lease/reservation row.
+	// Such a row has no lease to release, so the Release action is hidden.
+	NoLeaseState string
+}
+
+// noLeaseBadgeClass maps a row's NoLeaseState to its badge style: neutral info for a
+// client expected to renew, warn for a concluded static (mirrors the Network Health
+// static-in-pool warn).
+func noLeaseBadgeClass(state string) string {
+	if state == "static" {
+		return "badge-warn"
+	}
+	return "badge-info"
+}
+
+// noLeaseBadgeText is the badge label shown in the Expires column.
+func noLeaseBadgeText(state string) string {
+	if state == "static" {
+		return "static in pool"
+	}
+	return "awaiting renewal"
+}
+
+// noLeaseTitle is the hover text explaining the state.
+func noLeaseTitle(state string) string {
+	if state == "static" {
+		return "Active on the network with a pool address but no DHCP lease - likely a static IP; reserve it to protect the address (harmless if intentional)"
+	}
+	return "Online, but its lease expired or was purged - the device will renew automatically at its next DHCP renewal"
 }

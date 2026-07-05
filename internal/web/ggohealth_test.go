@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"ggo-kea-dhcp/internal/ggoscan"
+	"ggo-kea-dhcp/internal/web/views"
 )
 
 func TestSlugifyHostname(t *testing.T) {
@@ -92,5 +93,53 @@ func TestFirmwareFindings(t *testing.T) {
 	}
 	if got := firmwareFindings(devices, nil); got != nil {
 		t.Errorf("no-scope findings = %v, want nil", got)
+	}
+}
+
+// TestAuditFirmwareTransition verifies the mismatch state audits its edges exactly
+// once: uniform→mixed logs a WARNING, repeat calls with the same census stay silent,
+// a census change re-audits, and mixed→uniform logs the clear. The status pill links
+// to the audit log, so every pill-counted warning must leave a trace there.
+func TestAuditFirmwareTransition(t *testing.T) {
+	s, _ := newTestServer(t)
+	mixed := []fwFinding{{row: views.NetHealthRow{Title: "Mixed firmware: 1 on 5.1.0, 1 on 5.2.2"}}}
+
+	s.auditFirmwareTransition(mixed)
+	s.auditFirmwareTransition(mixed) // same census: no second entry
+	upgraded := []fwFinding{{row: views.NetHealthRow{Title: "Mixed firmware: 2 on 5.2.2, 1 on 5.1.0"}}}
+	s.auditFirmwareTransition(upgraded) // census changed: re-audit
+	s.auditFirmwareTransition(nil)      // resolved: clear entry
+	s.auditFirmwareTransition(nil)      // still uniform: silent
+
+	var got []views.AuditRow
+	for _, a := range s.fetchRecentActivity(10) {
+		if strings.Contains(a.Action, "firmware") || strings.Contains(a.Action, "Firmware") {
+			got = append(got, a)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 firmware audit rows (mixed, census change, cleared), got %d: %+v", len(got), got)
+	}
+	// Same-second timestamps make ORDER BY ts ambiguous - assert the set, not order.
+	want := map[string]string{
+		"1 on 5.1.0, 1 on 5.2.2": "WARNING",
+		"2 on 5.2.2, 1 on 5.1.0": "WARNING",
+	}
+	clears := 0
+	for _, a := range got {
+		if strings.Contains(a.Action, "cleared") {
+			if a.Result != "INFO" {
+				t.Errorf("clear row should be INFO, got %+v", a)
+			}
+			clears++
+			continue
+		}
+		if want[a.Target] != a.Result {
+			t.Errorf("unexpected warn row: %+v", a)
+		}
+		delete(want, a.Target)
+	}
+	if clears != 1 || len(want) != 0 {
+		t.Errorf("expected 1 clear + 2 distinct warns, leftovers %v clears %d", want, clears)
 	}
 }

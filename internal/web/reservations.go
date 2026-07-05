@@ -15,6 +15,7 @@ import (
 
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
+	"ggo-kea-dhcp/internal/netmon"
 	"ggo-kea-dhcp/internal/web/views"
 )
 
@@ -479,7 +480,7 @@ func (s *Server) unifiedLeaseRows(ctx context.Context, leases []kea.ActiveLease)
 // pins it already fetched via unifiedLeaseRowsWithPins.
 func (s *Server) unifiedLeaseRowsWith(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool) []views.LeaseRow {
 	// /leases path: no shared scanner snapshot here, so self-fetch the name map.
-	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC())
+	return s.unifiedLeaseRowsWithPins(ctx, leases, reachable, available, s.pinnedPortKeys(ctx), s.ggoNamesByMAC(), s.awaitingPoolHosts())
 }
 
 // pinnedPortKeys returns the set of pinned switch-port identities (flex-id, type-4
@@ -537,7 +538,10 @@ func dedupeStaleLeases(leases []kea.ActiveLease) []kea.ActiveLease {
 // A lease whose flex-id matches a pinned port is fixed by its port; the row must not
 // offer a MAC reservation (Kea's flex-id reservation wins, so a hw-address one is
 // shadowed) - but a leftover hw-address reservation stays removable (see LeasesBody).
-func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string) []views.LeaseRow {
+// awaiting is netmon's passively-observed in-pool-but-unleased host set; hosts not
+// already covered by a lease or reservation row are appended as "awaiting renewal"
+// rows so a client whose lease was purged (clock step, wipe) stays visible.
+func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.ActiveLease, reachable map[string]bool, available bool, pinnedKeys map[string]bool, ggoNames map[string]string, awaiting []netmon.PoolHost) []views.LeaseRow {
 	rows := buildLeaseRows(dedupeStaleLeases(activeLeases(leases)))
 
 	res := map[string]db.HostReservation{}
@@ -592,6 +596,7 @@ func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.Acti
 			SubnetID:  rsv.SubnetID,
 		})
 	}
+	rows = appendAwaitingRows(rows, awaiting)
 	// Fill any still-nameless row with the device's scanned Green-GO name (display
 	// only; never overrides a hostname the lease/reservation already carries).
 	s.overlayGgoNamesWith(rows, ggoNames)
@@ -602,6 +607,44 @@ func (s *Server) unifiedLeaseRowsWithPins(ctx context.Context, leases []kea.Acti
 	// does not answer (offline) - no per-MAC sibling correction needed.
 	s.markLeasePresenceWith(reachable, available, rows)
 	s.markLeaseLastSeen(rows)
+	return rows
+}
+
+// appendAwaitingRows appends a row for each passively-observed host using a pool
+// address without a lease (netmon's unleased-pool-host set), so a client whose lease
+// vanished underneath it (clock-step purge, wipe) stays visible until it renews at T1.
+// Any host already represented - by IP (its lease reappeared; the detector's 30s lease
+// snapshot lags GetLeases) or by MAC (a reservation row) - is skipped, so scope stays
+// "no lease, no reservation, no pin" with no duplicates. Shared by the /leases table
+// and the dashboard's Active Leases card.
+func appendAwaitingRows(rows []views.LeaseRow, awaiting []netmon.PoolHost) []views.LeaseRow {
+	if len(awaiting) == 0 {
+		return rows
+	}
+	ipSeen := make(map[string]bool, len(rows))
+	macSeen := make(map[string]bool, len(rows))
+	for i := range rows {
+		ipSeen[rows[i].IPAddress] = true
+		macSeen[normalizeMAC(rows[i].HWAddress)] = true
+	}
+	for _, h := range awaiting {
+		if ipSeen[h.IP] || macSeen[normalizeMAC(h.MAC)] {
+			continue
+		}
+		state := "awaiting"
+		if h.Flagged {
+			state = "static"
+		}
+		rows = append(rows, views.LeaseRow{
+			IPAddress: h.IP,
+			HWAddress: h.MAC,
+			Class:     kea.ClassifyMAC(h.MAC),
+			// Online by passive observation - the ARP prober only probes lease IPs,
+			// so markLeasePresenceWith must not (and does not) override this.
+			Presence:     "online",
+			NoLeaseState: state,
+		})
+	}
 	return rows
 }
 

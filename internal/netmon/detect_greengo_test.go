@@ -163,21 +163,49 @@ func TestGreengoDetector(t *testing.T) {
 }
 
 func TestGreengoNoLease(t *testing.T) {
-	// A Green-GO device on a routable IP with no lease (static / wrong subnet) is a
-	// card-severity warn, no audit event.
-	d := newGreengoDetector("eth0", func() []LeasedAddr { return nil }, 0, 0)
+	// A Green-GO device on a routable IP with no lease (static / wrong subnet /
+	// purged) is a card warn AND leaves an audit trace on the 0→n edge - the status
+	// pill links to the audit log, so a pill-counted warning must appear there. The
+	// edge fires once, not per tick, and clears when the device gains a lease.
+	leased := false
+	d := newGreengoDetector("eth0", func() []LeasedAddr {
+		if leased {
+			return []LeasedAddr{{IP: "10.0.0.70"}}
+		}
+		return nil
+	}, 0, 0)
 	mcx := [6]byte{0x00, 0x1f, 0x80, 0x22, 0x02, 0xf0}
 	start := time.Unix(1000, 0)
 	d.Consume(Frame{Data: arpFrameFor(mcx, [4]byte{10, 0, 0, 70})}, start)
-	d.Tick(start) // warm-up
+	if ev := d.Tick(start); len(ev) != 0 { // warm-up: no flag, no audit yet
+		t.Fatalf("no-lease audited during warm-up: %v", ev)
+	}
 
 	now := start.Add(staticWarmup + time.Second)
 	d.Consume(Frame{Data: arpFrameFor(mcx, [4]byte{10, 0, 0, 70})}, now)
-	if ev := d.Tick(now); len(ev) != 0 {
-		t.Fatalf("no-lease must not audit, got %v", ev)
+	ev := d.Tick(now)
+	if len(ev) != 1 || ev[0].Severity != SevWarn || ev[0].Action != "Evenution devices without DHCP lease" || ev[0].Target != "10.0.0.70" {
+		t.Fatalf("expected one no-lease warn event for 10.0.0.70, got %v", ev)
 	}
 	s := d.Snapshot()
 	if s.Severity != SevWarn || s.Fields["no_lease"] != "1" {
 		t.Fatalf("snapshot = %+v, want SevWarn no_lease=1", s)
+	}
+	// Steady state: no repeat event while the condition persists.
+	now = now.Add(2 * time.Second)
+	d.Consume(Frame{Data: arpFrameFor(mcx, [4]byte{10, 0, 0, 70})}, now)
+	if ev := d.Tick(now); len(ev) != 0 {
+		t.Fatalf("no-lease re-audited without an edge: %v", ev)
+	}
+	// The device gains a lease (renewed): one clear event, and the warn drops.
+	leased = true
+	now = now.Add(defaultLeaseRefresh + time.Second)
+	d.Consume(Frame{Data: arpFrameFor(mcx, [4]byte{10, 0, 0, 70})}, now)
+	ev = d.Tick(now)
+	if len(ev) != 1 || ev[0].Severity != SevInfo || ev[0].Action != "Evenution no-lease warning cleared" {
+		t.Fatalf("expected one clear event, got %v", ev)
+	}
+	if s := d.Snapshot(); s.Fields["no_lease"] != "" {
+		t.Fatalf("no_lease should clear after the lease appears, got %+v", s)
 	}
 }

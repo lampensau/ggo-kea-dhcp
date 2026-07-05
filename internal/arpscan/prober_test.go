@@ -270,3 +270,99 @@ var errOpen = &openErr{}
 type openErr struct{}
 
 func (*openErr) Error() string { return "open failed" }
+
+// recordTransport records every probed target IP (frame offset 38:42) without errors.
+type recordTransport struct {
+	mu      sync.Mutex
+	targets [][4]byte
+	closed  chan struct{}
+}
+
+func newRecordTransport() *recordTransport { return &recordTransport{closed: make(chan struct{})} }
+
+func (r *recordTransport) Send(frame []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var ip [4]byte
+	copy(ip[:], frame[38:42])
+	r.targets = append(r.targets, ip)
+	return nil
+}
+
+func (r *recordTransport) Receive() ([]byte, bool) { <-r.closed; return nil, false }
+func (r *recordTransport) Close() error            { close(r.closed); return nil }
+func (r *recordTransport) sent() [][4]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][4]byte(nil), r.targets...)
+}
+
+// TestProbeSweepCoversPoolWithoutLeases proves the pool sweep: with an EMPTY lease set
+// (the post-purge / post-restart state) the prober still probes the configured pool
+// range, chunk by rotating chunk - the discovery seed for online-but-unleased hosts.
+// A leased IP inside the swept chunk is not probed twice in one cycle.
+func TestProbeSweepCoversPoolWithoutLeases(t *testing.T) {
+	rt := newRecordTransport()
+	r := &ifaceRunner{
+		spec: Spec{
+			Iface:    "eth0",
+			SrcIP:    [4]byte{10, 0, 0, 1},
+			SrcMAC:   [6]byte{0x02, 0, 0, 0, 0, 0x01},
+			LeaseIPs: func() []string { return nil },
+			Sweep:    []SweepRange{{Lo: 0x0a000014, Hi: 0x0a000063}}, // 10.0.0.20-10.0.0.99 (80 addrs)
+		},
+		transport: rt,
+	}
+	r.probeOnce() // first chunk: .20-.51
+	got := rt.sent()
+	if len(got) != sweepChunk {
+		t.Fatalf("expected %d sweep probes, got %d", sweepChunk, len(got))
+	}
+	if got[0] != ([4]byte{10, 0, 0, 20}) || got[sweepChunk-1] != ([4]byte{10, 0, 0, 51}) {
+		t.Fatalf("first chunk should span .20-.51, got %v..%v", got[0], got[len(got)-1])
+	}
+	r.probeOnce() // second chunk continues where the cursor left off
+	got = rt.sent()
+	if got[sweepChunk] != ([4]byte{10, 0, 0, 52}) {
+		t.Fatalf("second chunk should start at .52, got %v", got[sweepChunk])
+	}
+	// Third cycle wraps: 80 addresses, cursor at 64 -> .84..
+	r.probeOnce()
+	got = rt.sent()
+	if got[2*sweepChunk] != ([4]byte{10, 0, 0, 84}) {
+		t.Fatalf("third chunk should start at .84, got %v", got[2*sweepChunk])
+	}
+	// Wrap-around: after 80/32 cycles the cursor returns to .20 (16 into cycle 3).
+	if got[2*sweepChunk+16] != ([4]byte{10, 0, 0, 20}) {
+		t.Fatalf("sweep should wrap to .20, got %v", got[2*sweepChunk+16])
+	}
+}
+
+// TestProbeSweepSkipsLeasedThisCycle proves a leased IP inside the swept chunk is only
+// probed once per cycle, and sweepIPAt spans multiple ranges correctly.
+func TestProbeSweepSkipsLeasedThisCycle(t *testing.T) {
+	rt := newRecordTransport()
+	r := &ifaceRunner{
+		spec: Spec{
+			Iface:    "eth0",
+			SrcIP:    [4]byte{10, 0, 0, 1},
+			SrcMAC:   [6]byte{0x02, 0, 0, 0, 0, 0x01},
+			LeaseIPs: func() []string { return []string{"10.0.0.21"} },
+			// Two tiny ranges: .20-.22 and .40-.41 (5 addresses total < sweepChunk).
+			Sweep: []SweepRange{{Lo: 0x0a000014, Hi: 0x0a000016}, {Lo: 0x0a000028, Hi: 0x0a000029}},
+		},
+		transport: rt,
+	}
+	r.probeOnce()
+	got := rt.sent()
+	// Lease probe (.21) + sweep of .20,.22,.40,.41 (.21 skipped as already probed).
+	want := [][4]byte{{10, 0, 0, 21}, {10, 0, 0, 20}, {10, 0, 0, 22}, {10, 0, 0, 40}, {10, 0, 0, 41}}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d probes, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("probe %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}

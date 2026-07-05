@@ -138,6 +138,12 @@ func auditActionLabel(action string) string {
 // truncates with ellipsis). It favors the stored After context (the rich part of a
 // netmon/system event), falling back to the target.
 func auditSummary(r AuditRow) string {
+	// The firmware entry's After is the full device roster - expanded-view context.
+	// The collapsed cell shows only the compact census (Target), so the two never
+	// mirror each other and the column can't overflow.
+	if r.Action == "Mixed Green-GO firmware" {
+		return orDash(r.Target)
+	}
 	a := afterDetail(r.After)
 	if a == "" {
 		return orDash(r.Target)
@@ -153,7 +159,7 @@ func auditSummary(r AuditRow) string {
 // noise on their own, so they collapse to "".
 func afterDetail(after string) string {
 	switch strings.ToLower(strings.TrimSpace(after)) {
-	case "", "none", "absent", "ok", "gone", "static", "link-local":
+	case "", "none", "absent", "ok", "gone", "static", "link-local", "mixed", "uniform":
 		return ""
 	}
 	if _, err := strconv.Atoi(strings.TrimSpace(after)); err == nil {
@@ -176,6 +182,18 @@ func auditExplain(r AuditRow) string {
 		return "IGMP querier active on this segment (multicast routing present)."
 	case "Startup":
 		return "Control-plane service started."
+	case "Mixed Green-GO firmware":
+		s := "Green-GO devices are running different firmware releases (" + r.Target + ")."
+		if r.After != "" {
+			s += " Devices: " + r.After + "."
+		}
+		return s
+	case "Green-GO firmware mismatch cleared":
+		return "All Green-GO devices are back on a single firmware release."
+	case "Evenution devices without DHCP lease":
+		return "Green-GO devices are active on the network without a DHCP lease (address purged, wiped, or statically set): " + orDash(r.Target) + ". They renew automatically at their next DHCP request; reserve the address if it is intentionally static."
+	case "Evenution no-lease warning cleared":
+		return "Every active Green-GO device holds a DHCP lease again."
 	}
 	switch r.Action {
 	case "APPLY_PROFILE":

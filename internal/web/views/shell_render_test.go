@@ -468,6 +468,52 @@ func TestLeasesBodyVariants(t *testing.T) {
 	}
 }
 
+// TestLeasesBodyNoLeaseStates renders the awaiting-renewal and static-in-pool rows
+// (passively-observed hosts with no Kea lease): the Expires column carries the state
+// badge instead of a countdown, and the Release action is absent (there is no lease
+// to release) while Reserve stays offered.
+func TestLeasesBodyNoLeaseStates(t *testing.T) {
+	rows := []LeaseRow{
+		{IPAddress: "10.0.0.42", HWAddress: "00:1f:80:aa:bb:01", Class: "GGO-BPX", Presence: "online", NoLeaseState: "awaiting"},
+		{IPAddress: "10.0.0.77", HWAddress: "00:1f:80:aa:bb:02", Class: "GGO-BPX", Presence: "online", NoLeaseState: "static"},
+	}
+	html := render(t, LeasesBody(rows, "tok", true))
+	for _, want := range []string{
+		"awaiting renewal", "badge-info",
+		"static in pool", "badge-warn",
+		"Reserve 10.0.0.42", // reserve action still offered
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("LeasesBody render missing %q", want)
+		}
+	}
+	if strings.Contains(html, "Release") {
+		t.Error("a no-lease row must not offer a Release action")
+	}
+	// A no-lease row's Expires cell must NOT carry data-expires: the countdown script
+	// rewrites every [data-expires] cell's text and would stomp the badge with "—".
+	if strings.Contains(html, `data-expires`) {
+		t.Error("no-lease rows must not emit data-expires (countdown script stomps the badge)")
+	}
+	// The dot is the amber warn variant, not the healthy green ok - a no-lease row
+	// must not read as a plain online lease.
+	if !strings.Contains(html, "lease-dot warn") || strings.Contains(html, "lease-dot ok") {
+		t.Error("no-lease rows should render the warn dot, not ok")
+	}
+	// The dashboard's Active Leases card must NOT use the badge pill (its padding
+	// overflows the half-width card into a scrollbar) - a plain muted dash whose
+	// tooltip explains the state, plus the warn dot; no data-expires.
+	card := render(t, RecentLeases(rows, false))
+	if !strings.Contains(card, "lease-dot warn") || !strings.Contains(card, ">—</span>") {
+		t.Error("card no-lease rows should render a warn dot and a muted dash")
+	}
+	for _, reject := range []string{"badge-info", "badge-warn", "data-expires"} {
+		if strings.Contains(card, reject) {
+			t.Errorf("card no-lease rows must not contain %q", reject)
+		}
+	}
+}
+
 // TestPoolPlanReadOnlyRenders verifies a read-only (EditAction == "") plan
 // renders its rows and reserve foot summary while emitting no live @post handlers -
 // the inert path used by static previews and the non-editing /pools view.

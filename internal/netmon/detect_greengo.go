@@ -84,6 +84,10 @@ type greengoDetector struct {
 	leasedSet   map[uint32]bool
 	haveLeases  bool
 	warming     bool // last Tick's warm-up state, read by Snapshot
+	// noLeaseAudited is the count last announced via a no-lease audit event (0 =
+	// clear announced/never flagged); events fire only on the 0↔nonzero edges so the
+	// audit log gets one trace per episode, not one per count change.
+	noLeaseAudited int
 
 	devices map[string]*ggoDevice // keyed by MAC string
 }
@@ -241,6 +245,45 @@ func (d *greengoDetector) Tick(now time.Time) []Event {
 			dev.flagged = false
 			events = append(events, d.clearEvent(dev))
 		}
+	}
+	// The no-lease warn (an Evenution device active without a DHCP lease - purged,
+	// wiped, or statically addressed) was card-only, which broke the status-pill →
+	// audit-log trail: the pill counted a warning the log never mentioned. Audit its
+	// 0↔nonzero edges (same condition Snapshot uses for the warn row).
+	noLease, ips := 0, []string(nil)
+	if !d.warming && d.haveLeases {
+		for _, m := range macs {
+			if dev, ok := d.devices[m]; ok && dev.present && !dev.linkLocal && !d.leasedSet[dev.ip] {
+				noLease++
+				if len(ips) < 3 {
+					ips = append(ips, dev.ipStr)
+				}
+			}
+		}
+	}
+	switch {
+	case noLease > 0 && d.noLeaseAudited == 0:
+		target := strings.Join(ips, ", ")
+		if noLease > len(ips) {
+			target += " +" + itoa(noLease-len(ips)) + " more"
+		}
+		events = append(events, Event{
+			Action:   "Evenution devices without DHCP lease",
+			Target:   target,
+			Before:   "leased",
+			After:    itoa(noLease) + " unleased",
+			Severity: SevWarn,
+		})
+		d.noLeaseAudited = noLease
+	case noLease == 0 && d.noLeaseAudited > 0:
+		events = append(events, Event{
+			Action:   "Evenution no-lease warning cleared",
+			Target:   itoa(d.noLeaseAudited) + " " + plural(d.noLeaseAudited, "device", "devices"),
+			Before:   "unleased",
+			After:    "leased",
+			Severity: SevInfo,
+		})
+		d.noLeaseAudited = 0
 	}
 	return events
 }

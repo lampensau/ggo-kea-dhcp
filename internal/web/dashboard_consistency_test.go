@@ -60,7 +60,7 @@ func TestDashboardCardMatchesLeasesPage(t *testing.T) {
 	}
 
 	card := leaseRowIPs(s.buildDashboardViewWith(t.Context(), views.PageData{}, leases, netSnapshotData{}, false).RecentLeases)
-	page := leaseRowIPs(s.unifiedLeaseRowsWithPins(t.Context(), leases, nil, false, nil, nil))
+	page := leaseRowIPs(s.unifiedLeaseRowsWithPins(t.Context(), leases, nil, false, nil, nil, nil))
 
 	if !reflect.DeepEqual(card, page) {
 		t.Fatalf("dashboard card IPs %v != /leases IPs %v (a display path is missing dedupeStaleLeases)", card, page)

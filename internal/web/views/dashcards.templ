@@ -56,13 +56,24 @@ templ RecentLeases(rows []LeaseRow, canReserve bool) {
 							<tr>
 								<td class="mono">
 									if l.Presence != "" {
-										<span class={ "status-dot", "lease-dot", presenceDot(l.Presence) } title={ presenceTitle(l.Presence) } role="img" aria-label={ presenceTitle(l.Presence) }></span>
+										<span class={ "status-dot", "lease-dot", leaseDot(l) } title={ leaseDotTitle(l) } role="img" aria-label={ leaseDotTitle(l) }></span>
 									}
 									{ l.IPAddress }
 								</td>
 								<td class="mono">{ l.HWAddress }</td>
 								<td><span class="badge" title={ l.Class }>{ ClassDisplay(l.Class).Label }</span></td>
-								<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>{ l.ExpiresIn }</td>
+							if l.NoLeaseState != "" {
+									// No data-expires: the countdown script rewrites every
+									// [data-expires] cell's text and would stomp this. A plain
+									// muted dash, NOT the /leases badge pill - the pill's
+									// padding overflows the half-width card into a scrollbar;
+									// the amber dot + tooltip carry the state here.
+									<td class="mono">
+										<span class="text-muted" title={ noLeaseTitle(l.NoLeaseState) }>—</span>
+									</td>
+								} else {
+									<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>{ l.ExpiresIn }</td>
+								}
 							</tr>
 						}
 					</tbody>

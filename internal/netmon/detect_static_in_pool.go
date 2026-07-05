@@ -14,11 +14,12 @@ const (
 	// (never per-packet).
 	defaultLeaseRefresh = 30 * time.Second
 	// staticWarmup suppresses ALL static-in-pool flags for this long after the
-	// detector starts. netmon starts at ACTIVE entry - exactly when a client leased by
-	// the ONBOARDING Kea (a separate, now-gone lease DB the active snapshot never saw)
-	// is still using its old address and has not yet re-DHCP'd into the active profile,
-	// so it would otherwise be flagged as static. Comfortably covers the 90s onboarding
-	// lease re-DHCP plus the 30s lease-snapshot refresh lag; also covers restarts.
+	// detector starts. netmon starts at ACTIVE entry - exactly when a client still
+	// using its short-lived onboarding lease (90s valid, expired or expiring by the
+	// time the first lease snapshot lands) has not yet re-DHCP'd into the active
+	// profile, so it would otherwise be flagged as static. Comfortably covers the 90s
+	// onboarding lease re-DHCP plus the 30s lease-snapshot refresh lag; also covers
+	// restarts.
 	staticWarmup = 3 * time.Minute
 	// staticLeaseGraceFloor / staticLeaseGraceCap bound the per-detector lease-history
 	// grace (derived as ~T1 of the active lease, so it auto-scales with the operator's
@@ -268,8 +269,8 @@ func (d *staticInPoolDetector) squatterPool(h *arpHost, now time.Time) (string, 
 	}
 	// Lease-history grace: an IP leased within ~T1 is a client that just lost or
 	// released its lease and has not re-DHCP'd yet - not a static squatter. (The
-	// onboarding-reconnect case is handled separately by the warm-up, since that lease
-	// lived in a different DB the active snapshot never saw.)
+	// onboarding-reconnect case is handled separately by the warm-up, since that
+	// 90s lease expires before the active profile's first snapshot records it.)
 	if t, ok := d.lastLeasedAt[ip]; ok && now.Sub(t) < d.leaseGrace {
 		return "", false
 	}
@@ -279,6 +280,48 @@ func (d *staticInPoolDetector) squatterPool(h *arpHost, now time.Time) (string, 
 		}
 	}
 	return "", false
+}
+
+// PoolHost is one passively-observed host holding an address inside a configured
+// dynamic pool without a Kea lease. Flagged carries the static-in-pool verdict: false
+// while the warm-up / lease-history grace still treats the host as a client awaiting
+// its T1 renewal, true once the detector has concluded it is a genuine static.
+type PoolHost struct {
+	IP      string
+	MAC     string
+	Flagged bool
+}
+
+// unleasedPoolHosts enumerates every present in-pool host with no lease, DELIBERATELY
+// ignoring the warm-up and lease-history grace that gate the warn flag: that suppressed
+// window is exactly when a client whose lease was purged (clock step, wipe) is online
+// but invisible in the lease table, and this list is what lets the UI show it as
+// "awaiting renewal" instead. The other squatterPool guards (lease-snapshot presence
+// and freshness, infra exclusion) still apply - without them we cannot prove
+// "unleased". IP-sorted so snapshots hash stably. Same goroutine as Consume/Tick.
+func (d *staticInPoolDetector) unleasedPoolHosts() []PoolHost {
+	if !d.haveLeases {
+		return nil
+	}
+	ips := make([]uint32, 0, len(d.hosts))
+	for ip := range d.hosts {
+		ips = append(ips, ip)
+	}
+	sort.Slice(ips, func(i, j int) bool { return ips[i] < ips[j] })
+	var out []PoolHost
+	for _, ip := range ips {
+		h := d.hosts[ip]
+		if !h.present || d.infra[ip] || d.leasedSet[ip] || d.lastRefresh.Before(h.firstSeen) {
+			continue
+		}
+		for _, r := range d.pools {
+			if r.contains(ip) {
+				out = append(out, PoolHost{IP: h.ipStr, MAC: h.mac, Flagged: h.flagged})
+				break
+			}
+		}
+	}
+	return out
 }
 
 // pruneLeaseHistory drops lease-history stamps older than the grace window so the

@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"ggo-kea-dhcp/internal/kea"
+	"ggo-kea-dhcp/internal/netmon"
+	"ggo-kea-dhcp/internal/web/views"
 )
 
 // TestDedupeStaleLeases_AllBranches exercises every branch of
@@ -134,7 +136,7 @@ func TestUnifiedLeaseRowsWithPins_NoMariaDB(t *testing.T) {
 		{IPAddress: "10.0.0.99", HWAddress: "00:1f:80:20:cc:cc", SubnetID: 1, Cltt: now - 7200, ValidLft: 60},
 	}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, false, nil, nil, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 active rows (expired dropped), got %d: %+v", len(rows), rows)
 	}
@@ -163,7 +165,7 @@ func TestUnifiedLeaseRowsWithPins_Presence(t *testing.T) {
 	}
 	reachable := map[string]bool{"10.0.0.20": true}
 
-	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil)
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, reachable, true, nil, nil, nil)
 	byIP := map[string]string{}
 	for _, r := range rows {
 		byIP[r.IPAddress] = r.Presence
@@ -173,5 +175,49 @@ func TestUnifiedLeaseRowsWithPins_Presence(t *testing.T) {
 	}
 	if byIP["10.0.0.50"] != "offline" {
 		t.Errorf("unreachable IP should be offline, got %q", byIP["10.0.0.50"])
+	}
+}
+
+// TestUnifiedLeaseRowsWithPins_AwaitingRenewal verifies the passively-observed
+// unleased-pool-host merge: a host with no lease/reservation row is appended as an
+// online "awaiting" (or "static" when Flagged) row with no expiry and no duplicate,
+// while hosts already covered by a lease row (same IP or same MAC) are skipped.
+func TestUnifiedLeaseRowsWithPins_AwaitingRenewal(t *testing.T) {
+	s, _ := newTestServer(t)
+	now := time.Now().Unix()
+	leases := []kea.ActiveLease{
+		{IPAddress: "10.0.0.20", HWAddress: "00:1f:80:20:bb:bb", SubnetID: 1, Cltt: now, ValidLft: 3600},
+	}
+	awaiting := []netmon.PoolHost{
+		{IP: "10.0.0.20", MAC: "aa:aa:aa:aa:aa:01"},                // IP already leased - skipped
+		{IP: "10.0.0.60", MAC: "00:1F:80:20:BB:BB"},                // MAC already leased (case-insensitive) - skipped
+		{IP: "10.0.0.42", MAC: "00:1f:80:20:cc:cc"},                // genuinely new - awaiting row
+		{IP: "10.0.0.77", MAC: "00:1f:80:20:dd:dd", Flagged: true}, // concluded static - static row
+	}
+
+	rows := s.unifiedLeaseRowsWithPins(t.Context(), leases, map[string]bool{}, true, nil, nil, awaiting)
+	if len(rows) != 3 {
+		t.Fatalf("expected lease + 2 awaiting rows, got %d: %+v", len(rows), rows)
+	}
+	byIP := map[string]views.LeaseRow{}
+	for _, r := range rows {
+		byIP[r.IPAddress] = r
+	}
+	aw, ok := byIP["10.0.0.42"]
+	if !ok || aw.NoLeaseState != "awaiting" {
+		t.Fatalf("expected .42 awaiting row, got %+v", aw)
+	}
+	if aw.Presence != "online" {
+		t.Errorf(".42 must be online by passive observation even though the ARP prober never probed it, got %q", aw.Presence)
+	}
+	if aw.ExpiresIn != "" || aw.Class == "" {
+		t.Errorf(".42 row shape wrong (no expiry, classified): %+v", aw)
+	}
+	if st := byIP["10.0.0.77"]; st.NoLeaseState != "static" {
+		t.Errorf("expected .77 static row, got %+v", st)
+	}
+	// The real lease row is untouched and sorted first.
+	if rows[0].IPAddress != "10.0.0.20" || rows[0].NoLeaseState != "" {
+		t.Errorf("lease row disturbed: %+v", rows[0])
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
+	"ggo-kea-dhcp/internal/netmon"
 	"ggo-kea-dhcp/internal/web/views"
 
 	"github.com/a-h/templ"
@@ -248,8 +249,11 @@ func (s *Server) tickDashboard() {
 	// lease rows. Without this the leases-body / recent-leases presence dots only refresh
 	// when a lease is added or removed (or the page is fully reloaded). Per-region hashing
 	// still suppresses any fragment whose rendered HTML did not actually change.
+	// Fold the awaiting (unleased-pool-host) set in too: a purged host being
+	// (re)discovered by netmon adds a lease-table row without touching the Kea lease
+	// set, so without this the row only appeared on a full reload.
 	reachable, _ := s.presenceByIP()
-	leasesChanged := s.live.markChanged("ticker-leases", leasesSignature(leases)^presenceSignature(leases, reachable)^expirySignature(leases))
+	leasesChanged := s.live.markChanged("ticker-leases", leasesSignature(leases)^presenceSignature(leases, reachable)^expirySignature(leases)^awaitingSignature(s.awaitingPoolHosts()))
 	metricsChanged := s.live.markChanged("ticker-metrics", s.metrics.signature())
 	switch {
 	case leasesChanged:
@@ -345,7 +349,7 @@ func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLeas
 	frags = append(frags,
 		liveFragment{"pool-table", renderFragment(views.PoolTableBody(v))},
 		liveFragment{"pool-rollup", renderFragment(views.PoolTableRollup(v))},
-		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames), "", s.mariadb != nil))},
+		liveFragment{"leases-body", renderFragment(views.LeasesBody(s.unifiedLeaseRowsWithPins(ctx, leases, ns.Live, ns.Available, pinnedKeys, ns.GgoNames, ns.Awaiting), "", s.mariadb != nil))},
 		liveFragment{"recent-leases", renderFragment(views.RecentLeases(v.RecentLeases, v.CanReserve))},
 	)
 
@@ -383,6 +387,10 @@ func (s *Server) periodicFragments(v views.DashboardView) []liveFragment {
 		{"link-status", renderFragment(views.LinkBadge(linkState, shield.Interface, linkDetail))},
 		{"net-health", renderFragment(views.NetHealthBody(v.NetHealth))},
 		{"net-health-rollup", renderFragment(views.NetHealthRollup(v.NetHealth))},
+		// The diagnostics audit list, so a new SYSTEM event lands on an open
+		// /diagnostics without a reload. Change-only hashing drops the push when
+		// nothing new was logged; on other pages the morph is a no-op.
+		{"diag-audit", renderFragment(views.DiagAuditLog(s.recentAuditRows(50)))},
 	}
 	// The backend-health strip is a shell region (every page) - included here so a
 	// connect snapshot and the live tick keep it synced; transitions also push it
@@ -460,6 +468,19 @@ func expirySignature(leases []kea.ActiveLease) uint64 {
 	for _, l := range leases {
 		exp := leaseExpiryAt(l.Cltt, l.ValidLft)
 		x ^= fnv64("exp|" + l.IPAddress + "|" + strconv.FormatInt(exp/30, 10))
+	}
+	return x
+}
+
+// awaitingSignature fingerprints netmon's unleased-pool-host set (identity + the
+// awaiting/static verdict), so tickDashboard re-broadcasts the lease rows when a
+// purged host is (re)discovered, flips to static, or renews away - none of which
+// changes the Kea lease set the other signatures watch. Order-independent XOR; the
+// "await|" prefix keeps it disjoint from the other signature domains.
+func awaitingSignature(hosts []netmon.PoolHost) uint64 {
+	var x uint64
+	for _, h := range hosts {
+		x ^= fnv64("await|" + h.IP + "|" + h.MAC + "|" + strconv.FormatBool(h.Flagged))
 	}
 	return x
 }

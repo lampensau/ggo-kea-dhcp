@@ -109,8 +109,12 @@ func (s *Server) buildDashboardViewWith(ctx context.Context, pd views.PageData, 
 	// with the /leases page and the live leases-body, which dedupe the same way.
 	active := dedupeStaleLeases(activeLeases(leases))
 
-	// Recent-leases card: top active leases, tagged with passive online/offline.
-	recent := topLeases(buildLeaseRows(active), 8)
+	// Recent-leases card: top active leases plus awaiting-renewal hosts (online but
+	// unleased after a purge - the card must not go empty while devices are up),
+	// tagged with passive online/offline.
+	recent := appendAwaitingRows(buildLeaseRows(active), ns.Awaiting)
+	sort.SliceStable(recent, func(i, j int) bool { return leaseIPKey(recent[i].IPAddress) < leaseIPKey(recent[j].IPAddress) })
+	recent = topLeases(recent, 8)
 	s.overlayGgoNamesWith(recent, ns.GgoNames)
 	s.markLeasePresenceWith(ns.Live, ns.Available, recent)
 
