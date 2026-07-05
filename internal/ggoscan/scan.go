@@ -35,15 +35,13 @@ const (
 	deviceTTL = 15 * time.Minute
 )
 
-// scanFrame is the ONLY frame this package ever sends: G-G magic "G-G\0" + type
-// 0x10 (device scan, read-only) + reserved. Never parameterized by opcode, so a
-// mutating command (reboot 0x90, memory-clear 0xa0, firmware 0x20/0x30/0x140/0x250,
-// save-default 0x310) cannot be emitted.
+// scanFrame is the read-only device-scan request. It is a fixed 8-byte constant,
+// never parameterized, so nothing device-mutating can be built from it.
 var scanFrame = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x10, 0x00, 0x00}
 
-// rebootFrame is the device-reboot request SendReboot sends. It shares scanFrame's
-// fixed 8-byte shape and differs only in its request byte; it is built here once and
-// is the sole emitter besides the read-only scan.
+// rebootFrame is the device-reboot request SendReboot sends on an explicit operator
+// action. It shares scanFrame's fixed 8-byte shape, differs only in its request byte,
+// and is the only other frame this package emits (see TestOnlyEmitsScanAndReboot).
 var rebootFrame = []byte{0x47, 0x2d, 0x47, 0x00, 0x00, 0x90, 0x00, 0x00}
 
 // Spec is one Green-GO scope to scan: the subnet-directed broadcast address for its
