@@ -390,7 +390,17 @@ func restoreHosts(hosts []BackupHost) []db.HostReservation {
 }
 
 // handleBackupExport serves the full appliance backup as a downloadable JSON file.
+// The bundle carries every admin password hash plus the WiFi and SoftAP passphrases,
+// so - like restore, reset, and the other credential-touching actions - it re-proves
+// the operator's password first: a walked-away session alone must not be able to
+// read out the box's credential material. Browsers honor Content-Disposition on a
+// POST response, so the download still works as a native form submit.
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
+	if ok, reason := s.reauthCurrentPassword(r); !ok {
+		_ = s.sqlite.LogAudit(s.getActor(r), "BACKUP_EXPORT", "appliance", "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusBadRequest)
+		return
+	}
 	b, err := s.buildBackup(r.Context())
 	if err != nil {
 		s.handleError(w, r, "Failed to build backup: "+err.Error(), http.StatusInternalServerError)
