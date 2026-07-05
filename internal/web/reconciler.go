@@ -305,6 +305,16 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 		return fmt.Errorf("active reconcile: no scopes for the active profile")
 	}
 
+	// Kea subnet-ids are positional, so a profile edit/switch renumbers them while
+	// host reservations/pins keep the id stamped at creation. Re-derive every host
+	// row's subnet-id from its IP over these scopes before the new config serves
+	// (Kea reads the host rows live). Best-effort: MariaDB may be down and DHCP
+	// must still come up. Deliberately ahead of the render/validate below: a render
+	// that fails here re-stamps rows for a config that won't load, but the next
+	// reconcile re-derives them, and a reconcile-time validation failure is
+	// environmental (every reconcile would fail, not just this one).
+	s.remapReservationSubnets(context.Background(), scopes, mode)
+
 	if mode == ModeApply {
 		_ = s.net.DeleteApplianceConnections()
 	}

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -189,6 +190,70 @@ func (m *MariaDB) ReservationByIP(ctx context.Context, subnetID int, ip uint32) 
 	}
 	res.IPv4Address = ipVal
 	return res, true, nil
+}
+
+// SubnetIDUpdate moves the host row keyed by Kea's unique
+// (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id) triple to a new
+// dhcp4_subnet_id. Produced by the reconcile-time remap that keeps
+// reservations/pins attached to their subnet when positional subnet-ids change
+// across a profile edit or switch.
+type SubnetIDUpdate struct {
+	Identifier     []byte
+	IdentifierType int
+	OldSubnetID    int
+	NewSubnetID    int
+}
+
+// updateSubnetParkBase is the first temporary dhcp4_subnet_id used to two-phase a
+// batch of subnet moves. Far above any id the renderer assigns (scope index + 1),
+// and only ever visible inside the transaction.
+const updateSubnetParkBase = 1 << 20
+
+// UpdateReservationSubnets applies subnet-id moves in one transaction, two-phased
+// through unique park ids: every moving row is first parked at a temporary id,
+// then set to its final one. InnoDB checks the hosts unique key per statement, so
+// two rows of the SAME device swapping subnets (a trunk-port pin reserved in two
+// VLANs whose scopes reordered) would reject a direct in-place update no matter
+// the order - the parking phase sidesteps that for any consistent target set. A
+// duplicate-key rejection here (see IsDuplicateKey) means a concurrent write
+// raced the caller's plan; the transaction rolls back and the caller retries on
+// the next reconcile.
+func (m *MariaDB) UpdateReservationSubnets(ctx context.Context, moves []SubnetIDUpdate) error {
+	if len(moves) == 0 {
+		return nil
+	}
+	tx, err := m.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE hosts SET dhcp4_subnet_id = ?
+		WHERE dhcp_identifier = ? AND dhcp_identifier_type = ? AND dhcp4_subnet_id = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for i, mv := range moves {
+		if _, err := stmt.ExecContext(ctx, updateSubnetParkBase+i, mv.Identifier, mv.IdentifierType, mv.OldSubnetID); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	for i, mv := range moves {
+		if _, err := stmt.ExecContext(ctx, mv.NewSubnetID, mv.Identifier, mv.IdentifierType, updateSubnetParkBase+i); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// IsDuplicateKey reports whether err is a MySQL duplicate-key rejection (error
+// 1062), i.e. the write collided with a unique key such as the hosts triple.
+func IsDuplicateKey(err error) bool {
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && me.Number == 1062
 }
 
 // DeleteReservation deletes a host reservation by identifier + type, returning the
