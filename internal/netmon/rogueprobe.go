@@ -120,7 +120,7 @@ func interfaceHWAddr(iface string) (mac [6]byte, macKnown bool) {
 func (p *RogueProbe) begin(iface string, sn Sniffer, selfMAC [6]byte, macKnown bool) {
 	quit := make(chan struct{})
 	p.mu.Lock()
-	p.det = newRogueDHCPDetector(iface, selfMAC, macKnown, 0)
+	p.det = newRogueDHCPDetector(iface, selfMAC, macKnown, 0, 0) // onboarding serves the untagged eth0 pool: servedVID 0
 	p.sniffer = sn
 	p.macKnown = macKnown
 	p.quit = quit

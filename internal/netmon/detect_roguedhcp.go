@@ -48,6 +48,7 @@ type rogueDHCPDetector struct {
 	iface      string
 	selfMAC    [6]byte
 	selfMACSet bool
+	servedVID  int // this monitor's served VLAN (0 = untagged eth0); a foreign VID is ignored
 	absence    time.Duration
 	servers    map[[4]byte]*rogueServer
 }
@@ -59,7 +60,7 @@ type rogueServer struct {
 	present bool
 }
 
-func newRogueDHCPDetector(iface string, selfMAC [6]byte, macKnown bool, absence time.Duration) *rogueDHCPDetector {
+func newRogueDHCPDetector(iface string, selfMAC [6]byte, macKnown bool, servedVID int, absence time.Duration) *rogueDHCPDetector {
 	if absence <= 0 {
 		absence = defaultRogueAbsence
 	}
@@ -67,6 +68,7 @@ func newRogueDHCPDetector(iface string, selfMAC [6]byte, macKnown bool, absence 
 		iface:      iface,
 		selfMAC:    selfMAC,
 		selfMACSet: macKnown,
+		servedVID:  servedVID,
 		absence:    absence,
 		servers:    make(map[[4]byte]*rogueServer),
 	}
@@ -79,8 +81,16 @@ func (d *rogueDHCPDetector) Consume(f Frame, now time.Time) {
 	if !d.selfMACSet {
 		return
 	}
-	et, off, _, ok := etherInfo(f.Data)
+	et, off, vid, ok := etherInfo(f.Data)
 	if !ok || et != etherTypeIPv4 {
+		return
+	}
+	// Only judge servers on the VLAN this monitor serves. An eth0 (untagged, vid 0)
+	// socket also sees in-band-tagged frames leaking off the trunk; without this the
+	// untagged monitor would flag a rogue that belongs to a tagged scope's own
+	// monitor - double-counting one rogue, or raising the loud banner for a server
+	// on a VLAN we do not even serve. Mirrors the Green-GO detectors' servedVID gate.
+	if effectiveVID(vid, f) != d.servedVID {
 		return
 	}
 	proto, _, _, l4, ok := ipv4Info(f.Data, off)

@@ -108,10 +108,15 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 	for _, ip := range spec.InterfaceIPs {
 		infra = append(infra, ip4ToU32(ip))
 	}
+	// The served VID for this monitor (0 = the untagged eth0 scope, N = eth0.N).
+	// Detectors that judge per-VLAN facts use it to separate what belongs to THIS
+	// served VLAN from what leaks in from an unserved/foreign VLAN on the trunk
+	// (in-band tag on the untagged socket).
+	vid := vidFromIface(spec.Iface)
 	dets := []Detector{
 		newIGMPDetector(spec.Iface, th.IGMPAbsence),
 		newLLDPDetector(spec.Iface, linkUp),
-		newRogueDHCPDetector(spec.Iface, spec.InterfaceMAC, spec.InterfaceMACSet, 0),
+		newRogueDHCPDetector(spec.Iface, spec.InterfaceMAC, spec.InterfaceMACSet, vid, 0),
 		newDuplicateIPDetector(spec.Iface, 0),
 		newPTPDetector(spec.Iface, 0),
 		newStormDetector(spec.Iface, th.StormPPS, rx),
@@ -121,10 +126,6 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 	// The Green-GO detectors (passive census + 'h' config decode) attach only on a
 	// Green-GO-preset interface - the only place Green-GO gear and the 5810 bus live.
 	if spec.Greengo {
-		// The served VID for this monitor (0 = the untagged eth0 scope, N = eth0.N).
-		// The Green-GO detectors use it to separate devices/configs on THIS served VLAN
-		// from ones leaking in from an unserved/foreign VLAN on the trunk (in-band tag).
-		vid := vidFromIface(spec.Iface)
 		dets = append(dets,
 			newGreengoDetector(spec.Iface, spec.Leases, 0, vid),
 			newGreengoHDetector(spec.Iface, 0, vid),

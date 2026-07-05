@@ -11,7 +11,7 @@ var selfMAC = [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0xaa}
 
 func TestRogueDHCP_FlagsForeignServerNotSelf(t *testing.T) {
 	self := [4]byte{10, 0, 0, 1}
-	d := newRogueDHCPDetector("eth0", selfMAC, true, 120*time.Second)
+	d := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
 
 	// Our own server's OFFER (source MAC == the box MAC) is suppressed.
 	d.Consume(dhcpFrameFrom(selfMAC, self, 2), at(1*time.Second))
@@ -55,7 +55,7 @@ func TestRogueDHCP_FlagsForeignServerNotSelf(t *testing.T) {
 // attacker-controlled server-id.
 func TestRogueDHCP_ForgedServerIDStillDetected(t *testing.T) {
 	boxIP := [4]byte{10, 0, 0, 1}
-	d := newRogueDHCPDetector("eth0", selfMAC, true, 120*time.Second)
+	d := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
 
 	rogueMAC := [6]byte{0xde, 0xad, 0xbe, 0xef, 0x00, 0x01}
 	d.Consume(dhcpFrameFrom(rogueMAC, boxIP, 2), at(1*time.Second)) // forged server-id == box IP
@@ -72,7 +72,7 @@ func TestRogueDHCP_ForgedServerIDStillDetected(t *testing.T) {
 // its own OFFERs from a rogue's, so it emits nothing (never phantom-flagging the
 // appliance) and reports Unverified rather than a confident all-clear.
 func TestRogueDHCP_UnknownSelfMACSuppressesEmission(t *testing.T) {
-	d := newRogueDHCPDetector("eth0", [6]byte{}, false, 120*time.Second)
+	d := newRogueDHCPDetector("eth0", [6]byte{}, false, 0, 120*time.Second)
 
 	// Even a would-be foreign OFFER produces no event while the self-MAC is unknown -
 	// we cannot verify it is not our own, so we stay silent instead of phantom-flagging.
@@ -94,7 +94,7 @@ func TestRogueDHCP_UnknownSelfMACSuppressesEmission(t *testing.T) {
 // interface's IP) but the SAME physical NIC source MAC, so MAC-based suppression
 // covers every VLAN and the box never self-flags.
 func TestRogueDHCP_SuppressesOwnVLANOffers(t *testing.T) {
-	d := newRogueDHCPDetector("eth0", selfMAC, true, 120*time.Second)
+	d := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
 
 	// Untagged scope OFFER (server-id 10.0.0.1) and a tagged VLAN scope OFFER
 	// (server-id 10.0.10.1) - both from the box, same source MAC.
@@ -108,12 +108,37 @@ func TestRogueDHCP_SuppressesOwnVLANOffers(t *testing.T) {
 	}
 }
 
+// TestRogueDHCP_ScopedToServedVLAN proves a rogue is judged only by the monitor
+// whose served VLAN it is on. A foreign OFFER tagged for VLAN 10 must be ignored by
+// the untagged eth0 monitor (which also sees trunk-leaked tagged frames) and flagged
+// by the eth0.10 monitor - so one rogue is counted once, on the right segment, and a
+// server on an unserved VLAN never raises the untagged scope's banner.
+func TestRogueDHCP_ScopedToServedVLAN(t *testing.T) {
+	rogueMAC := [6]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+	rogueID := [4]byte{10, 0, 10, 250}
+
+	untagged := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
+	untagged.Consume(taggedDHCPOfferFrom(rogueMAC, 10, rogueID), at(1*time.Second))
+	if ev := untagged.Tick(at(1 * time.Second)); ev != nil {
+		t.Fatalf("untagged monitor flagged a VLAN-10 rogue that belongs to eth0.10: %v", ev)
+	}
+	if s := untagged.Snapshot(); s.Severity != SevOK {
+		t.Fatalf("untagged snapshot should be clean: %+v", s)
+	}
+
+	tagged := newRogueDHCPDetector("eth0.10", selfMAC, true, 10, 120*time.Second)
+	tagged.Consume(taggedDHCPOfferFrom(rogueMAC, 10, rogueID), at(1*time.Second))
+	if ev := tagged.Tick(at(1 * time.Second)); len(ev) != 1 || ev[0].Severity != SevError {
+		t.Fatalf("eth0.10 monitor should flag its own VLAN's rogue exactly once: %v", ev)
+	}
+}
+
 // TestRogueDHCP_SustainedGate proves the sustained flag distinguishes a single (forgeable)
 // OFFER - which confirms presence for the Network Health row but must NOT be reported as
 // sustained - from a rogue seen repeatedly across the sustain window. The web layer gates
 // the loud one-click stand-down banner on this flag.
 func TestRogueDHCP_SustainedGate(t *testing.T) {
-	d := newRogueDHCPDetector("eth0", selfMAC, true, 120*time.Second)
+	d := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
 	rogue := [4]byte{10, 0, 0, 250}
 
 	// One OFFER: presence is confirmed (the detector row is immediate) but NOT sustained.
