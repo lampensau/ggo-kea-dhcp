@@ -18,6 +18,9 @@ Group=ggo-kea-dhcp
 # cmdline (readable via `ps`/proc by any local user). Optional ('-'): without it
 # the app starts and degrades gracefully without the reservation database.
 EnvironmentFile=-/etc/ggo-kea-dhcp/mariadb.env
+# Optional override of the self-update origin/repo (GGO_UPDATE_API /
+# GGO_UPDATE_REPO); absent on a normal box. Must match the update unit's copy.
+EnvironmentFile=-/etc/ggo-kea-dhcp/update.env
 # Bind loopback only - Caddy terminates TLS on the LAN and reverse-proxies here.
 # Production paths: state under /var/lib/ggo-kea-dhcp, Kea config in /etc/kea.
 # Lease lifetime is operator-controlled in Settings (persisted in the appliance DB);

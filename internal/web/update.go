@@ -21,9 +21,10 @@ import (
 // the internet probe - a failed check is silent by design (an isolated show
 // network is the normal state, not an error).
 const (
-	updateRepo          = "lampensau/ggo-kea-dhcp"
-	updateDebAsset      = "ggo-kea-dhcp_arm64.deb"
-	updateManifestAsset = "release.json"
+	updateRepo           = "lampensau/ggo-kea-dhcp"
+	defaultUpdateAPIBase = "https://api.github.com"
+	updateDebAsset       = "ggo-kea-dhcp_arm64.deb"
+	updateManifestAsset  = "release.json"
 
 	updateCheckInterval = 30 * time.Minute
 	// updateKickDelay defers the post-uplink-connect check a moment so NAT/routing
@@ -280,7 +281,7 @@ func (s *Server) checkForUpdate(manual bool) (newer bool, err error) {
 // fetchLatestRelease GETs /releases/latest from the (test-overridable) API
 // base. status carries the HTTP status for the caller's 403/429 backoff.
 func (s *Server) fetchLatestRelease() (*ghRelease, int, error) {
-	req, err := http.NewRequest("GET", s.updateAPIBase+"/repos/"+updateRepo+"/releases/latest", nil)
+	req, err := http.NewRequest("GET", s.updateAPIBase+"/repos/"+s.updateRepo+"/releases/latest", nil)
 	if err != nil {
 		return nil, 0, err
 	}

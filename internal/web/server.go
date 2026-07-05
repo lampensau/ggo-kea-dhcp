@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -154,6 +155,7 @@ type Server struct {
 	// directory (the StateDirectory's update/ subdir in production).
 	updateHTTP    *http.Client
 	updateAPIBase string
+	updateRepo    string
 	updateDir     string
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
@@ -262,7 +264,14 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
 	s.updateHTTP = newUpdateHTTPClient()
-	s.updateAPIBase = "https://api.github.com"
+	// The update origin and repo default to the canonical GitHub release feed but
+	// can be pointed elsewhere (a scratch repo, a local mock) via the environment,
+	// injected by the unit's optional update.env EnvironmentFile. Both must move
+	// together: the app stages from this repo, and the root updater independently
+	// re-verifies the digest against the SAME repo (see updater.sh) - overriding
+	// only one would fail the digest gate closed. Empty env = production defaults.
+	s.updateAPIBase = envOr("GGO_UPDATE_API", defaultUpdateAPIBase)
+	s.updateRepo = envOr("GGO_UPDATE_REPO", updateRepo)
 	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
 	s.rescueArmed.Store(true)
@@ -303,6 +312,16 @@ func auditResult(sev netmon.Severity) string {
 	default:
 		return "OK"
 	}
+}
+
+// envOr returns the environment variable value when set and non-empty, else def.
+// Used for the optional update-origin overrides injected via the unit's
+// update.env EnvironmentFile.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // runRecovered runs fn, logging and absorbing a panic. Background goroutines
