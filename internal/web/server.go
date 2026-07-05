@@ -629,13 +629,18 @@ func (s *Server) getFlash(w http.ResponseWriter, r *http.Request) *FlashMessage 
 	return &flash
 }
 
+// toast appends a toast of the given kind ("success"/"error") into the open
+// page's live toast region.
+func toast(sse *datastar.ServerSentEventGenerator, msg, kind string) {
+	_ = sse.PatchElementTempl(views.Toast(msg, kind),
+		datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+}
+
 func (s *Server) handleError(w http.ResponseWriter, r *http.Request, msg string, code int) {
 	log.Printf("Error: %s (status code: %d)", logSafe(msg), code)
 	if isDatastar(r) {
 		// Append an error toast into the live toast region; the page stays put.
-		sse := datastar.NewSSE(w, r)
-		_ = sse.PatchElementTempl(views.Toast(msg, "error"),
-			datastar.WithSelectorID("toast-container"), datastar.WithModeAppend())
+		toast(datastar.NewSSE(w, r), msg, "error")
 		return
 	}
 	// A mutating native form post: show the message as an error flash on the page the
