@@ -103,8 +103,27 @@ func TestGetFlashBareStringFallback(t *testing.T) {
 // (no arp prober, no scanner) can never confirm reachability, so eligibility fails.
 func TestRebootRefusesUnknownIP(t *testing.T) {
 	s, _ := newTestServer(t)
-	if name, mac, ok := s.rebootEligible(context.Background(), "10.0.0.20"); ok {
-		t.Errorf("rebootEligible allowed an unbacked IP (name %q mac %q)", name, mac)
+	if name, mac, fw, ok := s.rebootEligible(context.Background(), "10.0.0.20"); ok {
+		t.Errorf("rebootEligible allowed an unbacked IP (name %q mac %q fw %q)", name, mac, fw)
+	}
+}
+
+func TestFirmwareSupportsReboot(t *testing.T) {
+	cases := map[string]bool{
+		"BPX 5.2.2.25270": true,  // the 5.2.2 device that rebooted
+		"BPX 5.2.0.100":   true,  // exactly the threshold
+		"BPX 6.0.0.1":     true,  // newer major
+		"BPX 5.3.0.0":     true,  // newer minor
+		"BPX 5.1.0.14479": false, // the 5.1.0 device that ignored it
+		"MCXi 5.0.7.9165": false,
+		"BPX 5.2":         false, // fewer than 3 version fields
+		"garbage":         false,
+		"":                false,
+	}
+	for fw, want := range cases {
+		if got := firmwareSupportsReboot(fw); got != want {
+			t.Errorf("firmwareSupportsReboot(%q) = %v, want %v", fw, got, want)
+		}
 	}
 }
 
@@ -150,7 +169,7 @@ func postReboot(t *testing.T, s *Server, ip, mac string) *httptest.ResponseRecor
 func rebootServerWithDevice(t *testing.T, ip, mac, name string) (*Server, *fakeScanner) {
 	t.Helper()
 	s, _ := newTestServer(t)
-	sc := &fakeScanner{devices: []ggoscan.Device{{MAC: mac, Name: name, IP: ip}}}
+	sc := &fakeScanner{devices: []ggoscan.Device{{MAC: mac, Name: name, IP: ip, Firmware: "BPX 5.2.2.25270"}}}
 	s.ggoscan = sc
 	s.arp = &fakeProber{
 		reachable: map[string]bool{ip: true},

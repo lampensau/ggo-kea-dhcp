@@ -7,20 +7,19 @@ import (
 	"time"
 )
 
-// ggoBusPort is the Green-GO G5 multicast/broadcast bus UDP port. The 'h' leader
-// announce is sent to the subnet-directed broadcast on this port (the BPF accepts
-// only the 'h' subtype here; the 0x60/0x06 flood is dropped in kernel).
+// ggoBusPort is the Green-GO broadcast bus UDP port. The announce is sent to the
+// subnet-directed broadcast on this port; the BPF accepts only that subtype and the
+// rest of the flood is dropped in kernel.
 const ggoBusPort = 5810
 
 // greengoConfigAbsence drops a config from the active set after this long without an
-// 'h' announce (cadence ~5s, so ~6 missed announces).
+// announce (cadence ~5s, so ~6 missed announces).
 const greengoConfigAbsence = 30 * time.Second
 
 // ror32 rotates a 32-bit value right by n bits.
 func ror32(x uint32, n uint) uint32 { return (x >> n) | (x << (32 - n)) }
 
-// leu32 / putLEu32 read/write little-endian uint32 (the G5 cipher words and the
-// per-packet seed/checksum are little-endian, unlike the big-endian be32 accessors).
+// leu32 / putLEu32 read/write little-endian uint32 (unlike the big-endian be32 accessors).
 func leu32(b []byte, off int) uint32 {
 	return uint32(b[off]) | uint32(b[off+1])<<8 | uint32(b[off+2])<<16 | uint32(b[off+3])<<24
 }
@@ -32,12 +31,9 @@ func putLEu32(b []byte, off int, v uint32) {
 	b[off+3] = byte(v >> 24)
 }
 
-// g5DecryptPayload decrypts an encrypted G5 payload (h/i/k/l/n/o frames) given the
-// per-packet seed and checksum, both carried in the clear at frame+6/+10: 16-byte
-// blocks of four LE u32 words, XOR with ror(K,{6,19,1,7}), a running accumulator,
-// and K evolving as ror(K,15)+acc. Returns the decrypted bytes (a fresh slice,
-// never aliasing the frame buffer) and whether the checksum validated. A partial
-// trailing block is ignored.
+// g5DecryptPayload decrypts an encrypted G5 payload using the per-packet seed and
+// checksum. Returns the decrypted bytes (a fresh slice, never aliasing the frame
+// buffer) and whether the checksum validated. A partial trailing block is ignored.
 func g5DecryptPayload(payload []byte, seed, checksum uint32) ([]byte, bool) {
 	nblocks := len(payload) / 16
 	out := make([]byte, nblocks*16)
@@ -66,12 +62,8 @@ type tlvRec struct {
 	value []byte
 }
 
-// parseNibbleTLV decodes the Green-GO nibble-delta TLV stream used by the h/k/l/n
-// announces. Header byte = low-nibble type-delta
-// + high-nibble length; a nibble > 0x0b means read (nibble-0x0b) more big-endian
-// bytes; 0x00 ends the stream; 0x10 resets the type accumulator. Values are copied
-// out (the input may alias the reusable frame buffer). Returns ok=false on a
-// malformed stream.
+// parseNibbleTLV decodes the Green-GO announce TLV stream. Values are copied out (the
+// input may alias the reusable frame buffer). Returns ok=false on a malformed stream.
 func parseNibbleTLV(buf []byte) ([]tlvRec, bool) {
 	var recs []tlvRec
 	pos, acc := 0, 0
@@ -128,9 +120,9 @@ func parseNibbleTLV(buf []byte) ([]tlvRec, bool) {
 	return recs, true
 }
 
-// ggoConfig is one Green-GO config heard on the bus via 'h' announces.
+// ggoConfig is one Green-GO config heard on the bus.
 type ggoConfig struct {
-	id       string // configId, 16 hex chars
+	id       string // config identity, 16 hex chars
 	name     string // human config name
 	group    string // multicast group, dotted
 	lastSeen time.Time
@@ -143,16 +135,13 @@ func (c *ggoConfig) displayName() string {
 	return c.id
 }
 
-// greengoHDetector decodes the Green-GO 'h' (0x68) leader announce - the only
-// Green-GO frame whose useful payload (configId / multicast group / config name) is
-// encrypted, and the only source of config identity (the 6464 scan reply carries no
-// configId). The G5 cipher key is on the wire, so decode is offline. It tracks the
-// set of distinct configIds currently announcing and warns when two or more are
-// live on one segment (two separate Green-GO systems sharing a LAN - a real
-// footgun). The BPF delivers only validated 'h' frames.
+// greengoHDetector decodes the Green-GO leader announce - the only source of config
+// identity on the segment. It tracks the set of distinct configs currently announcing
+// and warns when two or more are live on one segment (two separate Green-GO systems
+// sharing a LAN - a real footgun). The BPF delivers only the validated frames.
 type greengoHDetector struct {
 	iface        string
-	servedVID    int // this monitor's served VLAN (0 = untagged eth0); foreign-VID 'h' is ignored
+	servedVID    int // this monitor's served VLAN (0 = untagged eth0); foreign-VID traffic is ignored
 	absence      time.Duration
 	configs      map[string]*ggoConfig
 	flaggedMulti bool // event-edge state for the multiple-configs warning
@@ -176,7 +165,7 @@ func (d *greengoHDetector) Consume(f Frame, now time.Time) {
 	if !ok || et != etherTypeIPv4 {
 		return
 	}
-	// Only count configs announced on THIS monitor's served VLAN. An 'h' from a device
+	// Only count configs announced on THIS monitor's served VLAN. An announce from a device
 	// on an unserved/foreign VLAN (in-band tag on the trunk) is NOT a config on our
 	// served network - the Green-GO census reports that device as "on unserved VLAN N"
 	// instead, so it never shows here as a green served config.
@@ -192,18 +181,18 @@ func (d *greengoHDetector) Consume(f Frame, now time.Time) {
 		return
 	}
 	g5 := f.Data[payOff:]
-	// 'h' header: "G5"(0x47 0x35) + subtype 0x68 + flags + len + seed + checksum.
+	// Validate the header before decrypting.
 	if len(g5) < 14 || g5[0] != 0x47 || g5[1] != 0x35 || g5[2] != 0x68 {
 		return
 	}
 	if g5[3]&0x80 == 0 {
-		return // 'h' is always encrypted (key in the clear); a plaintext 'h' doesn't occur
+		return // always encrypted; a plaintext frame doesn't occur
 	}
 	seed := leu32(g5, 6)
 	checksum := leu32(g5, 10)
 	plain, valid := g5DecryptPayload(g5[14:], seed, checksum)
 	if !valid {
-		return // checksum failed - not a default-config 'h' we can read
+		return // checksum failed - not one we can read
 	}
 	recs, ok := parseNibbleTLV(plain)
 	if !ok {
@@ -212,15 +201,15 @@ func (d *greengoHDetector) Consume(f Frame, now time.Time) {
 	var id, name, group string
 	for _, r := range recs {
 		switch r.typ {
-		case 1: // configId (8 bytes)
+		case 1:
 			if len(r.value) == 8 {
 				id = hex64(be64(r.value, 0))
 			}
-		case 2: // multicast group (u32 BE → dotted)
+		case 2:
 			if len(r.value) == 4 {
 				group = ipString([4]byte{r.value[0], r.value[1], r.value[2], r.value[3]})
 			}
-		case 4: // config name (ASCII, NUL-padded)
+		case 4:
 			name = asciiTrim(r.value)
 		}
 	}

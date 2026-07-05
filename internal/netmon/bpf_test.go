@@ -67,30 +67,30 @@ func TestBPFFilter_AcceptsInterestingDropsFlood(t *testing.T) {
 	}
 }
 
-// busFrameSub builds a UDP:5810 frame whose G5 payload carries the given subtype,
-// to exercise the 'h'-specific (0x68) BPF clause.
+// busFrameSub builds a UDP:5810 frame carrying the given subtype byte, to exercise the
+// subtype BPF clause.
 func busFrameSub(subtype byte) Frame {
-	pl := []byte{0x47, 0x35, subtype, 0, 0, 0, 0, 0} // "G5" + subtype + filler
+	pl := []byte{0x47, 0x35, subtype, 0, 0, 0, 0, 0}
 	udp := buildUDP(ggoBusPort, ggoBusPort, pl)
 	ip := buildIPv4(ipProtoUDP, [4]byte{10, 0, 0, 9}, [4]byte{10, 0, 0, 255}, udp)
 	return Frame{Iface: "eth0", Data: buildEth(macTestSwitch, macTestSwitch, etherTypeIPv4, ip)}
 }
 
 func TestBPFFilter_Greengo(t *testing.T) {
-	// On a Green-GO interface the 'h' announce (subtype 0x68) on 5810 is accepted...
+	// On a Green-GO interface the accepted subtype on 5810 passes...
 	if !runFilter(t, false, true, busFrameSub(0x68)) {
-		t.Error("filter dropped Green-GO 'h' announce, want accept")
+		t.Error("filter dropped the accepted subtype, want accept")
 	}
-	// ...but the 0x60 state beacon / 0x06 audio on 5810 are dropped in kernel.
+	// ...but other 5810 subtypes are dropped in kernel.
 	if runFilter(t, false, true, busFrameSub(0x60)) {
-		t.Error("filter accepted 0x60 beacon, want drop")
+		t.Error("filter accepted a dropped subtype, want drop")
 	}
 	if runFilter(t, false, true, busFrameSub(0x06)) {
-		t.Error("filter accepted 0x06 audio, want drop")
+		t.Error("filter accepted a dropped subtype, want drop")
 	}
-	// On a non-Green-GO interface 5810 is not captured at all (even the 'h' announce).
+	// On a non-Green-GO interface 5810 is not captured at all.
 	if runFilter(t, false, false, busFrameSub(0x68)) {
-		t.Error("non-Green-GO filter accepted 5810 'h', want drop")
+		t.Error("non-Green-GO filter accepted 5810 traffic, want drop")
 	}
 }
 

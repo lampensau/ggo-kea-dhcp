@@ -86,7 +86,7 @@ func (a *bpfAsm) resolve() {
 }
 
 // buildAsm constructs the combined filter program (unresolved jumps). greengo adds
-// the Green-GO 'h'-announce clause (UDP 5810 + "G5"/0x68 payload) - attached only on
+// the Green-GO announce clause (UDP 5810) - attached only on
 // a Green-GO-preset interface so other deployments never capture 5810.
 func buildAsm(multicastSniff, greengo bool) *bpfAsm {
 	a := newBPFAsm()
@@ -131,7 +131,7 @@ func buildAsm(multicastSniff, greengo bool) *bpfAsm {
 		a.jump(bpf.JumpEqual, sacnPort, "accept", "")
 	}
 	if greengo {
-		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "") // 5810 dport → verify it's an 'h' announce
+		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "") // 5810 dport → verify the subtype
 	}
 	a.emit(bpf.LoadIndirect{Off: 14, Size: 2}) // UDP sport (X+14)
 	a.jump(bpf.JumpEqual, 67, "accept", "")
@@ -139,17 +139,16 @@ func buildAsm(multicastSniff, greengo bool) *bpfAsm {
 		a.jump(bpf.JumpEqual, sacnPort, "accept", "")
 	}
 	if greengo {
-		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "reject") // 5810 sport → 'h' check; else reject
+		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "reject") // 5810 sport → subtype check; else reject
 
-		// --- Green-GO 'h' (0x68) announce on UDP 5810 ---
-		// Accept ONLY frames whose G5 payload starts with the "G5" magic (0x4735) and
-		// subtype 0x68, so the 0x60/0x06 multicast flood (incl. audio) is dropped in
-		// kernel even under promiscuous capture. X is still the IP header length
+		// --- Green-GO leader announce on UDP 5810 ---
+		// Accept only the leader-announce subtype, so the multicast flood (incl. audio)
+		// is dropped in kernel even under promiscuous capture. X is the IP header length
 		// (LoadMemShift above); the UDP payload begins at X+22.
 		a.label("g5h")
-		a.emit(bpf.LoadIndirect{Off: 22, Size: 2}) // payload[0:2] == "G5"
+		a.emit(bpf.LoadIndirect{Off: 22, Size: 2})
 		a.jump(bpf.JumpEqual, 0x4735, "", "reject")
-		a.emit(bpf.LoadIndirect{Off: 24, Size: 1}) // payload[2] == subtype 'h'
+		a.emit(bpf.LoadIndirect{Off: 24, Size: 1})
 		a.jump(bpf.JumpEqual, 0x68, "accept", "reject")
 	}
 	// fall through to reject

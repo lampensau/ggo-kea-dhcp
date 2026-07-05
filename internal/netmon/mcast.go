@@ -24,8 +24,8 @@ var knownGroups = [][4]byte{
 
 // knownMACs are L2 control-plane multicast groups whose dst MAC is NOT derived
 // from an IPv4 group, so they need a raw-MAC join. Without joining these the NIC
-// hardware filter drops them before our BPF runs (they reach Wireshark only
-// because it sets promiscuous), starving the LLDP/CDP and STP-churn detectors.
+// hardware filter drops them before our BPF runs (a promiscuous capture sees them
+// only because of that mode), starving the LLDP/CDP and STP-churn detectors.
 // Low-rate and always-on, so joined up front like knownGroups (no promiscuous).
 var knownMACs = [][6]byte{
 	{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e}, // LLDP (nearest bridge)

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// reply0x11 builds a G-G device-info reply: header + body with name@0, MAC@0x12,
+// deviceReply builds a G-G device-info reply: header + body with name@0, MAC@0x12,
 // firmware@0x2e.
-func reply0x11(name string, mac [6]byte, fw string) []byte {
+func deviceReply(name string, mac [6]byte, fw string) []byte {
 	body := make([]byte, 0x2e+0x40)
 	copy(body, name) // NUL-padded by the zeroed buffer
 	copy(body[0x12:], mac[:])
@@ -20,9 +20,9 @@ func reply0x11(name string, mac [6]byte, fw string) []byte {
 
 func TestParseScanReply(t *testing.T) {
 	mac := [6]byte{0x00, 0x1f, 0x80, 0x22, 0x51, 0x30}
-	dev, ok := parseScanReply(reply0x11("TestingMCXD", mac, "MCXi 5.0.7.9165"), "10.0.0.50")
+	dev, ok := parseScanReply(deviceReply("TestingMCXD", mac, "MCXi 5.0.7.9165"), "10.0.0.50")
 	if !ok {
-		t.Fatal("parse failed on a valid 0x11 reply")
+		t.Fatal("parse failed on a valid reply")
 	}
 	if dev.Name != "TestingMCXD" {
 		t.Errorf("name = %q, want TestingMCXD", dev.Name)
@@ -82,17 +82,22 @@ func TestOnlyEmitsScanAndReboot(t *testing.T) {
 	if !bytes.Equal(scanFrame, wantScan) {
 		t.Fatalf("scanFrame = % x, want % x", scanFrame, wantScan)
 	}
-	if len(rebootFrame) != len(scanFrame) {
-		t.Fatalf("rebootFrame len = %d, want %d", len(rebootFrame), len(scanFrame))
+	if len(rebootHeader) != len(scanFrame) {
+		t.Fatalf("rebootHeader len = %d, want %d", len(rebootHeader), len(scanFrame))
 	}
 	diff := 0
 	for i := range scanFrame {
-		if rebootFrame[i] != scanFrame[i] {
+		if rebootHeader[i] != scanFrame[i] {
 			diff++
 		}
 	}
 	if diff != 1 {
-		t.Fatalf("reboot frame differs from scan in %d byte(s), want exactly 1", diff)
+		t.Fatalf("reboot header differs from scan in %d byte(s), want exactly 1", diff)
+	}
+	got := rebootFrameFor(net.IPv4(10, 0, 0, 22).To4())
+	want := append(append([]byte{}, rebootHeader...), 10, 0, 0, 22)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("rebootFrameFor = % x, want % x", got, want)
 	}
 }
 
@@ -102,42 +107,53 @@ var frameDeclRe = regexp.MustCompile(`(?m)^var (\w+) = \[\]byte\{`)
 // sendCallRe matches a WriteToUDP call whose payload is a bare identifier.
 var sendCallRe = regexp.MustCompile(`WriteToUDP\((\w+),`)
 
+// rebootLocalRe pins the reboot payload local to the header+IP builder.
+var rebootLocalRe = regexp.MustCompile(`(\w+) := rebootFrameFor\(`)
+
 // TestNoUndeclaredEmitter is a best-effort source tripwire, not a proof. It scans
 // scan.go and checks that exactly two frame literals are declared (scanFrame,
-// rebootFrame) and that every WriteToUDP call it can see transmits one of them. This
+// rebootHeader) and that every WriteToUDP call it can see transmits one of them. This
 // catches the common accidental mistake - a new frame variable sent from a new
 // WriteToUDP call site. Because it is a regex over one file, it does NOT rule out an
 // inline []byte{...} payload, a send through another method (Write/WriteMsgUDP), or a
 // call added in a different file in the package. It narrows the gap, it does not close
 // it; the byte-pinned frame checks above remain the real guarantee about frame content.
 func TestNoUndeclaredEmitter(t *testing.T) {
-	src, err := os.ReadFile("scan.go")
+	raw, err := os.ReadFile("scan.go")
 	if err != nil {
 		t.Fatalf("read scan.go: %v", err)
 	}
 
+	src := string(raw)
 	declared := map[string]bool{}
-	for _, m := range frameDeclRe.FindAllStringSubmatch(string(src), -1) {
+	for _, m := range frameDeclRe.FindAllStringSubmatch(src, -1) {
 		declared[m[1]] = true
 	}
-	if len(declared) != 2 || !declared["scanFrame"] || !declared["rebootFrame"] {
-		t.Fatalf("declared frame literals = %v, want exactly {scanFrame, rebootFrame}", declared)
+	if len(declared) != 2 || !declared["scanFrame"] || !declared["rebootHeader"] {
+		t.Fatalf("declared frame literals = %v, want exactly {scanFrame, rebootHeader}", declared)
 	}
 
-	sends := sendCallRe.FindAllStringSubmatch(string(src), -1)
+	rb := rebootLocalRe.FindStringSubmatch(src)
+	if rb == nil {
+		t.Fatal("no `<name> := rebootFrameFor(` found - reboot frame no longer built from the pinned header")
+	}
+	rebootLocal := rb[1]
+	allowed := map[string]bool{"scanFrame": true, rebootLocal: true}
+
+	sends := sendCallRe.FindAllStringSubmatch(src, -1)
 	if len(sends) == 0 {
 		t.Fatal("found no send call sites - the matcher is stale, tighten it before trusting this guard")
 	}
 	sentScan, sentReboot := false, false
 	for _, m := range sends {
 		payload := m[1]
-		if !declared[payload] {
-			t.Errorf("send call transmits %q, which is not one of the two pinned frames", payload)
+		if !allowed[payload] {
+			t.Errorf("send call transmits %q, which is neither scanFrame nor the reboot frame", payload)
 		}
 		switch payload {
 		case "scanFrame":
 			sentScan = true
-		case "rebootFrame":
+		case rebootLocal:
 			sentReboot = true
 		}
 	}

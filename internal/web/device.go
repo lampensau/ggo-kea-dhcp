@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, liveMAC, ok := s.rebootEligible(r.Context(), ip)
+	name, liveMAC, firmware, ok := s.rebootEligible(r.Context(), ip)
 	if !ok {
 		// Not a reachable Green-GO client we manage: refuse and record the attempt.
 		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", ip, "", "not a reachable Green-GO device", "WARNING")
@@ -45,6 +46,13 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 	if postedMAC == "" || postedMAC != liveMAC {
 		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", ip, postedMAC, "device at address changed since the offer ("+liveMAC+" now holds it)", "WARNING")
 		s.handleError(w, r, "The device at "+ip+" changed since this was offered, so the reboot was not sent.", http.StatusForbidden)
+		return
+	}
+	// Older firmware silently ignores the reboot, so refuse with a clear reason instead of
+	// flashing a success the operator can't see happen.
+	if !firmwareSupportsReboot(firmware) {
+		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", name+" -> "+ip, firmware, "firmware does not support remote reboot", "WARNING")
+		s.handleError(w, r, name+" runs firmware that does not support remote reboot (it needs 5.2.0 or newer), so nothing was sent.", http.StatusForbidden)
 		return
 	}
 
@@ -66,10 +74,10 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 // the address. That MAC must belong to a known Green-GO device, and the address must be
 // answering ARP right now. Never consults the posted form. The returned MAC is the
 // freshness anchor the handler matches the posted MAC against.
-func (s *Server) rebootEligible(ctx context.Context, ip string) (name, liveMAC string, ok bool) {
+func (s *Server) rebootEligible(ctx context.Context, ip string) (name, liveMAC, firmware string, ok bool) {
 	reachable, available := s.presenceByIP()
 	if !available || !reachable[ip] {
-		return "", "", false // can't confirm the device is online - don't reboot into the void
+		return "", "", "", false // can't confirm the device is online - don't reboot into the void
 	}
 	mac := s.macAtIP(ctx, ip)
 	if mac == "" && s.arp != nil {
@@ -80,13 +88,55 @@ func (s *Server) rebootEligible(ctx context.Context, ip string) (name, liveMAC s
 		}
 	}
 	if mac == "" {
-		return "", "", false // nothing ties the address to a device
+		return "", "", "", false // nothing ties the address to a device
 	}
 	dev, ok := s.ggoDeviceByMAC(mac)
 	if !ok {
-		return "", "", false // the address's live occupant is not a known Green-GO client
+		return "", "", "", false // the address's live occupant is not a known Green-GO client
 	}
-	return rebootDeviceName(dev), normalizeMAC(mac), true
+	return rebootDeviceName(dev), normalizeMAC(mac), dev.Firmware, true
+}
+
+// rebootMinFirmware is the earliest firmware that honors the reboot request; older
+// devices ignore it, so the handler refuses rather than reporting a silent success.
+var rebootMinFirmware = [3]int{5, 2, 0}
+
+// firmwareSupportsReboot reports whether a scanned firmware string is new enough to
+// reboot. Unparseable or empty firmware returns false - fail closed rather than promise a
+// reboot that may do nothing.
+func firmwareSupportsReboot(fw string) bool {
+	v, ok := parseFirmwareVersion(fw)
+	if !ok {
+		return false
+	}
+	for i := range v {
+		if v[i] != rebootMinFirmware[i] {
+			return v[i] > rebootMinFirmware[i]
+		}
+	}
+	return true
+}
+
+// parseFirmwareVersion reads the leading major.minor.patch from the numeric field of a
+// scanned firmware string (e.g. the "5.2.2.25270" in "BPX 5.2.2.25270").
+func parseFirmwareVersion(fw string) ([3]int, bool) {
+	fields := strings.Fields(fw)
+	if len(fields) == 0 {
+		return [3]int{}, false
+	}
+	parts := strings.Split(fields[len(fields)-1], ".")
+	if len(parts) < 3 {
+		return [3]int{}, false
+	}
+	var v [3]int
+	for i := 0; i < 3; i++ {
+		n, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return [3]int{}, false
+		}
+		v[i] = n
+	}
+	return v, true
 }
 
 // macAtIP finds the MAC currently at ip from the control plane: an active Kea lease,

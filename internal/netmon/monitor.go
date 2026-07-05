@@ -33,7 +33,7 @@ type Spec struct {
 	Iface          string
 	MulticastSniff bool
 	// Greengo marks an interface served by a Green-GO-preset scope: it attaches the
-	// Green-GO census + 'h'-config detectors and the UDP-5810 'h' BPF clause. Off on
+	// Green-GO census + config detectors and the UDP-5810 BPF clause. Off on
 	// non-Green-GO scopes so they neither run those detectors nor capture 5810.
 	Greengo      bool
 	InterfaceIPs [][4]byte // our IPs on this iface (static-in-pool infra exclusion)
@@ -123,7 +123,7 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 		newIdleDetector(spec.Iface, rx),
 		newStaticInPoolDetector(spec.Iface, spec.Pools, infra, spec.Leases, 0, spec.LeaseLifetime),
 	}
-	// The Green-GO detectors (passive census + 'h' config decode) attach only on a
+	// The Green-GO detectors (passive census + config decode) attach only on a
 	// Green-GO-preset interface - the only place Green-GO gear and the 5810 bus live.
 	if spec.Greengo {
 		dets = append(dets,
