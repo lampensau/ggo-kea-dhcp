@@ -229,6 +229,11 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	if s.trunkProbe != nil {
 		s.trunkProbe.Start("eth0")
 	}
+	// Onboarding-only: watch eth0 for a DHCP server already answering, so the wizard's
+	// shield badge names it before the operator applies. Best-effort like the trunk probe.
+	if s.rogueProbe != nil {
+		s.rogueProbe.Start("eth0")
+	}
 
 	// Onboarding never routes - make sure no NAT state leaks in from a prior gig.
 	_ = s.net.SetIPForwarding(false)
@@ -275,10 +280,14 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	var errs []error
 
-	// Leaving onboarding: the trunk probe is an onboarding-only hint, and ACTIVE has the
-	// full passive monitor for VLAN reality. (Its last-seen VLANs are snapshotted at apply.)
+	// Leaving onboarding: the trunk and rogue-DHCP probes are onboarding-only hints, and
+	// ACTIVE has the full passive monitor for VLAN reality and rogue servers. (The trunk
+	// probe's last-seen VLANs are snapshotted at apply.)
 	if s.trunkProbe != nil {
 		s.trunkProbe.Stop()
+	}
+	if s.rogueProbe != nil {
+		s.rogueProbe.Stop()
 	}
 
 	scopes, err := s.loadScopeConfigs(profileID)

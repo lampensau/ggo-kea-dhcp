@@ -60,6 +60,7 @@ func TestEveryPageRenders(t *testing.T) {
 		{"pinning-nomdb", Pinning(PinningView{Page: active, Error: "MariaDB not connected"}), `MariaDB not connected`},
 		{"setup", Setup(SetupView{Page: onboard, ShieldState: "Active", LinkState: "Trunk", Interface: "eth0"}), `ggo-scope-tpl`},
 		{"setup-disconnected", Setup(SetupView{Page: onboard, ShieldState: "Suspended", LinkState: "Disconnected", Interface: "eth0"}), `Link: Disconnected`},
+		{"setup-rogue", Setup(SetupView{Page: onboard, ShieldState: "Detected", ShieldDetail: "10.0.0.250", LinkState: "Flat", Interface: "eth0"}), `Rogue DHCP: 10.0.0.250`},
 	}
 
 	for _, c := range cases {

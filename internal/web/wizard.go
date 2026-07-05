@@ -96,6 +96,24 @@ func (s *Server) linkTrunkState(configState string) (state, detail string) {
 	return
 }
 
+// shieldStatus upgrades the carrier-derived shield state with the onboarding
+// rogue-DHCP probe's observation: no carrier stays "Suspended" (nothing to
+// guard), a foreign DHCP server seen answering makes it "Detected" (detail is
+// that server's IP, so the wizard names it before the operator applies), else
+// "Active". The probe runs only during onboarding, so an ACTIVE-era edit page
+// falls back to the carrier bit alone.
+func (s *Server) shieldStatus(carrierState string) (state, detail string) {
+	if carrierState != "Active" {
+		return carrierState, ""
+	}
+	if s.rogueProbe != nil {
+		if ip, _, ok := s.rogueProbe.Server(); ok {
+			return "Detected", ip
+		}
+	}
+	return "Active", ""
+}
+
 // joinInts renders an int slice as "1, 200".
 func joinInts(xs []int) string {
 	parts := make([]string, len(xs))
@@ -106,14 +124,16 @@ func joinInts(xs []int) string {
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	shield := s.net.GetLinkStatus("eth0")
-	state, detail := s.linkTrunkState(shield.LinkState)
+	link := s.net.GetLinkStatus("eth0")
+	state, detail := s.linkTrunkState(link.LinkState)
+	shieldState, shieldDetail := s.shieldStatus(link.ShieldState)
 	upEn, upSSID, upPass := s.uplinkSettings()
 	v := views.SetupView{
 		Page:           s.pageData(w, r, "Setup Wizard"),
-		ShieldState:    shield.ShieldState,
+		ShieldState:    shieldState,
+		ShieldDetail:   shieldDetail,
 		LinkState:      state,
-		Interface:      shield.Interface,
+		Interface:      link.Interface,
 		LinkDetail:     detail,
 		UplinkEnabled:  upEn,
 		UplinkSSID:     upSSID,

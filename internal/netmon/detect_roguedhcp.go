@@ -14,8 +14,8 @@ const defaultRogueAbsence = 120 * time.Second
 // competing server hands clients wrong addresses/gateways and breaks the show.
 // It self-suppresses against our own interface/server IPs (passed at Start) and
 // reports the offender's IP + MAC/OUI. High severity. Passive (UDP sport 67,
-// OFFER/ACK). This replaces the old static "Shield: Active" onboarding badge with
-// a real detector.
+// OFFER/ACK). During ONBOARDING the same detector backs the wizard's shield
+// badge via RogueProbe (with no self IPs - the box is not serving DHCP yet).
 type rogueDHCPDetector struct {
 	iface   string
 	selfIPs map[[4]byte]bool
