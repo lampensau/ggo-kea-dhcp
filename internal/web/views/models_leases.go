@@ -15,8 +15,12 @@ type LeaseRow struct {
 	HWAddress string
 	ClientID  string
 	Hostname  string
-	Class     string
-	ExpiresIn string
+	// RawHostname is the pre-funnel name (client-announced or scanned) captured
+	// before the sanitize+dedupe pass rewrote Hostname. The reserve dialog prefills
+	// from it so an ephemeral "-0001" display tag never gets stored permanently.
+	RawHostname string
+	Class       string
+	ExpiresIn   string
 	// ExpiresAt is the absolute lease-expiry epoch (seconds): >0 a real expiry the
 	// client counts down live (data-expires), 0 unknown, -1 infinite ("never").
 	// Absolute so a cached/rebroadcast fragment never shows a stale countdown.

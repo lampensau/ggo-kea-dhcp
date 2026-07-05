@@ -23,9 +23,13 @@ type PortRow struct {
 	IPAddress    string
 	HWAddress    string
 	Hostname     string
-	SubnetID     int
-	Label        string
-	Pinned       bool
+	// RawHostname is the pre-funnel name captured before the sanitize+dedupe pass
+	// rewrote Hostname; the pin dialog prefills from it so an ephemeral "-0001"
+	// display tag is never stored permanently.
+	RawHostname string
+	SubnetID    int
+	Label       string
+	Pinned      bool
 	// LastSeen is the epoch (0 = never observed) the port was last active; LastSeenText
 	// is its coarse "3d ago" rendering and Stale flags a long-gone pinned port.
 	LastSeen     int64
