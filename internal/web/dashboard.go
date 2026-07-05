@@ -251,7 +251,10 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = datastar.ReadSignals(r, &sig)
 
-	leases, err := s.kea.GetLeases(r.Context(), 1000)
+	// Read-through: the search box filters a display snapshot - a debounced
+	// keystroke must not cost a Kea round-trip when the ticker refreshed the
+	// set moments ago.
+	leases, err := s.getLeases(r.Context(), leaseSrcTTL)
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
 		log.Printf("Kea API lease query failed: %v", err)
