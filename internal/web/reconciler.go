@@ -85,8 +85,10 @@ func (s *Server) scheduleReconcileHeld(label string, delay time.Duration, mode R
 		wd := time.AfterFunc(reconcileWatchdog, func() {
 			log.Printf("[reconcile:%s] still running after %s", label, reconcileWatchdog)
 		})
+		// Deferred: a recovered panic must not leak the armed watchdog, which
+		// would log a false "still running" right after the PANIC_RECOVERED row.
+		defer wd.Stop()
 		err := s.ReconcileApplianceState(mode, profileID)
-		wd.Stop()
 		if err != nil {
 			// Audit, not just stderr: these run detached from any request (settings
 			// save, reset, restore), so this row - surfaced on Diagnostics - is the
