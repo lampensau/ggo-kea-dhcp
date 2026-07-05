@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"ggo-kea-dhcp/internal/db"
 )
@@ -145,6 +146,17 @@ func TestFactoryRestoreHappyPath(t *testing.T) {
 	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateOnboarding {
 		t.Errorf("lifecycle = %q, want the bundle's ONBOARDING", st)
 	}
+
+	// finishRestore schedules a background reconcile; join it so the goroutine
+	// does not outlive this test's database.
+	deadline := time.Now().Add(3 * time.Second)
+	for !s.beginReconcile() {
+		if time.Now().After(deadline) {
+			t.Fatal("post-restore reconcile still holds the guard")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.endReconcile()
 }
 
 // The throttle must fire BEFORE credential verification: once an IP is inside
@@ -153,6 +165,10 @@ func TestFactoryRestoreHappyPath(t *testing.T) {
 func TestLoginThrottleBeforeCredentials(t *testing.T) {
 	s := authTestServer(t)
 	seedAdmin(t, s, "correct-horse-battery")
+	// Freeze the throttle clock: with a real clock a slow run could outlive the
+	// ~1s first backoff window and admit the final attempt legitimately.
+	frozen := time.Now()
+	s.loginThrottle.now = func() time.Time { return frozen }
 
 	for i := 0; i < loginFreebies+1; i++ {
 		rr := httptest.NewRecorder()
@@ -258,4 +274,37 @@ func TestLogoutDeletesSessionAndClearsCookie(t *testing.T) {
 	// A cookie-less logout must be safe (no panic, still clears client state).
 	rr = httptest.NewRecorder()
 	s.handleLogout(rr, httptest.NewRequest("POST", "/logout", nil))
+}
+
+// The factory-restore route's ONLY CSRF defense is lifecycleMiddleware's
+// same-origin gate (the handler itself runs pre-auth, no token). The direct
+// handler tests above bypass it, so pin the wiring through the middleware:
+// a cross-origin (header-less) POST must die in the middleware - the handler
+// never runs, not even its attempt audit - and a same-origin POST passes.
+func TestFactoryRestoreSameOriginGateWired(t *testing.T) {
+	s := authTestServer(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /factory/restore", s.handleFactoryRestore)
+	h := s.lifecycleMiddleware(mux)
+
+	req := factoryRestoreReq(t, []byte("not json")) // no Origin/Referer header
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("header-less cross-origin POST = %d, want 403 from the middleware", rr.Code)
+	}
+	if n := auditCount(t, s, "FACTORY_RESTORE_ATTEMPT"); n != 0 {
+		t.Errorf("handler ran despite the origin gate (%d attempt rows)", n)
+	}
+
+	req = factoryRestoreReq(t, []byte("not json"))
+	req.Header.Set("Origin", "http://"+req.Host)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code == http.StatusForbidden {
+		t.Errorf("same-origin POST = %d - the gate rejected a legitimate submit", rr.Code)
+	}
+	if n := auditCount(t, s, "FACTORY_RESTORE_ATTEMPT"); n != 1 {
+		t.Errorf("attempt audit rows = %d, want 1 (handler reached through the chain)", n)
+	}
 }
