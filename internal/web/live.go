@@ -438,17 +438,21 @@ func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.Ac
 }
 
 // leasesSignature is an order-independent fingerprint of the lease set's identity
-// (IP + MAC + client-id + count). XOR makes it independent of GetLeases' result
-// ordering; lease expiry is deliberately excluded (a renewal must not force a
+// (IP + MAC + client-id + hostname + count). XOR makes it independent of GetLeases'
+// result ordering; lease expiry is deliberately excluded (a renewal must not force a
 // re-render). The client-id IS included because a learnable switch port is defined
 // entirely by its Option-82 flex-id (the lease client-id): a device gaining/changing
 // its Option-82 identity on a STABLE IP+MAC (observed on the Pi: same IP+MAC carrying
 // both a normal client-id and an "AV-Edge-3<0x1f>etherN" flex-id) must re-render the
-// /pinning learnable list, which it otherwise wouldn't until a full reload.
+// /pinning learnable list, which it otherwise wouldn't until a full reload. The
+// hostname is included so a renewal that changes only the client-announced hostname
+// still re-renders the lease table AND (via maybeRebuildDNSZone, which gates on this)
+// rebuilds the local-DNS zone on a headless box; hostnames are stable per device, so
+// this does not add churn.
 func leasesSignature(leases []kea.ActiveLease) uint64 {
 	var x uint64
 	for _, l := range leases {
-		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID)
+		x ^= fnv64(l.IPAddress + "|" + l.HWAddress + "|" + l.ClientID + "|" + l.Hostname)
 	}
 	return x ^ uint64(len(leases))
 }
