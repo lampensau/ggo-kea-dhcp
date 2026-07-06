@@ -50,6 +50,41 @@ func TestLeaseCacheTTL(t *testing.T) {
 
 // TestLeaseCacheSingleFlight pins that concurrent callers during a refresh
 // share ONE round-trip - the stampede the cache exists to prevent.
+// TestLeaseCacheForcedGetLeadsOwnPoll pins the post-mutation contract: a forced
+// (maxAge 0) caller that arrives while a fetch dispatched BEFORE its mutation is in
+// flight must not join it - it waits that fetch out and leads its own poll, so it sees
+// post-mutation state. Fetch #1 is the pre-mutation poll (a still-present lease); the
+// forced caller must come back with the post-mutation set (the lease gone).
+func TestLeaseCacheForcedGetLeadsOwnPoll(t *testing.T) {
+	var fetches atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
+		if fetches.Add(1) == 1 {
+			close(started)
+			<-release // hold the pre-mutation poll in flight
+			return []kea.ActiveLease{{IPAddress: "10.0.0.9"}}, nil
+		}
+		return nil, nil // post-mutation: the lease is gone
+	})
+
+	go func() { _, _ = c.get(context.Background(), leaseSrcTTL) }() // leads fetch #1
+	<-started
+
+	got := make(chan []kea.ActiveLease, 1)
+	go func() { l, _ := c.get(context.Background(), 0); got <- l }() // forced caller
+	// Let the forced caller block on the in-flight fetch before releasing it.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	if l := <-got; len(l) != 0 {
+		t.Errorf("forced caller saw pre-mutation lease %v, want the post-mutation empty set", l)
+	}
+	if n := fetches.Load(); n != 2 {
+		t.Errorf("forced caller cost %d fetches, want 2 (waited out #1, led #2)", n)
+	}
+}
+
 func TestLeaseCacheSingleFlight(t *testing.T) {
 	var fetches atomic.Int32
 	release := make(chan struct{})

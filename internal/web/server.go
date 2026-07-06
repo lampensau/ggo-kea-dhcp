@@ -71,6 +71,14 @@ type Server struct {
 	// dnsZoneSig gates the metrics sampler's zone rebuild so an idle box does not
 	// re-query reservations every 12s (event-driven rebuilds ride publishDashboard).
 	dnsZoneSig atomic.Uint64
+	// dnsZoneSeq dispenses a monotonic generation to each zone-rebuild dispatch;
+	// dnsZoneMu serializes the {generation check + SetZone} so a rebuild that
+	// dispatched earlier (a slow detached primeDNSZone) cannot land its staler zone
+	// on top of one dispatched later. dnsZoneAppliedGen is the last generation that
+	// won, guarded by dnsZoneMu.
+	dnsZoneSeq        atomic.Uint64
+	dnsZoneMu         sync.Mutex
+	dnsZoneAppliedGen uint64
 	// live is the in-process SSE broadcaster pushing state changes to connected
 	// operators (lifecycle badge, tiles, lease/learnable lists) without polling.
 	live *liveHub

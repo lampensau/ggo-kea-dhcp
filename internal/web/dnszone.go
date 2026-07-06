@@ -101,21 +101,39 @@ func buildDNSHosts(devs []ggoscan.Device, leases []kea.ActiveLease, reservations
 // publishDashboardWithLeases (the dashboard cadence: the ticker's leasesChanged
 // branch plus every post-mutation publishDashboard) and, signature-gated, from
 // the always-on metrics sampler so a headless box stays fresh too.
-func (s *Server) rebuildDNSZone(ctx context.Context, leases []kea.ActiveLease) {
+// It reports whether this generation actually installed the zone (see
+// rebuildDNSZoneWith); callers that track a dedup signature record it only on true.
+func (s *Server) rebuildDNSZone(ctx context.Context, leases []kea.ActiveLease, gen uint64) bool {
 	if s.dns == nil {
-		return
+		return false
 	}
-	s.rebuildDNSZoneWith(leases, s.fetchHWReservationMap(ctx))
+	return s.rebuildDNSZoneWith(leases, s.fetchHWReservationMap(ctx), gen)
 }
 
 // rebuildDNSZoneWith is rebuildDNSZone with a caller-supplied reservation map, so
 // the dashboard broadcast reuses the map it already fetched for the fragments
-// rather than issuing a second identical MariaDB query.
-func (s *Server) rebuildDNSZoneWith(leases []kea.ActiveLease, res map[string]db.HostReservation) {
+// rather than issuing a second identical MariaDB query. It returns whether this
+// generation installed the zone: false means a later-dispatched rebuild already
+// won, so a caller tracking a dedup signature must not record this one as installed.
+func (s *Server) rebuildDNSZoneWith(leases []kea.ActiveLease, res map[string]db.HostReservation, gen uint64) bool {
 	if s.dns == nil {
-		return
+		return false
 	}
-	s.dns.SetZone(dns.NewZone(s.collectDNSHostsWith(leases, res)))
+	// Build the zone outside the lock (pure CPU; res is already fetched), then apply
+	// under dnsZoneMu as last-writer-by-generation: a rebuild that dispatched later
+	// wins, so a slow detached primeDNSZone cannot clobber a fresher zone the sampler
+	// or an event-driven publish already installed. gen 0 (unversioned callers/tests)
+	// always applies. A panic while building the zone (before the lock) propagates,
+	// so the caller's signature commit is skipped exactly as an unapplied rebuild.
+	z := dns.NewZone(s.collectDNSHostsWith(leases, res))
+	s.dnsZoneMu.Lock()
+	defer s.dnsZoneMu.Unlock()
+	if gen != 0 && gen < s.dnsZoneAppliedGen {
+		return false
+	}
+	s.dnsZoneAppliedGen = gen
+	s.dns.SetZone(z)
+	return true
 }
 
 // maybeRebuildDNSZone is the sampler's gate: rebuild only when the lease set or
@@ -127,10 +145,17 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 		return
 	}
 	sig := leasesSignature(leases) ^ ggoNamesSignature(s.ggoScanIdentityByMAC())
-	if s.dnsZoneSig.Swap(sig) == sig {
+	if s.dnsZoneSig.Load() == sig {
 		return
 	}
-	s.rebuildDNSZone(ctx, leases)
+	// Latch this sig only when the rebuild actually installed the zone. A rebuild that
+	// panicked (propagates, caught by the sampler's recover) or lost the generation
+	// race never returns true, so the sig stays put and the next tick retries instead
+	// of stranding a stale zone behind a "current" sig. The sampler is this gate's only
+	// caller, so a plain Load/Store needs no CAS.
+	if s.rebuildDNSZone(ctx, leases, s.dnsZoneSeq.Add(1)) {
+		s.dnsZoneSig.Store(sig)
+	}
 }
 
 // ggoScanIdentityByMAC keys each scanned Green-GO device's zone identity - its name
@@ -204,9 +229,13 @@ func (s *Server) healDNSBinds() {
 func (s *Server) primeDNSZone() {
 	ctx, cancel := opCtx()
 	defer cancel()
-	leases, err := s.getLeases(ctx, leaseSrcTTL)
+	// Force a fresh poll (not the 3s-cached read) so prime's zone reflects its own
+	// generation: as a slow detached goroutine it must not install leases older than
+	// the generation it claims, or the last-writer-by-generation guard would let it
+	// win with stale data.
+	leases, err := s.getLeases(ctx, 0)
 	if err != nil {
 		return
 	}
-	s.rebuildDNSZone(ctx, leases)
+	s.rebuildDNSZone(ctx, leases, s.dnsZoneSeq.Add(1))
 }
