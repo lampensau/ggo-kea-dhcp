@@ -56,22 +56,31 @@ func TestDNSZoneGenerationGuard(t *testing.T) {
 	res := map[string]db.HostReservation{}
 	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
 
-	s.rebuildDNSZoneWith(leases, res, 10)
+	if !s.rebuildDNSZoneWith(leases, res, 10) {
+		t.Fatal("first rebuild (gen 10) should report applied")
+	}
 	if s.dnsZoneAppliedGen != 10 {
 		t.Fatalf("applied generation = %d, want 10", s.dnsZoneAppliedGen)
 	}
-	// A lower generation (stale detached prime landing late) must be refused.
-	s.rebuildDNSZoneWith(leases, res, 5)
+	// A lower generation (stale detached prime landing late) must be refused, and it
+	// must report NOT applied so a signature-tracking caller does not latch it.
+	if s.rebuildDNSZoneWith(leases, res, 5) {
+		t.Error("stale generation 5 reported applied over 10")
+	}
 	if s.dnsZoneAppliedGen != 10 {
 		t.Errorf("stale generation 5 was applied over 10 (now %d)", s.dnsZoneAppliedGen)
 	}
-	// A higher generation wins.
-	s.rebuildDNSZoneWith(leases, res, 12)
+	// A higher generation wins and reports applied.
+	if !s.rebuildDNSZoneWith(leases, res, 12) {
+		t.Error("higher generation 12 should report applied")
+	}
 	if s.dnsZoneAppliedGen != 12 {
 		t.Errorf("applied generation = %d, want 12", s.dnsZoneAppliedGen)
 	}
 	// Generation 0 (unversioned callers/tests) always applies.
-	s.rebuildDNSZoneWith(leases, res, 0)
+	if !s.rebuildDNSZoneWith(leases, res, 0) {
+		t.Error("gen 0 should always report applied")
+	}
 	if s.dnsZoneAppliedGen != 0 {
 		t.Errorf("gen 0 must always apply, applied generation = %d", s.dnsZoneAppliedGen)
 	}
