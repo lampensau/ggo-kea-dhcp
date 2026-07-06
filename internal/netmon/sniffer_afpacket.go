@@ -175,10 +175,12 @@ func openCapture(iface string, promisc bool, filter []bpf.RawInstruction) (Sniff
 		ch:      make(chan Frame, frameChanSize),
 		quit:    make(chan struct{}),
 	}
-	// Attach a reject-all filter BEFORE bind so that in the window between socket()
-	// (which is ETH_P_ALL on every interface) and bind-to-iface, no stray frame
-	// from another interface - e.g. an LLDP from wlan0 - is queued and later
-	// delivered mislabeled as this iface. The real filter is swapped in after bind.
+	// Attach a reject-all filter before bind to narrow the window in which the
+	// still-unbound ETH_P_ALL socket queues a stray frame from another interface
+	// (e.g. an LLDP from wlan0) that would later be delivered mislabeled as this
+	// iface. It cannot fully close that window: a frame that arrived in the
+	// microsecond between socket() and this attach is already on the receive queue,
+	// and a socket filter is not retroactive. The real filter is swapped in after bind.
 	if err := attachFilter(fd, rejectAllFilter); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("netmon: attach reject-all BPF on %s: %w", iface, err)

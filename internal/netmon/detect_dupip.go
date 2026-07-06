@@ -18,6 +18,7 @@ const defaultDeclineAbsence = 300 * time.Second
 // names the conflicted address.
 type duplicateIPDetector struct {
 	iface     string
+	servedVID int // this monitor's served VLAN (0 = untagged eth0); a foreign VID is ignored
 	absence   time.Duration
 	conflicts map[[4]byte]*conflictEntry
 }
@@ -29,20 +30,28 @@ type conflictEntry struct {
 	present  bool
 }
 
-func newDuplicateIPDetector(iface string, absence time.Duration) *duplicateIPDetector {
+func newDuplicateIPDetector(iface string, servedVID int, absence time.Duration) *duplicateIPDetector {
 	if absence <= 0 {
 		absence = defaultDeclineAbsence
 	}
 	return &duplicateIPDetector{
 		iface:     iface,
+		servedVID: servedVID,
 		absence:   absence,
 		conflicts: make(map[[4]byte]*conflictEntry),
 	}
 }
 
 func (d *duplicateIPDetector) Consume(f Frame, now time.Time) {
-	et, off, _, ok := etherInfo(f.Data)
+	et, off, vid, ok := etherInfo(f.Data)
 	if !ok || et != etherTypeIPv4 {
+		return
+	}
+	// Only count DECLINEs on the VLAN this monitor serves. The untagged eth0 socket
+	// also sees in-band-tagged frames leaking off the trunk; without this, a foreign
+	// VLAN's DECLINE would be mis-attributed to eth0 or double-counted against a
+	// tagged scope's own monitor. Mirrors the rogue-DHCP / Green-GO servedVID gate.
+	if effectiveVID(vid, f) != d.servedVID {
 		return
 	}
 	proto, _, _, l4, ok := ipv4Info(f.Data, off)

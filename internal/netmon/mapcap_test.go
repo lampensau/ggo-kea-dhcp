@@ -101,7 +101,7 @@ func TestPTP_GMMapCapped(t *testing.T) {
 }
 
 func TestDuplicateIP_ConflictMapCapped(t *testing.T) {
-	d := newDuplicateIPDetector("eth0", 300*time.Second)
+	d := newDuplicateIPDetector("eth0", 0, 300*time.Second)
 	ip := func(i int) [4]byte { return [4]byte{10, 2, byte(i >> 8), byte(i)} }
 
 	for i := 0; i < maxDupIPConflicts; i++ {

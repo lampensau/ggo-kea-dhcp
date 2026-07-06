@@ -337,9 +337,10 @@ func taggedDHCPOfferFrom(srcMAC [6]byte, vid int, serverID [4]byte) Frame {
 	return Frame{Iface: "eth0", TS: base, Data: buildEthVLAN(macBroadcast, srcMAC, vid, etherTypeIPv4, ip)}
 }
 
-// declineFrame builds a client→server DHCPDECLINE (UDP sport 68 dport 67) whose
-// option 50 carries the conflicted address.
-func declineFrame(declinedIP [4]byte) Frame {
+// declineIPv4 builds the IPv4/UDP DHCPDECLINE (sport 68 dport 67) whose option 50
+// carries the conflicted address - the L3 payload shared by the tagged and untagged
+// frame builders.
+func declineIPv4(declinedIP [4]byte) []byte {
 	chaddr := [6]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}
 	b := make([]byte, 240)
 	b[0], b[1], b[2] = 1, 1, 6
@@ -349,6 +350,18 @@ func declineFrame(declinedIP [4]byte) Frame {
 	b = append(b, 50, 4, declinedIP[0], declinedIP[1], declinedIP[2], declinedIP[3])
 	b = append(b, 255)
 	udp := buildUDP(68, 67, b)
-	ip := buildIPv4(ipProtoUDP, [4]byte{0, 0, 0, 0}, [4]byte{255, 255, 255, 255}, udp)
-	return Frame{Iface: "eth0", TS: base, Data: buildEth(macBroadcast, macFromOUI([3]byte{0x02, 0, 0}, [3]byte{0, 0, 2}), etherTypeIPv4, ip)}
+	return buildIPv4(ipProtoUDP, [4]byte{0, 0, 0, 0}, [4]byte{255, 255, 255, 255}, udp)
+}
+
+// declineFrame builds an untagged client→server DHCPDECLINE.
+func declineFrame(declinedIP [4]byte) Frame {
+	src := macFromOUI([3]byte{0x02, 0, 0}, [3]byte{0, 0, 2})
+	return Frame{Iface: "eth0", TS: base, Data: buildEth(macBroadcast, src, etherTypeIPv4, declineIPv4(declinedIP))}
+}
+
+// declineFrameVLAN builds the same DHCPDECLINE carrying a single in-band 802.1Q tag
+// (a frame leaking onto the untagged socket off the trunk).
+func declineFrameVLAN(vid int, declinedIP [4]byte) Frame {
+	src := macFromOUI([3]byte{0x02, 0, 0}, [3]byte{0, 0, 2})
+	return Frame{Iface: "eth0", TS: base, Data: buildEthVLAN(macBroadcast, src, vid, etherTypeIPv4, declineIPv4(declinedIP))}
 }

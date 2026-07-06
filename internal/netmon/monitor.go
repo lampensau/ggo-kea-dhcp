@@ -116,7 +116,7 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 		newIGMPDetector(spec.Iface, th.IGMPAbsence),
 		newLLDPDetector(spec.Iface, linkUp),
 		newRogueDHCPDetector(spec.Iface, spec.InterfaceMAC, spec.InterfaceMACSet, vid, 0),
-		newDuplicateIPDetector(spec.Iface, 0),
+		newDuplicateIPDetector(spec.Iface, vid, 0),
 		newPTPDetector(spec.Iface, 0),
 		newStormDetector(spec.Iface, th.StormPPS, rx),
 		newIdleDetector(spec.Iface, rx),
