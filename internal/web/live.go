@@ -383,6 +383,30 @@ type liveFragment struct {
 // suppresses the broadcast for any unchanged region, so an idle operator pays the
 // render but never the wire - acceptable at single-operator scale, so the
 // regions are deliberately not gated on which page each client is viewing.
+// pageNeedsFullDashboard reports whether a connecting page shows any lease-table or
+// MariaDB-pinning region. Only these pages need the full dashboardFragments build; every
+// other page's live regions are periodic/shell-only (produced by periodicDashboardFragments
+// without the MariaDB reservation + pinned/learnable round-trips). "" and "/" are unknown
+// referers - build the full set rather than risk dropping a region.
+func pageNeedsFullDashboard(page string) bool {
+	switch page {
+	case "", "/", "/dashboard", "/leases", "/pinning":
+		return true
+	}
+	return false
+}
+
+// connectFragments builds the fragment set for a fresh SSE connect on the given page:
+// the full dashboard only for pages with lease/MariaDB regions, else the lighter
+// periodic set (same fragments the connect loop keeps after regionOnPage, computed
+// without the MariaDB round-trips and off-page renders the full build would waste).
+func (s *Server) connectFragments(ctx context.Context, leases []kea.ActiveLease, page string) []liveFragment {
+	if pageNeedsFullDashboard(page) {
+		return s.dashboardFragments(ctx, leases)
+	}
+	return s.periodicDashboardFragments(ctx, leases)
+}
+
 func (s *Server) dashboardFragments(ctx context.Context, leases []kea.ActiveLease) []liveFragment {
 	return s.dashboardFragmentsWith(ctx, leases, s.fetchHWReservationMap(ctx))
 }
@@ -618,7 +642,7 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-			for _, f := range s.dashboardFragments(ctx, leases) {
+			for _, f := range s.connectFragments(ctx, leases, page) {
 				if !regionOnPage(f.region, page) {
 					continue
 				}
