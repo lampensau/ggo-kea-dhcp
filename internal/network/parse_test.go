@@ -46,7 +46,7 @@ func TestParseNmcliScanMalformed(t *testing.T) {
 		"GoodNet:30:WPA2\n" + // duplicate of GoodNet, dropped
 		"\n" + // blank line, skipped
 		`Has\:Colon:65:WPA3` + "\n" // colon-bearing SSID survives
-	aps := parseNmcliScan(out, make(map[string]bool))
+	aps := parseNmcliScan(out)
 	if len(aps) != 2 {
 		t.Fatalf("got %d APs want 2: %+v", len(aps), aps)
 	}
@@ -59,20 +59,6 @@ func TestParseNmcliScanMalformed(t *testing.T) {
 	}
 	if got, ok := byName["Has:Colon"]; !ok || got.Signal != 65 || got.Security != "WPA3" {
 		t.Errorf("Has:Colon wrong/missing: %+v", got)
-	}
-}
-
-// TestParseNmcliScanSeenSharedAcrossCalls verifies the caller-supplied seen map
-// dedups across multiple parse calls (the scan path reuses it for the rescan).
-func TestParseNmcliScanSeenSharedAcrossCalls(t *testing.T) {
-	seen := make(map[string]bool)
-	first := parseNmcliScan("Net-A:70:WPA2\n", seen)
-	if len(first) != 1 {
-		t.Fatalf("first call got %d want 1", len(first))
-	}
-	second := parseNmcliScan("Net-A:99:WPA2\nNet-B:60:Open\n", seen)
-	if len(second) != 1 || second[0].SSID != "Net-B" {
-		t.Fatalf("second call got %+v want only Net-B (Net-A already seen)", second)
 	}
 }
 

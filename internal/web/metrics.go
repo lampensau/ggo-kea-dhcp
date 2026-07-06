@@ -18,7 +18,7 @@ import (
 const metricsSampleInterval = 12 * time.Second
 
 // metricsCap is the ring length. At metricsSampleInterval that is ~18 min of
-// history - enough to fill a sparkline on open; ~4*90 ints is a few KB.
+// history - enough to fill a sparkline on open; ~5*90 ints is a few KB.
 const metricsCap = 90
 
 // Warm-up cadence: right after start the ring is empty, so a dashboard opened in

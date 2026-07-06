@@ -82,14 +82,18 @@ type HostReservation struct {
 	Option82RemoteID  string // optional metadata for UI tracking
 }
 
-// InsertReservation inserts a single host reservation directly into MariaDB.
-func (m *MariaDB) InsertReservation(ctx context.Context, res HostReservation) error {
-	_, err := m.ExecContext(ctx, `
+// insertHostReservationSQL upserts one host reservation. Shared by the single and
+// batch inserters so the two can never drift apart.
+const insertHostReservationSQL = `
 		INSERT INTO hosts (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname)
 		VALUES (?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			ipv4_address = VALUES(ipv4_address),
-			hostname = VALUES(hostname)`,
+			hostname = VALUES(hostname)`
+
+// InsertReservation inserts a single host reservation directly into MariaDB.
+func (m *MariaDB) InsertReservation(ctx context.Context, res HostReservation) error {
+	_, err := m.ExecContext(ctx, insertHostReservationSQL,
 		res.Identifier, res.IdentifierType, res.SubnetID, res.IPv4Address, res.Hostname)
 	return err
 }
@@ -105,12 +109,7 @@ func (m *MariaDB) InsertReservations(ctx context.Context, res []HostReservation)
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO hosts (dhcp_identifier, dhcp_identifier_type, dhcp4_subnet_id, ipv4_address, hostname)
-		VALUES (?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			ipv4_address = VALUES(ipv4_address),
-			hostname = VALUES(hostname)`)
+	stmt, err := tx.PrepareContext(ctx, insertHostReservationSQL)
 	if err != nil {
 		_ = tx.Rollback()
 		return err

@@ -162,7 +162,7 @@ func TestParseIwlistScan(t *testing.T) {
 
 func TestParseNmcliScan(t *testing.T) {
 	out := "TestNet:72:WPA2\nOpenNet:55:\nTestNet:30:WPA2\n" // duplicate TestNet ignored
-	aps := parseNmcliScan(out, make(map[string]bool))
+	aps := parseNmcliScan(out)
 	if len(aps) != 2 {
 		t.Fatalf("got %d APs want 2 (dedup): %+v", len(aps), aps)
 	}
@@ -175,7 +175,7 @@ func TestParseNmcliScan(t *testing.T) {
 // (splitNmcliTerse's own edge cases are tabled in parse_test.go): an SSID containing
 // a `\:`-escaped colon must parse as one AP, not mis-split into garbage fields.
 func TestParseNmcliScanColonSSID(t *testing.T) {
-	aps := parseNmcliScan(`My\:Net:72:WPA2`+"\n", make(map[string]bool))
+	aps := parseNmcliScan(`My\:Net:72:WPA2` + "\n")
 	if len(aps) != 1 || aps[0].SSID != "My:Net" {
 		t.Fatalf("got %+v want one AP SSID My:Net", aps)
 	}

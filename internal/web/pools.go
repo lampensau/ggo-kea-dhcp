@@ -21,7 +21,7 @@ import (
 // targeted by its index so an op/save posts only that scope's fields.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	_, _, scopes, _ := s.activeProfileScopes() // id-ordered so the edit index is stable
-	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), defaultLeasePageSize)
 	leases := parseLeases(rawLeases)
 
 	boxUplink, _, _ := s.uplinkSettings()
@@ -140,7 +140,7 @@ func (s *Server) handlePoolsPlanOp(w http.ResponseWriter, r *http.Request) {
 		sc.Plan.StripRangePins()
 	}
 
-	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), defaultLeasePageSize)
 	leases := parseLeases(rawLeases)
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, leases, mode)))
 }
@@ -249,7 +249,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	if !reloaded {
 		msg = "Scope saved - it will take effect on the next reload."
 	}
-	rawLeases, _ := s.kea.GetLeases(r.Context(), 1000)
+	rawLeases, _ := s.kea.GetLeases(r.Context(), defaultLeasePageSize)
 	_ = sse.PatchElementTempl(views.ScopeServices(s.scopeServicesView(sc, sIdx)))
 	_ = sse.PatchElementTempl(views.PoolPlan(poolsEditView(sc, sIdx, parseLeases(rawLeases), mode)))
 	toast(sse, msg, "success")
@@ -420,22 +420,14 @@ func buildPoolPlanView(sc ScopeConfig, leases []parsedLease, showUtil bool, mode
 			maskSize, _ := ipnet.Mask.Size()
 			// 1. Split the computed display range (rng), e.g. "10.0.0.235 - 10.0.0.244"
 			if rng != "" {
-				if parts := strings.Split(rng, " - "); len(parts) == 2 {
-					pref, st := splitIPByMask(parts[0], maskSize)
-					_, ed := splitIPByMask(parts[1], maskSize)
-					prefix = pref
-					startPlaceholder = st
-					endPlaceholder = ed
+				if pref, st, ed, ok := splitRange(rng, maskSize); ok {
+					prefix, startPlaceholder, endPlaceholder = pref, st, ed
 				}
 			}
 			// 2. Split the RangePin (e.Range), e.g. "10.0.0.235 - 10.0.0.244" (if set)
 			if e.Range != "" {
-				if parts := strings.Split(e.Range, " - "); len(parts) == 2 {
-					pref, st := splitIPByMask(parts[0], maskSize)
-					_, ed := splitIPByMask(parts[1], maskSize)
-					prefix = pref
-					startPin = st
-					endPin = ed
+				if pref, st, ed, ok := splitRange(e.Range, maskSize); ok {
+					prefix, startPin, endPin = pref, st, ed
 				} else {
 					// Fallback: if there's no separator, treat the whole pin as startPin (without prefix if possible)
 					pref, st := splitIPByMask(e.Range, maskSize)

@@ -265,7 +265,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// The shared lease provider (leasecache.go); every read-through consumer
 	// below funnels into this one fetcher.
 	s.leaseSrc = newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
-		return s.kea.GetLeases(ctx, 1000)
+		return s.kea.GetLeases(ctx, defaultLeasePageSize)
 	})
 	// One memoized active-lease-IP provider shared by the ARP prober and the Green-GO
 	// scanner (both probe the same lease set on a ~10s cycle); its fetch reads

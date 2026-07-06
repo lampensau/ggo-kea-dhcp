@@ -166,7 +166,7 @@ func (s *Server) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
 	if err != nil {
 		log.Printf("[Rebalance] lease fetch failed: %v", err)
 		return

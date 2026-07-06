@@ -146,7 +146,7 @@ func (s *Server) macAtIP(ctx context.Context, ip string) string {
 	if s.kea == nil {
 		return ""
 	}
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
 	if err != nil {
 		return ""
 	}

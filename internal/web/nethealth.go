@@ -164,6 +164,15 @@ func memoizeLeaseIPs(fetch func() ([]string, bool), ttl time.Duration, now func(
 	}
 }
 
+// scopeIface is the Linux interface a scope is served on: eth0 untagged, eth0.<vid>
+// for a tagged VLAN. The netmon/arp/name-tagging passes all derive it the same way.
+func scopeIface(sc ScopeConfig) string {
+	if sc.VlanID != 0 {
+		return fmt.Sprintf("eth0.%d", sc.VlanID)
+	}
+	return "eth0"
+}
+
 func (s *Server) buildArpSpecs(scopes []ScopeConfig) []arpscan.Spec {
 	// The server-level shared, TTL-memoized lease-IP provider (also used by the
 	// Green-GO scanner), so N served interfaces probing in the same ~10s cycle trigger
@@ -206,15 +215,12 @@ func (s *Server) buildArpSpecs(scopes []ScopeConfig) []arpscan.Spec {
 		if err != nil {
 			continue
 		}
-		iface := "eth0"
-		if sc.VlanID != 0 {
-			iface = fmt.Sprintf("eth0.%d", sc.VlanID)
-		}
+		iface := scopeIface(sc)
 		if seen[iface] {
 			continue // one socket per interface even if several scopes share it
 		}
 		seen[iface] = true
-		mac, ok := ifaceMAC(iface)
+		mac, ok := interfaceMAC(iface)
 		if !ok {
 			continue
 		}
@@ -243,16 +249,6 @@ func (s *Server) buildArpSpecs(scopes []ScopeConfig) []arpscan.Spec {
 }
 
 // ifaceMAC returns the interface's 6-byte hardware address (false if absent / down).
-func ifaceMAC(iface string) ([6]byte, bool) {
-	ifi, err := net.InterfaceByName(iface)
-	if err != nil || len(ifi.HardwareAddr) != 6 {
-		return [6]byte{}, false
-	}
-	var mac [6]byte
-	copy(mac[:], ifi.HardwareAddr)
-	return mac, true
-}
-
 // buildNetmonSpecs derives one monitor spec per served scope. Specs come only
 // from served scopes (eth0 / eth0.<vid>), so the wlan0 uplink is excluded by
 // construction (Start also hard-rejects it defensively). The lease-snapshot
@@ -289,10 +285,7 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 		if err != nil {
 			continue
 		}
-		iface := "eth0"
-		if sc.VlanID != 0 {
-			iface = fmt.Sprintf("eth0.%d", sc.VlanID)
-		}
+		iface := scopeIface(sc)
 		// Source the served address from the live interface - the operator can
 		// configure it, so we must not assume .1. It drives static-in-pool infra
 		// exclusion. Fall back to the conventional .1 (what the reconciler assigns by
@@ -359,10 +352,7 @@ func applyScopeNames(ifaces []views.NetHealthIface, scopes []ScopeConfig) {
 		if sc.Name == "" {
 			continue
 		}
-		iface := "eth0"
-		if sc.VlanID != 0 {
-			iface = fmt.Sprintf("eth0.%d", sc.VlanID)
-		}
+		iface := scopeIface(sc)
 		names[iface] = sc.Name
 	}
 	for i := range ifaces {

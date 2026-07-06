@@ -363,11 +363,9 @@ func (s *Server) rollbackFailed(p rollbackSpec) {
 // CONFIGURING interstitial until a reboot finalizes the state, so the operator
 // must at least see why.
 func (s *Server) setActiveAudited(action, target string) {
-	err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
-	if err != nil {
-		err = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
-	}
-	if err != nil {
+	// busy_timeout=5000 already absorbs lock contention, so a bare immediate re-call
+	// bought nothing; a genuine failure here is a real DB error, audited below.
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		log.Printf("[%s] failed to persist ACTIVE state: %v", action, err)
 		_ = s.sqlite.LogAudit("SYSTEM", action, target, "",
 			"DHCP is serving but the ACTIVE state could not be persisted - the UI stays on Configuring until a reboot: "+err.Error(), "ERROR")
