@@ -42,6 +42,7 @@ type sacnDetector struct {
 type sacnUniverse struct {
 	sources    map[string]*sacnSource
 	inConflict bool
+	lastSeen   time.Time // most recent sighting here; the universe-map eviction key
 }
 
 type sacnSource struct {
@@ -95,7 +96,14 @@ func (d *sacnDetector) Consume(f Frame, now time.Time) {
 		if terminated {
 			return // nothing to terminate
 		}
-		u = &sacnUniverse{sources: make(map[string]*sacnSource)}
+		// Both keys are attacker-forgeable (16-bit universe, 16-byte CID), so cap
+		// each level: evict the stalest universe, then the stalest source within it.
+		// Stalest = least-recently-active, so a flood's once-seen fakes go first and
+		// live, continuously-transmitted sources survive.
+		if len(d.universes) >= maxSACNUniverses {
+			evictStalest(d.universes, func(u *sacnUniverse) time.Time { return u.lastSeen })
+		}
+		u = &sacnUniverse{sources: make(map[string]*sacnSource), lastSeen: now}
 		d.universes[universe] = u
 	}
 	if terminated {
@@ -106,6 +114,9 @@ func (d *sacnDetector) Consume(f Frame, now time.Time) {
 	}
 	src := u.sources[cid]
 	if src == nil {
+		if len(u.sources) >= maxSACNSourcesPerUniverse {
+			evictStalest(u.sources, func(s *sacnSource) time.Time { return s.pres.lastSeen })
+		}
 		src = &sacnSource{pres: newPresence(0, d.absence), cid: cid}
 		u.sources[cid] = src
 	}
@@ -119,6 +130,7 @@ func (d *sacnDetector) Consume(f Frame, now time.Time) {
 	}
 	src.priority = priority
 	src.pres.sighting(now)
+	u.lastSeen = now
 }
 
 // trimName decodes a NUL-padded E1.31 source-name field, through the shared

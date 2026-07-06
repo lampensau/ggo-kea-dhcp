@@ -65,6 +65,9 @@ func (d *duplicateIPDetector) Consume(f Frame, now time.Time) {
 	}
 	e := d.conflicts[opts.requestedIP]
 	if e == nil {
+		if len(d.conflicts) >= maxDupIPConflicts {
+			evictStalest(d.conflicts, func(c *conflictEntry) time.Time { return c.pres.lastSeen })
+		}
 		e = &conflictEntry{pres: newPresence(0, d.absence), ip: ipString(opts.requestedIP)}
 		d.conflicts[opts.requestedIP] = e
 	}

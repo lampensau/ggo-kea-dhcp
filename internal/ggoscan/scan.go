@@ -272,8 +272,8 @@ func (s *Scanner) recvLoop() {
 }
 
 // parseScanReply decodes a device-scan reply into a Device (name, MAC, firmware).
-// srcIP is the UDP source, i.e. the device's address. The offsets below were fixed
-// against live replies. Returns ok=false for a frame that isn't a well-formed reply.
+// srcIP is the UDP source, i.e. the device's address. Returns ok=false for a frame
+// that isn't a well-formed reply.
 func parseScanReply(payload []byte, srcIP string) (Device, bool) {
 	if len(payload) < 8 || payload[0] != 0x47 || payload[1] != 0x2d || payload[2] != 0x47 || payload[3] != 0x00 {
 		return Device{}, false

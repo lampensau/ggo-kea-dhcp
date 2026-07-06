@@ -216,8 +216,18 @@ func (d *greengoHDetector) Consume(f Frame, now time.Time) {
 	if id == "" {
 		return
 	}
+	d.recordConfig(id, name, group, now)
+}
+
+// recordConfig upserts a config observation, enforcing the maxGgoConfigs cap
+// (the id is an attacker-forgeable wire field). Split out of Consume so the cap
+// invariant is unit-testable without synthesizing announce frames.
+func (d *greengoHDetector) recordConfig(id, name, group string, now time.Time) {
 	c := d.configs[id]
 	if c == nil {
+		if len(d.configs) >= maxGgoConfigs {
+			evictStalest(d.configs, func(c *ggoConfig) time.Time { return c.lastSeen })
+		}
 		c = &ggoConfig{id: id}
 		d.configs[id] = c
 	}

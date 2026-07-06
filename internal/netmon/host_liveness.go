@@ -35,6 +35,13 @@ func (h *hostTracker) record(f Frame, now time.Time) {
 		return
 	}
 	h.mu.Lock()
+	if _, ok := h.seen[mac]; !ok && len(h.seen) >= maxHostLiveness {
+		// Attacker-forgeable key (source MAC) recorded on every captured frame with
+		// no MulticastSniff gate, so a broadcast flood of spoofed MACs would grow
+		// this without bound between prune ticks. Evict the stalest so live hosts,
+		// re-seen every frame, survive.
+		evictStalest(h.seen, func(t time.Time) time.Time { return t })
+	}
 	h.seen[mac] = now
 	h.mu.Unlock()
 }
