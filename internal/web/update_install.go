@@ -413,14 +413,49 @@ func (s *Server) reconcileUpdateResult() {
 		return
 	}
 	if man.Version == updateCurrentVersion {
+		// Reaching here means the running binary already IS the manifest's version, so
+		// the oneshot ran and restarted us mid-flight and its exit-trap result.json write
+		// is imminent (readUpdateResult above returned nil because that file is not there
+		// yet, or is a malformed partial). Fold via the manifest now; removeStaged clears
+		// a malformed leftover, and the sweep below removes the valid result.json the
+		// oneshot writes just after - which would otherwise sit orphaned in the staging
+		// dir until the next restart.
 		s.auditUpdateApplied(man.Version)
 		s.clearUpdateState()
-		s.removeStaged(updateStagedDeb, updateManifestFile, updateAptLogFile)
+		s.removeStaged(updateStagedDeb, updateManifestFile, updateResultFile, updateAptLogFile)
+		s.sweepLateUpdateResult()
 		return
 	}
 	// A staged package for some other version with no result: a crash between
 	// staging and the oneshot's report. Drop it - the operator can simply retry
 	// from the Settings card.
 	log.Printf("[update] discarding stale staged update v%s (no result recorded)", man.Version)
-	s.removeStaged(updateStagedDeb, updateManifestFile, updateAptLogFile)
+	s.removeStaged(updateStagedDeb, updateManifestFile, updateResultFile, updateAptLogFile)
+}
+
+// sweepLateUpdateResult removes the result.json that updater.sh writes from its exit
+// trap just AFTER a clean apply was already folded via reconcileUpdateResult's manifest
+// branch (the .deb postinstall restarts the service mid-oneshot, so the boot reconcile
+// can beat the result write). Without this, that late file is orphaned in the staging
+// dir until the next restart. Polls on a short cadence and stops the instant it removes
+// the file; joined to the shutdown wait and bailing on s.done, mirroring watchUpdateResult.
+func (s *Server) sweepLateUpdateResult() {
+	if !s.addBackground() {
+		return
+	}
+	go func() {
+		defer s.bgWG.Done()
+		deadline := time.Now().Add(updateResultWaitApp)
+		for time.Now().Before(deadline) {
+			select {
+			case <-time.After(updateResultPollInterval):
+			case <-s.done:
+				return
+			}
+			if _, err := os.Stat(filepath.Join(s.updateDir, updateResultFile)); err == nil {
+				s.removeStaged(updateResultFile)
+				return
+			}
+		}
+	}()
 }
