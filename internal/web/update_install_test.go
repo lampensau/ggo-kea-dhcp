@@ -304,6 +304,20 @@ func TestReconcileUpdateResultTable(t *testing.T) {
 		}
 	})
 
+	t.Run("malformed result with matching manifest folds via manifest and clears the leftover", func(t *testing.T) {
+		s, _ := newUpdateTestServer(t, nil)
+		write(t, s, updateManifestFile, manifest)
+		write(t, s, updateStagedDeb, "deb")
+		write(t, s, updateResultFile, `{not valid json`)
+		s.reconcileUpdateResult()
+		if countAudit(t, s, "UPDATE_APPLIED") != 1 {
+			t.Fatal("a malformed result must not block folding the confirmed update via the manifest")
+		}
+		if exists(s, updateStagedDeb) || exists(s, updateManifestFile) || exists(s, updateResultFile) {
+			t.Fatal("the malformed result.json and staged package must be cleared")
+		}
+	})
+
 	t.Run("stale manifest for another version is discarded", func(t *testing.T) {
 		s, _ := newUpdateTestServer(t, nil)
 		write(t, s, updateManifestFile, `{"schema":1,"version":"9.9.9","scope":"app","sha256":"ab","deb":"/x","requested_by":"admin"}`)
