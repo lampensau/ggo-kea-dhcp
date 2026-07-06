@@ -104,6 +104,11 @@ type Server struct {
 	// ARP prober and the Green-GO scanner so their ~10s cycles collapse to ONE Kea
 	// GetLeases round-trip per cycle instead of one each.
 	leaseIPs func() []string
+	// leaseSrc is the shared short-TTL lease provider every background cadence
+	// and display path reads through (see leasecache.go) - the single Kea
+	// lease fetcher outside the mutation handlers, which stay direct because
+	// they act on the state they read.
+	leaseSrc *leaseCache
 	// trunkProbe passively sniffs eth0 during onboarding to tell the setup wizard whether
 	// the switch port is trunking tagged VLANs (the full monitor runs only in ACTIVE).
 	// Started/stopped by the reconciler beside the onboarding bring-up.
@@ -169,6 +174,13 @@ type Server struct {
 	// multi-statement work into the closing database.
 	done chan struct{}
 	bgWG sync.WaitGroup
+	// bgMu + bgStopping order bgWG.Add against stopBackground's Wait: a
+	// registration racing shutdown (kickUpdateCheck fires from reconcile
+	// goroutines the join does not cover) must either land before the Wait or
+	// be refused - Add concurrent with a zero-counter Wait is the documented
+	// WaitGroup misuse. bgStopping also makes stopBackground idempotent.
+	bgMu       sync.Mutex
+	bgStopping bool
 	// lastMaint is when the storage-maintenance pass (snapshot/audit/session
 	// pruning) last ran. Touched only by the metrics sampler goroutine.
 	lastMaint time.Time
@@ -242,12 +254,18 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// The active Green-GO device scanner (6464); started under a Green-GO preset, stopped
 	// beside netmon/arp on every ACTIVE exit.
 	s.ggoscan = ggoscan.NewScanner()
+	// The shared lease provider (leasecache.go); every read-through consumer
+	// below funnels into this one fetcher.
+	s.leaseSrc = newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
+		return s.kea.GetLeases(ctx, 1000)
+	})
 	// One memoized active-lease-IP provider shared by the ARP prober and the Green-GO
-	// scanner (both probe the same lease set on a ~10s cycle).
+	// scanner (both probe the same lease set on a ~10s cycle); its fetch reads
+	// through leaseSrc so the cycle shares the ticker/sampler round-trip.
 	s.leaseIPs = memoizeLeaseIPs(func() ([]string, bool) {
 		ctx, cancel := opCtx()
 		defer cancel()
-		leases, err := s.kea.GetLeases(ctx, 1000)
+		leases, err := s.getLeases(ctx, leaseSrcTTL)
 		if err != nil {
 			return nil, false
 		}
@@ -555,6 +573,20 @@ func (s *Server) Start() error {
 	}
 }
 
+// addBackground registers one goroutine with the shutdown join, refusing once
+// shutdown has begun. Callers reachable from goroutines the join does not cover
+// (kickUpdateCheck, fired by reconciles) must use this instead of a bare
+// bgWG.Add - see bgMu.
+func (s *Server) addBackground() bool {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	if s.bgStopping {
+		return false
+	}
+	s.bgWG.Add(1)
+	return true
+}
+
 // stopBackground halts every background service and ticker loop before Start
 // returns, so main's deferred sqlite.Close never races goroutines still issuing
 // queries. Closing done ends the loops at their next select, and the Wait joins
@@ -563,7 +595,14 @@ func (s *Server) Start() error {
 // bounded too, well inside systemd's stop timeout. The service Stops are
 // idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
+	s.bgMu.Lock()
+	if s.bgStopping {
+		s.bgMu.Unlock()
+		return // idempotent: a second caller must not close(done) again
+	}
+	s.bgStopping = true
 	close(s.done)
+	s.bgMu.Unlock()
 	s.bgWG.Wait()
 	if s.netmon != nil {
 		s.netmon.Stop()

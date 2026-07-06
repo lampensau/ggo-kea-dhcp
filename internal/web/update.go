@@ -168,7 +168,11 @@ func (s *Server) startUpdateCheckLoop() {
 // kickUpdateCheck schedules one near-immediate check; called from the uplink
 // connect success path (the only moment the box knowably just gained internet).
 func (s *Server) kickUpdateCheck() {
-	s.bgWG.Add(1)
+	// addBackground, not a bare Add: this fires from reconcile goroutines the
+	// shutdown join does not cover, so it must not race stopBackground's Wait.
+	if !s.addBackground() {
+		return
+	}
 	go func() {
 		defer s.bgWG.Done()
 		select {

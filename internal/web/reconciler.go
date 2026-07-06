@@ -126,6 +126,16 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 		state = db.StateFactory
 	}
 
+	// The zero-scopes rescue window is consumed by the FIRST reconcile after
+	// process start regardless of its state - truly boot-only. A box that boots
+	// into ONBOARDING/FACTORY (or resumes an apply) never needs the rescue
+	// later; leaving the window armed through such a boot let the first
+	// post-apply settings converge demote a serving box whose rows were lost
+	// after boot. Only a box that WAKES UP claiming ACTIVE with nothing to
+	// serve may demote itself; every later zero-scopes converge surfaces the
+	// error instead of tearing a venue network down.
+	rescueOpen := s.rescueArmed.CompareAndSwap(true, false)
+
 	// A box found persisted in CONFIGURING during a converge (boot/settings - not
 	// the apply goroutine's own ModeApply) had its apply interrupted. Complete it
 	// rather than reconcile blindly (see resumeInterruptedApply).
@@ -137,13 +147,7 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 	case db.StateActive, db.StateConfiguring:
 		// ACTIVE and a live-apply CONFIGURING both serve the profile's scopes.
 		err := s.reconcileActive(mode, targetProfileID)
-		// The rescue window is the FIRST ACTIVE converge after process start
-		// (the boot reconcile): only a box that never managed to serve since
-		// starting may demote itself. Consuming the flag on that converge -
-		// success or failure - means a later zero-scopes converge (a settings
-		// save on a box whose rows were lost mid-show while its runtime still
-		// serves) surfaces the error instead of tearing the venue network down.
-		if mode == ModeConverge && state == db.StateActive && s.rescueArmed.CompareAndSwap(true, false) {
+		if rescueOpen && mode == ModeConverge && state == db.StateActive {
 			if errors.Is(err, errNoScopes) {
 				return s.rescueToOnboarding(err)
 			}

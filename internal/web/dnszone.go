@@ -204,7 +204,7 @@ func (s *Server) healDNSBinds() {
 func (s *Server) primeDNSZone() {
 	ctx, cancel := opCtx()
 	defer cancel()
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	leases, err := s.getLeases(ctx, leaseSrcTTL)
 	if err != nil {
 		return
 	}

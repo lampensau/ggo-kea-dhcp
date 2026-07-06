@@ -249,7 +249,9 @@ func (s *Server) startLiveTicker() {
 func (s *Server) tickDashboard() {
 	ctx, cancel := opCtx()
 	defer cancel()
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	// Read-through: the 3s TTL sits under the 4s tick, so each tick refreshes
+	// and the other cadences ride this poll instead of running their own.
+	leases, err := s.getLeases(ctx, leaseSrcTTL)
 	if err != nil {
 		// Kea down: the lease-derived regions freeze at their last honest state
 		// (never broadcast a guess), but the periodic set (tiles, net-health,
@@ -326,7 +328,10 @@ func (s *Server) publishMetricsTick(ctx context.Context, leases []kea.ActiveLeas
 func (s *Server) publishDashboard() {
 	ctx, cancel := opCtx()
 	defer cancel()
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	// Forced poll (maxAge 0): event-driven publishes fire right after a
+	// mutation and must broadcast the post-mutation lease set, never a
+	// cached pre-mutation one.
+	leases, err := s.getLeases(ctx, 0)
 	if err != nil {
 		// Kea down: refresh only the Kea-independent periodic regions so an
 		// event-driven push (e.g. a stand-down toggle) still lands during an
@@ -606,7 +611,10 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 		// forever, though the stream itself would keep serving hub pushes).
 		defer close(snap)
 		runRecovered("sse-snapshot", func() {
-			leases, err := s.kea.GetLeases(ctx, 1000)
+			// Read-through: page navigations reconnect the SSE stream right
+			// after the page render fetched leases - the connect snapshot
+			// shares that window instead of a second Kea round-trip per client.
+			leases, err := s.getLeases(ctx, leaseSrcTTL)
 			if err != nil {
 				return
 			}

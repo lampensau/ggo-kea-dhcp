@@ -475,9 +475,10 @@ const maxTrackedSources = 512
 // the race - device-name resolution included - are starved for the flood's
 // whole duration, not one second. That is the accepted cost; the flood itself
 // is already an outage condition on the segment. The cap budget is global
-// across all listeners/VLANs, not per segment. capLogged edge-triggers ONE log
-// line per capped stretch so the starvation is diagnosable without per-packet
-// spam.
+// across all listeners/VLANs, not per segment. capLogged edge-triggers one log
+// line per capped WINDOW - it resets with the per-second rollover, so a
+// sustained flood logs roughly once a second for its duration - keeping the
+// starvation diagnosable without per-packet spam.
 type rateLimiter struct {
 	mu        sync.Mutex
 	window    int64

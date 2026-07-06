@@ -251,7 +251,10 @@ func (s *Server) handleLeasesSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = datastar.ReadSignals(r, &sig)
 
-	leases, err := s.kea.GetLeases(r.Context(), 1000)
+	// Read-through: the search box filters a display snapshot - a debounced
+	// keystroke must not cost a Kea round-trip when the ticker refreshed the
+	// set moments ago.
+	leases, err := s.getLeases(r.Context(), leaseSrcTTL)
 	if err != nil {
 		// Surface the real error rather than fabricate leases when Kea is down.
 		log.Printf("Kea API lease query failed: %v", err)
@@ -295,10 +298,19 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	// be reached and rebooted to re-request DHCP immediately. The MAC rides along as the
 	// freshness anchor the reboot handler matches against.
 	if dev, ok := s.rebootOfferForIP(ip); ok {
-		ipArg, _ := json.Marshal(dev.IP)
-		nameArg, _ := json.Marshal(dev.Name)
-		macArg, _ := json.Marshal(dev.MAC)
-		_ = sse.ExecuteScript(
-			"window.ggoRebootOpen&&window.ggoRebootOpen(" + string(ipArg) + "," + string(nameArg) + "," + string(macArg) + ")")
+		rebootExecScript(sse, dev)
 	}
+}
+
+// rebootExecScript opens the reboot-to-apply dialog on the submitting page over
+// SSE (the live equivalent of setFlashDevice's reload-and-auto-open). The
+// `ggoRebootOpen&&` guard makes it a no-op on a page without the opener mounted
+// (e.g. a reserve submitted from the dashboard), so callers can always attempt
+// it. ExecuteScript self-removes the node, so repeated ops don't pile up.
+func rebootExecScript(sse *datastar.ServerSentEventGenerator, dev FlashDevice) {
+	ipArg, _ := json.Marshal(dev.IP)
+	nameArg, _ := json.Marshal(dev.Name)
+	macArg, _ := json.Marshal(dev.MAC)
+	_ = sse.ExecuteScript(
+		"window.ggoRebootOpen&&window.ggoRebootOpen(" + string(ipArg) + "," + string(nameArg) + "," + string(macArg) + ")")
 }

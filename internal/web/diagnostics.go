@@ -87,7 +87,13 @@ func (s *Server) journalTail() ([]string, string) {
 	}
 	// journalctl prints this marker (and exits 0) when the unit has no entries,
 	// so an empty tail surfaces as the honest empty state, not as a one-line log.
-	out := strings.TrimSpace(strings.ReplaceAll(r.out, "-- No entries --", ""))
+	// Exact whole-output match: journalctl emits this marker only as the sole
+	// output of an empty journal. A substring replace would silently excise the
+	// text from a real log line that happens to contain it.
+	out := strings.TrimSpace(r.out)
+	if out == "-- No entries --" {
+		out = ""
+	}
 	lines := tailLines(out, logTailLines)
 	if len(lines) == 0 {
 		return nil, "The journal returned no entries."
