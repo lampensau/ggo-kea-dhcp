@@ -502,6 +502,9 @@ table td:has(> .row-actions) { width:1%; white-space:nowrap; }
 
 th[data-sort] { cursor:pointer; user-select:none; }
 th[data-sort]:hover { color:var(--text); }
+/* The sort trigger is a real <button> for keyboard/AT operability; strip all button
+   chrome so it reads as the plain header text (color follows th[data-sort]:hover). */
+.th-sort { font:inherit; color:inherit; letter-spacing:inherit; text-transform:inherit; text-align:inherit; vertical-align:baseline; background:none; border:0; margin:0; padding:0; cursor:pointer; }
 th[aria-sort]::after { content:" ↑"; font-size:10px; color:var(--text-muted); }
 th[aria-sort="descending"]::after { content:" ↓"; }
 

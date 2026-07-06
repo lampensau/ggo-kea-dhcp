@@ -164,7 +164,7 @@ func dashScript() templ.Component {
 			templ_7745c5c3_Var3 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<script>\n\t\t(function () {\n\t\t\t// Sort state is keyed by table id and kept in this closure (NOT on the\n\t\t\t// element) so it survives an SSE patch that re-renders the table.\n\t\t\tvar S = {};\n\t\t\tfunction cellVal(row, col, type) {\n\t\t\t\tvar cell = row.children[col];\n\t\t\t\tif (!cell) return \"\";\n\t\t\t\tvar v = (cell.textContent || \"\").trim();\n\t\t\t\tif (type === \"num\") { var n = parseFloat(v.replace(/[^0-9.\\-]/g, \"\")); return isNaN(n) ? -Infinity : n; }\n\t\t\t\tif (type === \"ip\") { var m = v.match(/(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)/); return m ? ((+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4])) : -Infinity; }\n\t\t\t\treturn v.toLowerCase();\n\t\t\t}\n\t\t\tfunction sortRows(table, col, dir) {\n\t\t\t\tif (!table.tHead || !table.tBodies[0]) return;\n\t\t\t\tvar ths = table.tHead.rows[0].cells;\n\t\t\t\tif (dir) {\n\t\t\t\t\tvar type = ths[col] ? (ths[col].getAttribute(\"data-sort\") || \"text\") : \"text\";\n\t\t\t\t\tvar tb = table.tBodies[0];\n\t\t\t\t\tArray.prototype.slice.call(tb.rows).sort(function (a, b) {\n\t\t\t\t\t\tvar av = cellVal(a, col, type), bv = cellVal(b, col, type);\n\t\t\t\t\t\treturn av < bv ? -dir : av > bv ? dir : 0;\n\t\t\t\t\t}).forEach(function (r) { tb.appendChild(r); });\n\t\t\t\t}\n\t\t\t\tfor (var i = 0; i < ths.length; i++) ths[i].removeAttribute(\"aria-sort\");\n\t\t\t\tif (dir && ths[col]) ths[col].setAttribute(\"aria-sort\", dir === 1 ? \"ascending\" : \"descending\");\n\t\t\t}\n\t\t\t// Shared by pointer and keyboard so a header sorts identically either way.\n\t\t\tfunction trigger(th) {\n\t\t\t\tvar table = th.closest(\"table.sortable\");\n\t\t\t\tif (!table || !table.id) return;\n\t\t\t\tvar col = Array.prototype.indexOf.call(th.parentNode.children, th);\n\t\t\t\tvar cur = S[table.id];\n\t\t\t\t// Cycle the same column none → asc → desc → none.\n\t\t\t\tvar dir = (cur && cur.col === col) ? (cur.dir === 1 ? -1 : cur.dir === -1 ? 0 : 1) : 1;\n\t\t\t\tif (dir) S[table.id] = { col: col, dir: dir }; else delete S[table.id];\n\t\t\t\t// While sorted, freeze the live pool table so the 4s morph can't\n\t\t\t\t// reorder it back (Datastar honors data-ignore-morph); clearing the\n\t\t\t\t// sort removes it so live updates resume.\n\t\t\t\tvar live = table.closest(\"#pool-table\");\n\t\t\t\tif (live) { if (dir) live.setAttribute(\"data-ignore-morph\", \"\"); else live.removeAttribute(\"data-ignore-morph\"); }\n\t\t\t\tsortRows(table, col, dir);\n\t\t\t}\n\t\t\tdocument.addEventListener(\"click\", function (e) {\n\t\t\t\tvar th = e.target.closest(\"th[data-sort]\");\n\t\t\t\tif (th) trigger(th);\n\t\t\t});\n\t\t\t// The headers carry tabindex=0 (set in markup so it survives an SSE morph),\n\t\t\t// so keyboard users can focus and activate a sort with Enter/Space.\n\t\t\tdocument.addEventListener(\"keydown\", function (e) {\n\t\t\t\tif (e.key !== \"Enter\" && e.key !== \" \" && e.key !== \"Spacebar\") return;\n\t\t\t\tvar th = e.target.closest && e.target.closest(\"th[data-sort]\");\n\t\t\t\tif (!th) return;\n\t\t\t\te.preventDefault(); // Space would otherwise scroll the page\n\t\t\t\ttrigger(th);\n\t\t\t});\n\t\t})();\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<script>\n\t\t(function () {\n\t\t\t// Sort state is keyed by table id and kept in this closure (NOT on the\n\t\t\t// element) so it survives an SSE patch that re-renders the table.\n\t\t\tvar S = {};\n\t\t\tfunction cellVal(row, col, type) {\n\t\t\t\tvar cell = row.children[col];\n\t\t\t\tif (!cell) return \"\";\n\t\t\t\tvar v = (cell.textContent || \"\").trim();\n\t\t\t\tif (type === \"num\") { var n = parseFloat(v.replace(/[^0-9.\\-]/g, \"\")); return isNaN(n) ? -Infinity : n; }\n\t\t\t\tif (type === \"ip\") { var m = v.match(/(\\d+)\\.(\\d+)\\.(\\d+)\\.(\\d+)/); return m ? ((+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4])) : -Infinity; }\n\t\t\t\treturn v.toLowerCase();\n\t\t\t}\n\t\t\tfunction sortRows(table, col, dir) {\n\t\t\t\tif (!table.tHead || !table.tBodies[0]) return;\n\t\t\t\tvar ths = table.tHead.rows[0].cells;\n\t\t\t\tif (dir) {\n\t\t\t\t\tvar type = ths[col] ? (ths[col].getAttribute(\"data-sort\") || \"text\") : \"text\";\n\t\t\t\t\tvar tb = table.tBodies[0];\n\t\t\t\t\tArray.prototype.slice.call(tb.rows).sort(function (a, b) {\n\t\t\t\t\t\tvar av = cellVal(a, col, type), bv = cellVal(b, col, type);\n\t\t\t\t\t\treturn av < bv ? -dir : av > bv ? dir : 0;\n\t\t\t\t\t}).forEach(function (r) { tb.appendChild(r); });\n\t\t\t\t}\n\t\t\t\tfor (var i = 0; i < ths.length; i++) ths[i].removeAttribute(\"aria-sort\");\n\t\t\t\tif (dir && ths[col]) ths[col].setAttribute(\"aria-sort\", dir === 1 ? \"ascending\" : \"descending\");\n\t\t\t}\n\t\t\t// Shared by pointer and keyboard so a header sorts identically either way.\n\t\t\tfunction trigger(th) {\n\t\t\t\tvar table = th.closest(\"table.sortable\");\n\t\t\t\tif (!table || !table.id) return;\n\t\t\t\tvar col = Array.prototype.indexOf.call(th.parentNode.children, th);\n\t\t\t\tvar cur = S[table.id];\n\t\t\t\t// Cycle the same column none → asc → desc → none.\n\t\t\t\tvar dir = (cur && cur.col === col) ? (cur.dir === 1 ? -1 : cur.dir === -1 ? 0 : 1) : 1;\n\t\t\t\tif (dir) S[table.id] = { col: col, dir: dir }; else delete S[table.id];\n\t\t\t\t// While sorted, freeze the live pool table so the 4s morph can't\n\t\t\t\t// reorder it back (Datastar honors data-ignore-morph); clearing the\n\t\t\t\t// sort removes it so live updates resume.\n\t\t\t\tvar live = table.closest(\"#pool-table\");\n\t\t\t\tif (live) { if (dir) live.setAttribute(\"data-ignore-morph\", \"\"); else live.removeAttribute(\"data-ignore-morph\"); }\n\t\t\t\tsortRows(table, col, dir);\n\t\t\t}\n\t\t\t// Each sortable header wraps its label in a real <button> (markup below), so a\n\t\t\t// screen reader announces it as an activatable control and Enter/Space fire a\n\t\t\t// native click - no separate keydown handler or tabindex needed. This delegated\n\t\t\t// click catches both the pointer click and the button's synthesized keyboard click.\n\t\t\tdocument.addEventListener(\"click\", function (e) {\n\t\t\t\tvar th = e.target.closest(\"th[data-sort]\");\n\t\t\t\tif (th) trigger(th);\n\t\t\t});\n\t\t})();\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -205,7 +205,7 @@ func dashHead(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(v.ProfileName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 109, Col: 40}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 104, Col: 40}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -218,7 +218,7 @@ func dashHead(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(v.Preset)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 111, Col: 19}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 106, Col: 19}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -236,7 +236,7 @@ func dashHead(v DashboardView) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(v.Interface)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 116, Col: 36}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 111, Col: 36}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -254,7 +254,7 @@ func dashHead(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(itoa(v.TotalScopes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 118, Col: 30}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 113, Col: 30}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -267,7 +267,7 @@ func dashHead(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(pluralize(v.TotalScopes, "scope", "scopes"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 118, Col: 78}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 113, Col: 78}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -341,7 +341,7 @@ func DashLLDP(c LLDPChip) templ.Component {
 			var templ_7745c5c3_Var11 string
 			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(lldpChipText(c))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 136, Col: 20}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 131, Col: 20}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 			if templ_7745c5c3_Err != nil {
@@ -418,7 +418,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var13 string
 					templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.ResolveAttributeValue(itoa(p.ID))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 159, Col: 74}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 154, Col: 74}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var13)
 					if templ_7745c5c3_Err != nil {
@@ -431,7 +431,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var14 string
 					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 159, Col: 95}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 154, Col: 95}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var14)
 					if templ_7745c5c3_Err != nil {
@@ -452,7 +452,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var15 string
 					templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(p.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 161, Col: 47}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 156, Col: 47}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 					if templ_7745c5c3_Err != nil {
@@ -465,7 +465,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var16 string
 					templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(itoa(p.ScopeCount))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 162, Col: 59}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 157, Col: 59}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 					if templ_7745c5c3_Err != nil {
@@ -478,7 +478,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var17 string
 					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(pluralize(p.ScopeCount, "scope", "scopes"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 162, Col: 106}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 157, Col: 106}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 					if templ_7745c5c3_Err != nil {
@@ -491,7 +491,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var18 string
 					templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(itoa(p.ID))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 164, Col: 73}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 159, Col: 73}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 					if templ_7745c5c3_Err != nil {
@@ -504,7 +504,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var19 string
 					templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 164, Col: 94}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 159, Col: 94}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var19)
 					if templ_7745c5c3_Err != nil {
@@ -517,7 +517,7 @@ func configMenu(profiles []ProfileOption, csrf string, showEditPools bool) templ
 					var templ_7745c5c3_Var20 string
 					templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue("Delete " + p.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 164, Col: 213}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 159, Col: 213}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 					if templ_7745c5c3_Err != nil {
@@ -640,7 +640,7 @@ func profileActivateDialog(csrf string) templ.Component {
 		var templ_7745c5c3_Var22 string
 		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrf)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 199, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 194, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22)
 		if templ_7745c5c3_Err != nil {
@@ -690,7 +690,7 @@ func profileDeleteDialog(csrf string) templ.Component {
 		var templ_7745c5c3_Var24 string
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.ResolveAttributeValue(csrf)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 219, Col: 54}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 214, Col: 54}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var24)
 		if templ_7745c5c3_Err != nil {
@@ -860,7 +860,7 @@ func PoolTableRollup(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var30 string
 		templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.ResolveAttributeValue(poolsRollupDetail(v.Pools))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 281, Col: 93}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 276, Col: 93}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var30)
 		if templ_7745c5c3_Err != nil {
@@ -873,7 +873,7 @@ func PoolTableRollup(v DashboardView) templ.Component {
 		var templ_7745c5c3_Var31 string
 		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(poolsRollupText(v.Pools))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 281, Col: 122}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 276, Col: 122}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 		if templ_7745c5c3_Err != nil {
@@ -928,7 +928,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "<div class=\"table-scroll\"><table id=\"pool-table-tbl\" class=\"sortable\"><thead><tr><th data-sort=\"text\" tabindex=\"0\">Class</th><th data-sort=\"ip\" tabindex=\"0\">Range</th><th data-sort=\"num\" tabindex=\"0\">Used</th><th data-sort=\"num\" tabindex=\"0\">Capacity</th><th data-sort=\"num\" tabindex=\"0\">Utilization</th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "<div class=\"table-scroll\"><table id=\"pool-table-tbl\" class=\"sortable\"><thead><tr><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Class</button></th><th data-sort=\"ip\"><button type=\"button\" class=\"th-sort\">Range</button></th><th data-sort=\"num\"><button type=\"button\" class=\"th-sort\">Used</button></th><th data-sort=\"num\"><button type=\"button\" class=\"th-sort\">Capacity</button></th><th data-sort=\"num\"><button type=\"button\" class=\"th-sort\">Utilization</button></th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -940,7 +940,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				var templ_7745c5c3_Var33 string
 				templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.ResolveAttributeValue(p.ClassName)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 310, Col: 31}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 305, Col: 31}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var33)
 				if templ_7745c5c3_Err != nil {
@@ -953,7 +953,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				var templ_7745c5c3_Var34 string
 				templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(p.Label)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 310, Col: 43}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 305, Col: 43}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 				if templ_7745c5c3_Err != nil {
@@ -966,7 +966,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				var templ_7745c5c3_Var35 string
 				templ_7745c5c3_Var35, templ_7745c5c3_Err = templ.JoinStringErrs(p.IPRange)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 311, Col: 36}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 306, Col: 36}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var35))
 				if templ_7745c5c3_Err != nil {
@@ -979,7 +979,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				var templ_7745c5c3_Var36 string
 				templ_7745c5c3_Var36, templ_7745c5c3_Err = templ.JoinStringErrs(itoa(p.Allocated))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 312, Col: 44}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 307, Col: 44}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var36))
 				if templ_7745c5c3_Err != nil {
@@ -992,7 +992,7 @@ func PoolTableBody(v DashboardView) templ.Component {
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templ.JoinStringErrs(itoa(p.Capacity))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 313, Col: 43}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 308, Col: 43}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var37))
 				if templ_7745c5c3_Err != nil {
@@ -1074,7 +1074,7 @@ func poolMeter(p PoolRow) templ.Component {
 		var templ_7745c5c3_Var41 string
 		templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.ResolveAttributeValue(itoa(p.Percent))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 326, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 321, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var41)
 		if templ_7745c5c3_Err != nil {
@@ -1087,7 +1087,7 @@ func poolMeter(p PoolRow) templ.Component {
 		var templ_7745c5c3_Var42 string
 		templ_7745c5c3_Var42, templ_7745c5c3_Err = templruntime.SanitizeStyleAttributeValues("width:" + itoa(clampPct(p.Percent)) + "%")
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 327, Col: 59}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 322, Col: 59}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 		if templ_7745c5c3_Err != nil {
@@ -1100,7 +1100,7 @@ func poolMeter(p PoolRow) templ.Component {
 		var templ_7745c5c3_Var43 string
 		templ_7745c5c3_Var43, templ_7745c5c3_Err = templ.JoinStringErrs(itoa(p.Percent))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 329, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/dashboard.templ`, Line: 324, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var43))
 		if templ_7745c5c3_Err != nil {

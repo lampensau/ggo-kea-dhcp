@@ -82,18 +82,13 @@ templ dashScript() {
 				if (live) { if (dir) live.setAttribute("data-ignore-morph", ""); else live.removeAttribute("data-ignore-morph"); }
 				sortRows(table, col, dir);
 			}
+			// Each sortable header wraps its label in a real <button> (markup below), so a
+			// screen reader announces it as an activatable control and Enter/Space fire a
+			// native click - no separate keydown handler or tabindex needed. This delegated
+			// click catches both the pointer click and the button's synthesized keyboard click.
 			document.addEventListener("click", function (e) {
 				var th = e.target.closest("th[data-sort]");
 				if (th) trigger(th);
-			});
-			// The headers carry tabindex=0 (set in markup so it survives an SSE morph),
-			// so keyboard users can focus and activate a sort with Enter/Space.
-			document.addEventListener("keydown", function (e) {
-				if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
-				var th = e.target.closest && e.target.closest("th[data-sort]");
-				if (!th) return;
-				e.preventDefault(); // Space would otherwise scroll the page
-				trigger(th);
 			});
 		})();
 	</script>
@@ -297,11 +292,11 @@ templ PoolTableBody(v DashboardView) {
 				<table id="pool-table-tbl" class="sortable">
 					<thead>
 						<tr>
-							<th data-sort="text" tabindex="0">Class</th>
-							<th data-sort="ip" tabindex="0">Range</th>
-							<th data-sort="num" tabindex="0">Used</th>
-							<th data-sort="num" tabindex="0">Capacity</th>
-							<th data-sort="num" tabindex="0">Utilization</th>
+							<th data-sort="text"><button type="button" class="th-sort">Class</button></th>
+							<th data-sort="ip"><button type="button" class="th-sort">Range</button></th>
+							<th data-sort="num"><button type="button" class="th-sort">Used</button></th>
+							<th data-sort="num"><button type="button" class="th-sort">Capacity</button></th>
+							<th data-sort="num"><button type="button" class="th-sort">Utilization</button></th>
 						</tr>
 					</thead>
 					<tbody>
