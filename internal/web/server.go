@@ -533,7 +533,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /system/poweroff", s.handleSystemPowerOff)
 
 	mux.HandleFunc("POST /update/check", s.handleUpdateCheck)
-	mux.HandleFunc("POST /update/dismiss", s.handleUpdateDismiss)
 	mux.HandleFunc("POST /update/install", s.handleUpdateInstall)
 
 	// The dedicated CaptiveRedirectMiddleware was dropped: lifecycleMiddleware is
@@ -651,7 +650,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request, title string) 
 		d.CSRFToken = csrf
 		d.SysHealth = s.buildSysHealthView(state)
 		d.HealthPill = s.buildStatusPill(state)
-		d.Update = s.updateBadgeView() // first paint of the footer #update-badge
+		d.Update = s.buildUpdateView(csrf) // first paint of the footer badge + its dialogs
 		if s.health != nil {
 			d.BackendAlerts = s.backendAlertRows() // first paint of the #backend-alert strip (health + preflight)
 		}

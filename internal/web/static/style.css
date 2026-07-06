@@ -194,6 +194,9 @@ a.status-pill:hover { filter:brightness(1.08); }
 /* Auth pages (login/factory) have no footer buttons and a centered content column,
    so the lone version centers instead of pinning left. */
 .app-footer-inner.is-center { justify-content:center; }
+.app-footer-inner:not(.is-center) .settings-version { margin-right:auto; } /* version left, pushes the rest right */
+.app-footer-inner.has-actions { position:relative; } /* buttons present: center the badge over the bar */
+.app-footer-inner.has-actions #update-badge { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
 .app-footer .settings-version { margin:0; text-align:left; }
 .save-bar-spacer { height:64px; }
 
@@ -924,12 +927,32 @@ th[aria-sort="descending"]::after { content:" ↓"; }
 
 /* Software update: footer badge (#update-badge is a live region - empty when
    current or dismissed) + the Settings card meta line + the release-notes dialog. */
-#update-badge { display:inline-flex; margin-right:auto; }
+#update-badge { display:inline-flex; }
 #update-badge:empty { display:none; }
-.update-badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:var(--r-full); font-size:11.5px; font-weight:600; line-height:1.5; background:var(--accent-tint); border:1px solid var(--ok-border); color:var(--accent); text-decoration:none; }
-.update-badge .lucide { width:12px; height:12px; }
-.update-badge:hover { border-color:var(--accent); }
+/* Calm "update available" affordance: an accent download icon (the meaningful
+   signal) beside muted text - no filled pill. */
+.update-badge { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:500; line-height:1.5; color:var(--text-secondary); background:none; border:0; padding:0; cursor:pointer; text-decoration:none; font-family:inherit; }
+.update-badge .lucide { width:14px; height:14px; color:var(--accent); flex:none; }
+.update-badge .mono { color:var(--text); }
+.update-badge:hover { color:var(--accent); }
+.update-badge:hover .lucide { color:var(--accent); }
+/* update dialog (opened from the footer badge). Reuses .dialog-* structure. */
+.update-dialog { max-width:440px; }
+.update-dialog .dialog-head { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); }
+.update-dialog .dialog-head .lucide { width:16px; height:16px; vertical-align:-3px; margin-right:6px; }
+.dialog-x { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; background:none; border:0; border-radius:var(--r-sm); color:var(--text-secondary); cursor:pointer; }
+.dialog-x:hover { background:var(--surface-sunken); color:var(--text); }
+.dialog-x .lucide { width:16px; height:16px; }
+.update-versions { margin:0 0 var(--sp-2); }
+.update-notes-link { display:inline-flex; align-items:center; gap:5px; margin-top:var(--sp-2); background:none; border:0; padding:0; color:var(--accent); font:inherit; font-size:12px; cursor:pointer; }
+.update-notes-link .lucide { width:14px; height:14px; }
+.update-notes-link:hover { text-decoration:underline; text-underline-offset:2px; }
 .update-meta { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; margin-bottom:var(--sp-3); }
+/* Card header uses the full width: version/status left, actions right on one row. */
+.update-top { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4); flex-wrap:wrap; }
+.update-top .update-meta { margin-bottom:0; }
+.update-top .btn-row { margin:0; flex-wrap:wrap; }
+.update-top + .help, .update-top + .alert { margin-top:var(--sp-3); }
 dialog.update-notes { width:min(560px, calc(100vw - 32px)); }
 dialog.update-notes .dialog-body { max-height:min(60vh, 480px); overflow-y:auto; }
 .note-h { display:block; margin:var(--sp-3) 0 var(--sp-1); font-size:13px; }

@@ -30,7 +30,7 @@ func TestZZPreviewUpdate(t *testing.T) {
 
 	// Footer badge in its real footer context (shown + hidden).
 	b.WriteString(`<h3 class="section-heading">Footer badge (visible state)</h3><footer class="app-footer" style="position:static"><div class="app-footer-inner"><span class="settings-version">Green-GO Kea DHCP v1.1.2</span>`)
-	_ = UpdateBadge(UpdateBadgeView{Show: true, Version: "1.2.0"}).Render(ctx, &b)
+	_ = UpdateBadge(UpdateView{Available: true, Version: "1.2.0"}).Render(ctx, &b)
 	b.WriteString(`<div class="btn-row"></div></div></footer>`)
 
 	section := func(title string, v UpdateView) {

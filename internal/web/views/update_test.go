@@ -57,17 +57,18 @@ func TestParseReleaseNotesBlocks(t *testing.T) {
 
 func TestUpdateBadgeRendersEmptyWhenHidden(t *testing.T) {
 	var b strings.Builder
-	if err := UpdateBadge(UpdateBadgeView{}).Render(context.Background(), &b); err != nil {
+	if err := UpdateBadge(UpdateView{}).Render(context.Background(), &b); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(b.String(), "update-badge\"><a") || strings.Contains(b.String(), "href") {
+	if strings.Contains(b.String(), "<button") {
 		t.Fatalf("hidden badge must render an empty span: %s", b.String())
 	}
+	// Available: a button that opens the update dialog, with the version.
 	b.Reset()
-	if err := UpdateBadge(UpdateBadgeView{Show: true, Version: "1.2.3"}).Render(context.Background(), &b); err != nil {
+	if err := UpdateBadge(UpdateView{Available: true, Version: "1.2.3"}).Render(context.Background(), &b); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "/settings#update") || !strings.Contains(b.String(), "1.2.3") {
-		t.Fatalf("visible badge missing link/version: %s", b.String())
+	if !strings.Contains(b.String(), "update-dialog") || !strings.Contains(b.String(), "1.2.3") {
+		t.Fatalf("visible badge must open the dialog and show the version: %s", b.String())
 	}
 }

@@ -354,7 +354,7 @@ templ poolDragScript() {
 templ appFooter(d PageData) {
 	<div class="save-bar-spacer" aria-hidden="true"></div>
 	<footer class="app-footer">
-		<div class="app-footer-inner">
+		<div class={ "app-footer-inner", templ.KV("has-actions", d.CurrentPath == "/settings" || d.CurrentPath == "/setup") }>
 			<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
 			@UpdateBadge(d.Update)
 			<div class="btn-row">
@@ -376,6 +376,10 @@ templ appFooter(d PageData) {
 			</div>
 		</div>
 	</footer>
+	// The update dialogs (nudge + install confirm + notes) live outside the flex
+	// footer so they never affect its layout; the footer badge and the Settings
+	// card both open them by id.
+	@updateDialogs(d.Update)
 }
 
 templ themeToggleScript() {

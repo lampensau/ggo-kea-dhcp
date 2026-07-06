@@ -40,8 +40,8 @@ const (
 )
 
 // app_state keys for the persisted check result. update_latest_* describe the
-// newest known release; the two latches keep the audit row and the badge
-// dismissal one-per-version across restarts.
+// newest known release; the notified latch keeps the audit row one-per-version
+// across restarts.
 const (
 	stateUpdateLastCheck    = "update_last_check"
 	stateUpdateVersion      = "update_latest_version"
@@ -50,7 +50,6 @@ const (
 	stateUpdateDebURL       = "update_latest_deb_url"
 	stateUpdateSHA256       = "update_latest_deb_sha256"
 	stateUpdateNotified     = "update_notified_version"
-	stateUpdateDismissed    = "update_dismissed_version"
 	stateUpdateBackoffUntil = "update_backoff_until"
 	stateUpdateNeedsSystem  = "update_needs_system"
 )
@@ -342,23 +341,11 @@ func (s *Server) publishUpdateBadge() {
 	if s.live == nil {
 		return
 	}
-	s.live.publishIfChanged("update-badge", renderFragment(views.UpdateBadge(s.updateBadgeView())))
+	s.live.publishIfChanged("update-badge", renderFragment(views.UpdateBadge(s.buildUpdateView(""))))
 }
 
-// updateBadgeView derives the footer badge state: shown only when a strictly
-// newer release is known and the operator has not dismissed that exact version.
-func (s *Server) updateBadgeView() views.UpdateBadgeView {
-	latest, _ := s.sqlite.GetState(stateUpdateVersion)
-	if latest == "" || !semverNewer(latest, updateCurrentVersion) {
-		return views.UpdateBadgeView{}
-	}
-	if dismissed, _ := s.sqlite.GetState(stateUpdateDismissed); dismissed == latest {
-		return views.UpdateBadgeView{}
-	}
-	return views.UpdateBadgeView{Show: true, Version: latest}
-}
-
-// buildUpdateView assembles the Settings card's state from app_state.
+// buildUpdateView assembles the footer badge/dialog and the Settings card state
+// from app_state.
 func (s *Server) buildUpdateView(csrf string) views.UpdateView {
 	latest, _ := s.sqlite.GetState(stateUpdateVersion)
 	v := views.UpdateView{Current: updateCurrentVersion, CSRF: csrf}
@@ -382,8 +369,6 @@ func (s *Server) buildUpdateView(csrf string) views.UpdateView {
 	v.CanInstall = sha != ""
 	ns, _ := s.sqlite.GetState(stateUpdateNeedsSystem)
 	v.NeedsSystem = ns == "1"
-	dismissed, _ := s.sqlite.GetState(stateUpdateDismissed)
-	v.Dismissed = dismissed == latest
 	return v
 }
 
@@ -404,20 +389,6 @@ func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		s.setFlash(w, r, "Update v"+latest+" is available.", "success")
 	default:
 		s.setFlash(w, r, "You are running the latest version.", "success")
-	}
-	s.redirectHTMX(w, r, "/settings")
-}
-
-// handleUpdateDismiss hides the footer badge for the currently known version
-// (the Settings card keeps showing it; a NEWER release resurfaces the badge).
-func (s *Server) handleUpdateDismiss(w http.ResponseWriter, r *http.Request) {
-	latest, _ := s.sqlite.GetState(stateUpdateVersion)
-	if latest != "" {
-		if err := s.sqlite.SetState(stateUpdateDismissed, latest); err != nil {
-			s.handleError(w, r, "Failed to save the dismissal", http.StatusInternalServerError)
-			return
-		}
-		s.publishUpdateBadge()
 	}
 	s.redirectHTMX(w, r, "/settings")
 }

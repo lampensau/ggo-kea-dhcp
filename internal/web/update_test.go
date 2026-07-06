@@ -160,7 +160,7 @@ func TestCheckForUpdateStateMachine(t *testing.T) {
 	if got := countAudit(t, s, "UPDATE_AVAILABLE"); got != 1 {
 		t.Fatalf("UPDATE_AVAILABLE audited %d times, want 1", got)
 	}
-	if !s.updateBadgeView().Show {
+	if !s.buildUpdateView("").Available {
 		t.Fatal("badge should show for a newer release")
 	}
 
@@ -179,7 +179,7 @@ func TestCheckForUpdateStateMachine(t *testing.T) {
 	}
 	mustState(stateUpdateVersion, "")
 	mustState(stateUpdateSHA256, "")
-	if s.updateBadgeView().Show {
+	if s.buildUpdateView("").Available {
 		t.Fatal("badge must clear once the box is current")
 	}
 
@@ -229,33 +229,6 @@ func TestCheckForUpdateNoDigestMeansNotifyOnly(t *testing.T) {
 	}
 	if v.Scope != "app" {
 		t.Fatalf("missing manifest must default scope to app, got %q", v.Scope)
-	}
-}
-
-func TestUpdateDismiss(t *testing.T) {
-	s, _ := newUpdateTestServer(t, nil)
-	_ = s.sqlite.SetStates(map[string]string{stateUpdateVersion: "9.9.9"})
-	if !s.updateBadgeView().Show {
-		t.Fatal("badge should show before dismissal")
-	}
-
-	w := httptest.NewRecorder()
-	s.handleUpdateDismiss(w, httptest.NewRequest("POST", "/update/dismiss", nil))
-	if w.Code != http.StatusFound {
-		t.Fatalf("dismiss status = %d", w.Code)
-	}
-	if s.updateBadgeView().Show {
-		t.Fatal("badge must hide after dismissal")
-	}
-	// The card still shows the release; only the badge is dismissed.
-	if v := s.buildUpdateView("tok"); !v.Available || !v.Dismissed {
-		t.Fatalf("card should keep showing a dismissed release: %+v", v)
-	}
-
-	// A NEWER version resurfaces the badge.
-	_ = s.sqlite.SetState(stateUpdateVersion, "9.9.10")
-	if !s.updateBadgeView().Show {
-		t.Fatal("a newer version must resurface the badge")
 	}
 }
 
