@@ -111,8 +111,13 @@ func openAndMigrate(dbPath string) (*SQLiteDB, error) {
 	// handle (iterate it fully, or collect rows into a slice and Close, THEN query).
 	db.SetMaxOpenConns(1)
 
-	// WAL + foreign keys for integrity; busy_timeout as a backstop.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"); err != nil {
+	// WAL + foreign keys for integrity; busy_timeout as a backstop. synchronous=NORMAL
+	// (not the modernc build default of FULL) moves the fsync from every commit to
+	// WAL-checkpoint time - a large cut in SD-card writes and write latency for the
+	// per-request audit/session/last-seen churn. Safe under WAL: an unclean power loss
+	// can drop the last un-checkpointed transactions but cannot corrupt the database.
+	// Do not raise it back to FULL. Sticks because the pool is a single connection.
+	if _, err := db.Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;"); err != nil {
 		db.Close()
 		return nil, classifyDBErr("failed to configure sqlite parameters", err)
 	}

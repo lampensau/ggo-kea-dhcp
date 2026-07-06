@@ -57,6 +57,20 @@ func TestBusyTimeoutSet(t *testing.T) {
 	}
 }
 
+// TestSynchronousNormal checks the fsync-cutting pragma is applied on open: 1 is
+// NORMAL (the SD-card-friendly WAL setting), not the modernc build default of 2 (FULL).
+func TestSynchronousNormal(t *testing.T) {
+	sdb := openTestDB(t)
+
+	var mode int
+	if err := sdb.QueryRow("PRAGMA synchronous;").Scan(&mode); err != nil {
+		t.Fatalf("read synchronous: %v", err)
+	}
+	if mode != 1 {
+		t.Errorf("synchronous = %d, want 1 (NORMAL)", mode)
+	}
+}
+
 // TestDowngradeGuard verifies a database whose user_version is newer than this
 // binary supports is refused (not self-healed, not silently run).
 func TestDowngradeGuard(t *testing.T) {
