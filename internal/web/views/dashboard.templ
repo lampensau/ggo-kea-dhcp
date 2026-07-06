@@ -66,9 +66,8 @@ templ dashScript() {
 				for (var i = 0; i < ths.length; i++) ths[i].removeAttribute("aria-sort");
 				if (dir && ths[col]) ths[col].setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
 			}
-			document.addEventListener("click", function (e) {
-				var th = e.target.closest("th[data-sort]");
-				if (!th) return;
+			// Shared by pointer and keyboard so a header sorts identically either way.
+			function trigger(th) {
 				var table = th.closest("table.sortable");
 				if (!table || !table.id) return;
 				var col = Array.prototype.indexOf.call(th.parentNode.children, th);
@@ -82,6 +81,19 @@ templ dashScript() {
 				var live = table.closest("#pool-table");
 				if (live) { if (dir) live.setAttribute("data-ignore-morph", ""); else live.removeAttribute("data-ignore-morph"); }
 				sortRows(table, col, dir);
+			}
+			document.addEventListener("click", function (e) {
+				var th = e.target.closest("th[data-sort]");
+				if (th) trigger(th);
+			});
+			// The headers carry tabindex=0 (set in markup so it survives an SSE morph),
+			// so keyboard users can focus and activate a sort with Enter/Space.
+			document.addEventListener("keydown", function (e) {
+				if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+				var th = e.target.closest && e.target.closest("th[data-sort]");
+				if (!th) return;
+				e.preventDefault(); // Space would otherwise scroll the page
+				trigger(th);
 			});
 		})();
 	</script>
@@ -285,11 +297,11 @@ templ PoolTableBody(v DashboardView) {
 				<table id="pool-table-tbl" class="sortable">
 					<thead>
 						<tr>
-							<th data-sort="text">Class</th>
-							<th data-sort="ip">Range</th>
-							<th data-sort="num">Used</th>
-							<th data-sort="num">Capacity</th>
-							<th data-sort="num">Utilization</th>
+							<th data-sort="text" tabindex="0">Class</th>
+							<th data-sort="ip" tabindex="0">Range</th>
+							<th data-sort="num" tabindex="0">Used</th>
+							<th data-sort="num" tabindex="0">Capacity</th>
+							<th data-sort="num" tabindex="0">Utilization</th>
 						</tr>
 					</thead>
 					<tbody>
