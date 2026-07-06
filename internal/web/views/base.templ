@@ -58,6 +58,7 @@ templ Base(d PageData) {
 				<div id="live" hidden aria-hidden="true" data-init="@get('/sse/live?page=' + encodeURIComponent(location.pathname), {openWhenHidden: true})"></div>
 				@poolDragScript()
 				@expiryTickScript()
+				@sortScript()
 				if d.State == "CONFIGURING" {
 					@configuringReloadScript()
 				}
@@ -381,6 +382,71 @@ templ appFooter(d PageData) {
 	// A shell live-region (#update-dialogs) re-pushed with the badge, so a live
 	// badge always has its dialog mounted.
 	@UpdateDialogs(d.Update)
+}
+
+// sortScript is the framework-free click/keyboard column sort for every
+// <table class="sortable"> with <th data-sort="text|ip|num"> headers, delegated on
+// document so it works on any authenticated page (dashboard pools, leases, pinning).
+// A header's <button> makes it keyboard/AT-operable; a cell may carry an explicit
+// numeric data-sort-value for columns whose visible text does not sort (relative
+// times). A sorted live table freezes via data-ignore-morph on the region named by
+// the table's data-sort-region, so the SSE morph cannot reorder it back.
+templ sortScript() {
+	<script>
+		(function () {
+			// Sort state keyed by table id, kept in this closure (NOT on the element) so
+			// it survives an SSE patch that re-renders the table body.
+			var S = {};
+			function cellVal(row, col, type) {
+				var cell = row.children[col];
+				if (!cell) return "";
+				var sv = cell.getAttribute("data-sort-value");
+				if (sv !== null) { var sn = parseFloat(sv); return isNaN(sn) ? sv.toLowerCase() : sn; }
+				var v = (cell.textContent || "").trim();
+				if (type === "num") { var n = parseFloat(v.replace(/[^0-9.\-]/g, "")); return isNaN(n) ? -Infinity : n; }
+				if (type === "ip") { var m = v.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)/); return m ? ((+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4])) : -Infinity; }
+				return v.toLowerCase();
+			}
+			function sortRows(table, col, dir) {
+				if (!table.tHead || !table.tBodies[0]) return;
+				var ths = table.tHead.rows[0].cells;
+				if (dir) {
+					var type = ths[col] ? (ths[col].getAttribute("data-sort") || "text") : "text";
+					var tb = table.tBodies[0];
+					Array.prototype.slice.call(tb.rows).sort(function (a, b) {
+						var av = cellVal(a, col, type), bv = cellVal(b, col, type);
+						return av < bv ? -dir : av > bv ? dir : 0;
+					}).forEach(function (r) { tb.appendChild(r); });
+				}
+				for (var i = 0; i < ths.length; i++) ths[i].removeAttribute("aria-sort");
+				if (dir && ths[col]) ths[col].setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
+			}
+			// Shared by pointer and keyboard so a header sorts identically either way.
+			function trigger(th) {
+				var table = th.closest("table.sortable");
+				if (!table || !table.id) return;
+				var col = Array.prototype.indexOf.call(th.parentNode.children, th);
+				var cur = S[table.id];
+				// Cycle the same column none → asc → desc → none.
+				var dir = (cur && cur.col === col) ? (cur.dir === 1 ? -1 : cur.dir === -1 ? 0 : 1) : 1;
+				if (dir) S[table.id] = { col: col, dir: dir }; else delete S[table.id];
+				// While sorted, freeze the table's live region (named by data-sort-region)
+				// so the SSE morph can't reorder it back; clearing the sort resumes updates.
+				var rid = table.getAttribute("data-sort-region");
+				var live = rid ? document.getElementById(rid) : null;
+				if (live) { if (dir) live.setAttribute("data-ignore-morph", ""); else live.removeAttribute("data-ignore-morph"); }
+				sortRows(table, col, dir);
+			}
+			// Each sortable header wraps its label in a real <button>, so a screen reader
+			// announces it as an activatable control and Enter/Space fire a native click -
+			// no separate keydown handler or tabindex needed. This delegated click catches
+			// both the pointer click and the button's synthesized keyboard click.
+			document.addEventListener("click", function (e) {
+				var th = e.target.closest("th[data-sort]");
+				if (th) trigger(th);
+			});
+		})();
+	</script>
 }
 
 templ themeToggleScript() {

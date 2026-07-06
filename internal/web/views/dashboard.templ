@@ -27,71 +27,8 @@ templ Dashboard(v DashboardView) {
 			@ReserveScript()
 		}
 		@RebootMount(v.Page.CSRFToken, v.Page.Flash)
-		@dashScript()
 		@sparkTooltip()
 	}
-}
-
-// dashScript defines the dashboard's framework-free click-to-sort for the
-// read-only Address-pools table. It cycles a `.sortable` header none → asc → desc
-// → none. It does NOT use a MutationObserver (that fought Datastar's morph on every
-// live patch and tripped its loop guard); instead, while sorted it freezes the live
-// pool table from morphing via Datastar's own data-ignore-morph (Datastar morphs by
-// id), and the third click clears the sort so live updates resume.
-templ dashScript() {
-	<script>
-		(function () {
-			// Sort state is keyed by table id and kept in this closure (NOT on the
-			// element) so it survives an SSE patch that re-renders the table.
-			var S = {};
-			function cellVal(row, col, type) {
-				var cell = row.children[col];
-				if (!cell) return "";
-				var v = (cell.textContent || "").trim();
-				if (type === "num") { var n = parseFloat(v.replace(/[^0-9.\-]/g, "")); return isNaN(n) ? -Infinity : n; }
-				if (type === "ip") { var m = v.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)/); return m ? ((+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4])) : -Infinity; }
-				return v.toLowerCase();
-			}
-			function sortRows(table, col, dir) {
-				if (!table.tHead || !table.tBodies[0]) return;
-				var ths = table.tHead.rows[0].cells;
-				if (dir) {
-					var type = ths[col] ? (ths[col].getAttribute("data-sort") || "text") : "text";
-					var tb = table.tBodies[0];
-					Array.prototype.slice.call(tb.rows).sort(function (a, b) {
-						var av = cellVal(a, col, type), bv = cellVal(b, col, type);
-						return av < bv ? -dir : av > bv ? dir : 0;
-					}).forEach(function (r) { tb.appendChild(r); });
-				}
-				for (var i = 0; i < ths.length; i++) ths[i].removeAttribute("aria-sort");
-				if (dir && ths[col]) ths[col].setAttribute("aria-sort", dir === 1 ? "ascending" : "descending");
-			}
-			// Shared by pointer and keyboard so a header sorts identically either way.
-			function trigger(th) {
-				var table = th.closest("table.sortable");
-				if (!table || !table.id) return;
-				var col = Array.prototype.indexOf.call(th.parentNode.children, th);
-				var cur = S[table.id];
-				// Cycle the same column none → asc → desc → none.
-				var dir = (cur && cur.col === col) ? (cur.dir === 1 ? -1 : cur.dir === -1 ? 0 : 1) : 1;
-				if (dir) S[table.id] = { col: col, dir: dir }; else delete S[table.id];
-				// While sorted, freeze the live pool table so the 4s morph can't
-				// reorder it back (Datastar honors data-ignore-morph); clearing the
-				// sort removes it so live updates resume.
-				var live = table.closest("#pool-table");
-				if (live) { if (dir) live.setAttribute("data-ignore-morph", ""); else live.removeAttribute("data-ignore-morph"); }
-				sortRows(table, col, dir);
-			}
-			// Each sortable header wraps its label in a real <button> (markup below), so a
-			// screen reader announces it as an activatable control and Enter/Space fire a
-			// native click - no separate keydown handler or tabindex needed. This delegated
-			// click catches both the pointer click and the button's synthesized keyboard click.
-			document.addEventListener("click", function (e) {
-				var th = e.target.closest("th[data-sort]");
-				if (th) trigger(th);
-			});
-		})();
-	</script>
 }
 
 // dashHead is the dashboard's page header, a single row: the active profile name
@@ -289,7 +226,7 @@ templ PoolTableBody(v DashboardView) {
 			</div>
 		} else {
 			<div class="table-scroll">
-				<table id="pool-table-tbl" class="sortable">
+				<table id="pool-table-tbl" class="sortable" data-sort-region="pool-table">
 					<thead>
 						<tr>
 							<th data-sort="text"><button type="button" class="th-sort">Class</button></th>

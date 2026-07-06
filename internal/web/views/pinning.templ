@@ -57,9 +57,9 @@ templ pinnedCard(v PinningView) {
 		// the first live push hit a missing #pinned-body and get dropped (only a full reload
 		// fixed it).
 		<div class="table-scroll">
-			<table>
+			<table id="pinned-tbl" class="sortable" data-sort-region="pinned-body">
 				<thead>
-					<tr><th class="col-status">Status</th><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>Label</th><th>IP</th><th>MAC</th><th>Hostname</th><th class="col-actions" aria-label="Actions"></th></tr>
+					<tr><th class="col-status" data-sort="text"><button type="button" class="th-sort">Status</button></th><th data-sort="text"><button type="button" class="th-sort">Remote&nbsp;ID</button></th><th data-sort="text"><button type="button" class="th-sort">Circuit&nbsp;ID</button></th><th data-sort="text"><button type="button" class="th-sort">Label</button></th><th data-sort="ip"><button type="button" class="th-sort">IP</button></th><th data-sort="text"><button type="button" class="th-sort">MAC</button></th><th data-sort="text"><button type="button" class="th-sort">Hostname</button></th><th class="col-actions" aria-label="Actions"></th></tr>
 				</thead>
 				@PinnedBody(v.Pinned, v.Page.CSRFToken)
 			</table>
@@ -74,9 +74,9 @@ templ learnableCard(v PinningView) {
 		// Always render the table + #learnable-body tbody (empty-state row lives inside it)
 		// so a newly-learned Option-82 port morphs in live - see pinnedCard.
 		<div class="table-scroll">
-			<table>
+			<table id="learnable-tbl" class="sortable" data-sort-region="learnable-body">
 				<thead>
-					<tr><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>IP</th><th>MAC</th><th>Hostname</th><th>Last&nbsp;active</th><th class="col-actions" aria-label="Actions"></th></tr>
+					<tr><th data-sort="text"><button type="button" class="th-sort">Remote&nbsp;ID</button></th><th data-sort="text"><button type="button" class="th-sort">Circuit&nbsp;ID</button></th><th data-sort="ip"><button type="button" class="th-sort">IP</button></th><th data-sort="text"><button type="button" class="th-sort">MAC</button></th><th data-sort="text"><button type="button" class="th-sort">Hostname</button></th><th data-sort="num"><button type="button" class="th-sort">Last&nbsp;active</button></th><th class="col-actions" aria-label="Actions"></th></tr>
 				</thead>
 				@LearnableBody(v.Learnable, v.Page.CSRFToken)
 			</table>
@@ -303,7 +303,7 @@ templ LearnableBody(learnable []PortRow, csrf string) {
 				<td class="mono">{ p.IPAddress }</td>
 				<td class="mono">{ orDash(p.HWAddress) }</td>
 				<td>{ orDash(p.Hostname) }</td>
-				<td>{ orDash(p.LastSeenText) }</td>
+				<td data-sort-value={ itoa64(p.LastSeen) }>{ orDash(p.LastSeenText) }</td>
 				<td class="col-actions">@pinButton(p)</td>
 			</tr>
 		}
