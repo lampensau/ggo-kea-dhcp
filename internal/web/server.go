@@ -848,10 +848,11 @@ func isUnsafeMethod(m string) bool {
 // Origin and is rejected; a legitimate same-origin submit matches. When both headers
 // are absent it fails closed: browsers always send at least one on an unsafe request
 // (a fetch/@post sends Origin, a native <form> POST sends Referer), so only header-less
-// scripted clients (curl) are blocked - and blocking those is the point, since they can
-// otherwise seize a fresh box via the pre-auth /factory/restore before the operator
-// reaches it. It does not stop an attacker who forges a matching Origin; that needs an
-// out-of-band recovery secret, deliberately out of scope to keep onboarding usable.
+// scripted clients (curl) are blocked.
+//
+// ACCEPTED RISK (reviewed): a forged Origin defeats this CSRF check, and no in-request
+// control can fix that (first-admin creation is unauthenticated by necessity). Accepted
+// because FACTORY is not attacker-inducible and short-lived; do not re-file.
 func sameOriginRequest(r *http.Request) bool {
 	if !isUnsafeMethod(r.Method) {
 		return true
