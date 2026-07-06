@@ -134,6 +134,17 @@ func (p *RogueProbe) begin(iface string, sn Sniffer, selfMAC [6]byte, macKnown b
 // Close does not close its Frames channel.
 func (p *RogueProbe) loop(sn Sniffer, quit chan struct{}) {
 	defer p.wg.Done()
+	// ACTIVE detectors get a per-slot recover in the monitor; this onboarding probe runs
+	// the same Consume in a bare goroutine. A future parser panic must not crash the box
+	// mid-onboarding - mark the probe blind so Watching() drops to false and the shield
+	// reads "Unverified" (the same honest fallback as a mid-run socket death), never a
+	// falsely confident all-clear.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[RogueProbe] recovered from a parser panic, marking the probe blind: %v", r)
+			p.markDead(sn)
+		}
+	}()
 	for {
 		select {
 		case f, ok := <-sn.Frames():

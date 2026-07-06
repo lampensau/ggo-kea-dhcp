@@ -265,9 +265,18 @@ func (s *Scanner) recvLoop() {
 		if err != nil {
 			return // socket closed on Stop
 		}
-		if dev, ok := parseScanReply(buf[:n], src.IP.String()); ok {
-			s.inv.record(dev, time.Now())
-		}
+		// Recover per reply so a future parser panic on one crafted frame drops that
+		// reply instead of killing the whole scan goroutine.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[ggoscan] recovered from a panic parsing a scan reply: %v", r)
+				}
+			}()
+			if dev, ok := parseScanReply(buf[:n], src.IP.String()); ok {
+				s.inv.record(dev, time.Now())
+			}
+		}()
 	}
 }
 

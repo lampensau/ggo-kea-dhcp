@@ -37,3 +37,35 @@ func FuzzParseQuestion(f *testing.F) {
 		}
 	})
 }
+
+// FuzzHandle fuzzes listener.handle end to end - the query dispatch beyond the
+// question parser: respond's echo/answer slicing, reverseName, and the apex/zone
+// branches, plus the response contract. handle touches only bindIP and the atomic
+// zone pointer (it never does the network I/O - the caller forwards), so a plain
+// listener over a fixed zone exercises it. Property: never panic; a non-nil
+// response is at most 512 bytes and echoes the request's txid.
+func FuzzHandle(f *testing.F) {
+	srv := New("")
+	srv.SetZone(testZone())
+	l := &listener{srv: srv, bindIP: [4]byte{10, 0, 0, 1}}
+
+	f.Add(buildQuery(0x1234, "bpx-19."+SuffixInv, typeA))
+	f.Add(buildQuery(0x2222, "99.0.0.10.in-addr.arpa", typePTR))
+	f.Add(buildQuery(0x0001, "example.com", typeA)) // forwardable
+	f.Add([]byte{0, 1})                             // shorter than a header
+	f.Add(make([]byte, 12))                         // header only
+	f.Add([]byte(nil))
+
+	f.Fuzz(func(t *testing.T, req []byte) {
+		resp, _ := l.handle(req)
+		if resp == nil {
+			return
+		}
+		if len(resp) > 512 {
+			t.Fatalf("response %d bytes exceeds the 512-byte UDP cap on %x", len(resp), req)
+		}
+		if len(req) >= 2 && (resp[0] != req[0] || resp[1] != req[1]) {
+			t.Fatalf("response txid %02x%02x != request %02x%02x", resp[0], resp[1], req[0], req[1])
+		}
+	})
+}
