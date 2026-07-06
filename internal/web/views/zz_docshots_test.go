@@ -98,7 +98,6 @@ func docNetHealth() NetHealthView {
 				{Kind: "vlan", Severity: "ok", Title: "No unexpected VLAN tags"},
 				{Kind: "igmp", Severity: "ok", Title: "IGMP querier present", Detail: "querier 10.0.0.2 v2 · on eth0"},
 				{Kind: "ptp", Severity: "info", Title: "No PTP grandmaster seen"},
-				{Kind: "sacn", Severity: "info", Title: "No sACN traffic seen"},
 				{Kind: "lldp", Severity: "ok", Title: "Uplink: " + docSwitchCore + " / sfp-sfpplus1", Detail: "switch " + docSwitchCore + " port sfp-sfpplus1 · native VLAN 1"},
 				{Kind: "storm", Severity: "ok", Title: "No broadcast storm"},
 				{Kind: "idle", Severity: "ok", Title: "Active network traffic"},
@@ -112,14 +111,13 @@ func docNetHealth() NetHealthView {
 				{Kind: "vlan", Severity: "ok", Title: "No unexpected VLAN tags"},
 				{Kind: "igmp", Severity: "ok", Title: "IGMP querier present", Detail: "querier 10.20.0.2 v3 · on eth0.20"},
 				{Kind: "ptp", Severity: "ok", Title: "PTP GM 001dc1fffe0a813c (domain 0)", Detail: "grandmaster clock class 6"},
-				{Kind: "sacn", Severity: "info", Title: "No sACN traffic seen"},
 				// LLDP frames are untagged and link-scoped: only the physical eth0
 				// socket sees them, so VLAN sub-interfaces report no neighbor.
 				{Kind: "lldp", Severity: "info", Title: "No LLDP/CDP neighbor seen"},
 				{Kind: "storm", Severity: "ok", Title: "No broadcast storm"},
 				{Kind: "idle", Severity: "ok", Title: "Active network traffic"},
 			}},
-			{Iface: "eth0.30", ScopeName: "sACN / Art-Net", Available: true, LinkMode: "trunk", OKCount: 7, WarnCount: 1, Rows: []NetHealthRow{
+			{Iface: "eth0.30", ScopeName: "sACN / Art-Net", Available: true, LinkMode: "trunk", OKCount: 6, WarnCount: 1, Rows: []NetHealthRow{
 				{Kind: "static_in_pool", Severity: "warn", Title: "Static device 10.30.0.31 (00:0b:02) is using a DHCP pool address", Detail: "10.30.0.31 (00:0b:02:4c:19:a7) · pool 10.30.0.20-254 · on eth0.30"},
 				{Kind: "rogue_dhcp", Severity: "ok", Title: "No rogue DHCP servers"},
 				{Kind: "duplicate_ip", Severity: "ok", Title: "No address conflicts"},
@@ -128,7 +126,6 @@ func docNetHealth() NetHealthView {
 				{Kind: "vlan", Severity: "ok", Title: "No unexpected VLAN tags"},
 				{Kind: "igmp", Severity: "ok", Title: "IGMP querier present", Detail: "querier 10.30.0.2 v2 · on eth0.30"},
 				{Kind: "ptp", Severity: "info", Title: "No PTP grandmaster seen"},
-				{Kind: "sacn", Severity: "ok", Title: "8 active sACN universes"},
 				{Kind: "lldp", Severity: "info", Title: "No LLDP/CDP neighbor seen"},
 				{Kind: "storm", Severity: "ok", Title: "No broadcast storm"},
 				{Kind: "idle", Severity: "ok", Title: "Active network traffic"},

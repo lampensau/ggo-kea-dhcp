@@ -125,17 +125,6 @@ func TestSeverityDot(t *testing.T) {
 	}
 }
 
-func TestLevelNote(t *testing.T) {
-	if levelNote(netmon.LevelFull) != "" {
-		t.Error("full level should have no banner")
-	}
-	for _, lvl := range []netmon.Level{netmon.LevelNoPromisc, netmon.LevelCountersOnly, netmon.LevelPaused} {
-		if levelNote(lvl) == "" {
-			t.Errorf("degraded level %v should have a banner", lvl)
-		}
-	}
-}
-
 func TestNetHealthDetail(t *testing.T) {
 	rogue := netmon.DetectorSnapshot{
 		Kind: "rogue_dhcp", Subject: "eth0",

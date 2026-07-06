@@ -15,15 +15,13 @@ type NetHealthView struct {
 }
 
 // NetHealthIface is one monitored interface's health: its detector rows plus the
-// honest governor/availability state (so the card can say "multicast inspection
-// paused - high load" or "monitoring unavailable").
+// honest availability state (so the card can say "monitoring unavailable").
 type NetHealthIface struct {
 	Iface     string
 	ScopeName string // friendly scope name for the card title ("" -> show Iface alone)
 	Available bool
-	Note      string // honest state when not fully available / shedding
-	Level     string // governor level ("full", "no-promiscuous", "counters-only", "paused")
-	Degraded  bool   // governor is shedding (Level != full) or unavailable
+	Note      string // honest state when not fully available
+	Degraded  bool   // no working capture (dev-mode / no privilege / permanently faulted)
 	LinkMode  string // "flat"/"trunk"/"" - shown in the rollup header
 	OKCount   int    // rollup of Rows by severity
 	WarnCount int
@@ -403,8 +401,6 @@ func netHealthIcon(kind string) string {
 		return "activity"
 	case "idle":
 		return "cable" // link carrying no traffic
-	case "sacn":
-		return "cpu"
 	case "vlan":
 		return "layers"
 	case "static_in_pool":

@@ -126,10 +126,6 @@ type ScopeConfig struct {
 	// source for rendering (ToRenderInput emits it as kea.PoolSpec). Persisted to
 	// scopes.pool_plan; loadScopeConfigs seeds one for any legacy row that lacks it.
 	Plan PoolPlan `json:"pool_plan,omitempty"`
-	// MulticastSniff opts this scope into the passive monitor's promiscuous
-	// duty-cycle (PTP/sACN/Green-GO multicast inspection). Default off - the
-	// governor sheds it first under load. Persisted to scopes.multicast_sniff.
-	MulticastSniff bool `json:"multicast_sniff"`
 	// Services are the per-scope DHCP network services (explicit gateway/DNS, extra
 	// options, lease-lifetime override). Persisted to scopes.services_json. All-zero
 	// when unset, so a scope with no services renders exactly as before.
@@ -422,7 +418,7 @@ func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 		}
 	}
 
-	rows, err := s.sqlite.Query("SELECT preset, vlan_id, cidr, pool_spec, uplink_json, pool_plan, multicast_sniff, services_json, name FROM scopes WHERE profile_id = ? ORDER BY id", profileID)
+	rows, err := s.sqlite.Query("SELECT preset, vlan_id, cidr, pool_spec, uplink_json, pool_plan, services_json, name FROM scopes WHERE profile_id = ? ORDER BY id", profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -433,12 +429,10 @@ func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 		var sc ScopeConfig
 		var vlan sql.NullInt64
 		var poolSpec, uplinkJSON, poolPlan, servicesJSON, name sql.NullString
-		var multicastSniff sql.NullInt64
-		if e := rows.Scan(&sc.Preset, &vlan, &sc.CIDR, &poolSpec, &uplinkJSON, &poolPlan, &multicastSniff, &servicesJSON, &name); e != nil {
+		if e := rows.Scan(&sc.Preset, &vlan, &sc.CIDR, &poolSpec, &uplinkJSON, &poolPlan, &servicesJSON, &name); e != nil {
 			return nil, e
 		}
 		sc.Name = name.String
-		sc.MulticastSniff = multicastSniff.Valid && multicastSniff.Int64 != 0
 		if vlan.Valid {
 			sc.VlanID = int(vlan.Int64)
 		}

@@ -22,7 +22,6 @@ Per scope you set:
 - **Preset role** - which kind of network this is; it seeds the pool plan (below)
 - **VLAN ID** - leave empty for the untagged network, or set the tag for a trunk scope
 - **Subnet CIDR** - the scope's address space; the wizard auto-sizes it to fit the pool plan and widens it if the plan outgrows it
-- **Multicast inspect** - off by default; enables a low-rate multicast sample on this scope so the dashboard can show PTP grandmaster and sACN health (see [Network health](network-health.md))
 
 Each scope also has a DHCP options section for the less common knobs: gateway and DNS overrides, a lease-time override, arbitrary extra DHCP options, and the Local DNS switch that hands the appliance out as the scope's DNS server so device names resolve on the network (see [Local DNS](dns.md)).
 
@@ -32,7 +31,7 @@ The preset seeds the scope's pool plan; everything it produces can be edited aft
 
 **Green-GO Intercom.** The appliance recognizes Green-GO device families automatically and gives each family its own guaranteed pool, sized to the device count you expect (never below a small per-family floor). The two catch-all pools take the elastic remainder: whatever address space the sized pools leave over goes to Green-GO devices without a family pool and to non-Green-GO gear. The result is that an address tells you what kind of device holds it. Size presets (Small, roughly 25 devices; Medium, roughly 120; Large, roughly 300) give you a starting point to adjust.
 
-**Dante / AES67 Audio** and **sACN / Art-Net Lighting.** A single dynamic pool covering the scope. The value of a dedicated scope is isolation and monitoring: the network health detectors know what healthy PTP and sACN traffic look like.
+**Dante / AES67 Audio** and **sACN / Art-Net Lighting.** A single dynamic pool covering the scope. The value of a dedicated scope is isolation and monitoring: the network health detectors know what healthy PTP clocking looks like on an audio or lighting network.
 
 **Custom.** Also a single dynamic pool, with no assumptions. You define your own pools, optionally routed by vendor, in the pool editor.
 

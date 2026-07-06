@@ -40,8 +40,8 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 	pid, _ := res.LastInsertId()
 	if _, err := s.sqlite.Exec(
-		"INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, multicast_sniff) VALUES (?,?,?,?,?,?)",
-		pid, "physical", 0, "10.0.0.0/24", "greengo", 0); err != nil {
+		"INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset) VALUES (?,?,?,?,?)",
+		pid, "physical", 0, "10.0.0.0/24", "greengo"); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
 	if _, err := s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label, location, notes) VALUES ('41561f','Stage L','FOH','note')"); err != nil {

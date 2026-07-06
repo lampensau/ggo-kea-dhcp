@@ -100,35 +100,3 @@ func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 		t.Fatal("a FAILED beginApply must leave monitoring running (it stays ACTIVE)")
 	}
 }
-
-// TestMulticastSniff_PersistRoundTrip covers the one place the feature reaches
-// into core plumbing (migration 0006 + ScopeConfig.MulticastSniff + the INSERT):
-// a scope persisted with multicast-sniff on loads back with it on.
-func TestMulticastSniff_PersistRoundTrip(t *testing.T) {
-	s, _ := newTestServer(t)
-	plan := &applyPlan{}
-	scopes := []ScopeConfig{
-		{Preset: "greengo", CIDR: "10.0.0.0/24", MulticastSniff: true},
-		{Preset: "dante", VlanID: 20, CIDR: "10.0.20.0/24", MulticastSniff: false},
-	}
-	if err := s.persistProfile("rt", scopes, UplinkConfig{}, plan); err != nil {
-		t.Fatalf("persistProfile: %v", err)
-	}
-	loaded, err := s.loadScopeConfigs(plan.newProfileID)
-	if err != nil {
-		t.Fatalf("loadScopeConfigs: %v", err)
-	}
-	if len(loaded) != 2 {
-		t.Fatalf("loaded %d scopes, want 2", len(loaded))
-	}
-	got := map[string]bool{}
-	for _, sc := range loaded {
-		got[sc.CIDR] = sc.MulticastSniff
-	}
-	if !got["10.0.0.0/24"] {
-		t.Error("multicast_sniff lost on round-trip for the greengo scope")
-	}
-	if got["10.0.20.0/24"] {
-		t.Error("multicast_sniff wrongly set on the dante scope")
-	}
-}

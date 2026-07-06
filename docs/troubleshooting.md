@@ -42,7 +42,7 @@ Dynamic leases keep serving, so the show is not in danger. Until the database re
 
 The card never goes blank while a profile is active: every served interface shows its full column of detectors, green when confirmed good, gray for traffic it simply has not seen yet. A quiet card full of green "No ..." rows is the healthy baseline, not an absence of monitoring.
 
-"Monitoring idle" across the whole card means no profile is applied yet; monitoring starts with DHCP. When a single interface carries a note instead, the note is the honest reason: "no capture socket" means the monitor lacks its capture permission (Diagnostics names the failing check), and "reduced monitoring - high load" means it is deliberately shedding work to protect DHCP and lifts itself when traffic calms down. Address serving is unaffected in either case. The one deliberate gap is sACN detail, which only appears on scopes with Multicast inspect enabled.
+"Monitoring idle" across the whole card means no profile is applied yet; monitoring starts with DHCP. When a single interface carries a note instead, the note is the honest reason: "no capture socket" means the monitor lacks its capture permission (Diagnostics names the failing check). Address serving is unaffected.
 
 If the card warns constantly on a busy or messy network (venues with legacy gear), some warnings are simply true. The [detector reference](network-health.md) says what each one means and when it is acceptable to live with it.
 

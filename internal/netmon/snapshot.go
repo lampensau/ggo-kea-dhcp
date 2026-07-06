@@ -5,45 +5,13 @@ import (
 	"sync"
 )
 
-// Level is the governor's load-shedding level, carried in a Snapshot so the card
-// states the active fidelity honestly ("multicast inspection paused - high load").
-type Level int
-
-const (
-	// LevelFull (L0): full fidelity, promiscuous capture on (steady-state in ACTIVE).
-	LevelFull Level = iota
-	// LevelNoPromisc (L1): promiscuous dropped - the high-value non-promiscuous
-	// detectors (IGMP, rogue-DHCP, LLDP, BPDU) keep running on the narrow BPF.
-	LevelNoPromisc
-	// LevelCountersOnly (L2): only sysfs counter deltas (storm) are read.
-	LevelCountersOnly
-	// LevelPaused (L3): capture paused entirely; auto-recovers on sustained calm.
-	LevelPaused
-)
-
-func (l Level) String() string {
-	switch l {
-	case LevelFull:
-		return "full"
-	case LevelNoPromisc:
-		return "no-promiscuous"
-	case LevelCountersOnly:
-		return "counters-only"
-	case LevelPaused:
-		return "paused"
-	default:
-		return "unknown"
-	}
-}
-
 // Snapshot is the per-interface aggregate the dashboard reads: each detector's
-// current signal plus the governor level and an availability note. It is the only
-// thing crossing from the monitor goroutines to the web layer.
+// current signal plus an availability note. It is the only thing crossing from the
+// monitor goroutines to the web layer.
 type Snapshot struct {
 	Iface     string
 	Available bool   // false in dev-mode (no socket) or when permanently degraded
 	Note      string // honest state when not fully available
-	Level     Level
 	Detectors []DetectorSnapshot
 	// LiveMACs are the source MACs seen on this interface within the liveness window
 	// (lowercase, colon-separated) - the passive basis for per-lease online/offline.

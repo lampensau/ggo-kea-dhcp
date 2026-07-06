@@ -301,9 +301,9 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 				planJSON, _ := sc.planJSON()
 				servicesSpec, _ := sc.servicesJSON()
 				if _, err := tx.Exec(`
-					INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, multicast_sniff, services_json, name)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					int(pid64), ifaceMode, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, b2i(sc.MulticastSniff), servicesSpec, sc.Name); err != nil {
+					INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					int(pid64), ifaceMode, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, servicesSpec, sc.Name); err != nil {
 					return "", fmt.Errorf("restore scope in profile %q: %w", p.Name, err)
 				}
 			}

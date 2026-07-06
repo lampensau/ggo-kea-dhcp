@@ -95,7 +95,6 @@ func TestNetHealthView_RendersSignals(t *testing.T) {
 	v := views.NetHealthView{Interfaces: []views.NetHealthIface{{
 		Iface:     "eth0",
 		Available: true,
-		Level:     "full",
 		Rows: []views.NetHealthRow{
 			{Kind: "igmp", Severity: "ok", Title: "IGMP querier present", Detail: "querier 10.0.0.1 v2"},
 			{Kind: "rogue_dhcp", Severity: "error", Title: "Rogue DHCP server 10.0.0.250", Detail: "server 10.0.0.250 · de:ad:be:ef:00:01"},
@@ -131,7 +130,7 @@ func TestNetHealthView_RendersSignals(t *testing.T) {
 // net-health fragment (the live ticker stays quiet on a stable network).
 func TestNetHealthChangeOnlyPush(t *testing.T) {
 	h := newLiveHub()
-	v := views.NetHealthView{Interfaces: []views.NetHealthIface{{Iface: "eth0", Available: true, Level: "full"}}}
+	v := views.NetHealthView{Interfaces: []views.NetHealthIface{{Iface: "eth0", Available: true}}}
 	frag := renderFragment(views.NetHealth(v))
 
 	if !h.publishIfChanged("net-health", frag) {

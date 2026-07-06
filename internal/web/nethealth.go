@@ -314,7 +314,6 @@ func (s *Server) buildNetmonSpecs(scopes []ScopeConfig) []netmon.Spec {
 		}
 		specs = append(specs, netmon.Spec{
 			Iface:           iface,
-			MulticastSniff:  sc.MulticastSniff,
 			Greengo:         sc.Preset == "greengo",
 			InterfaceIPs:    ifaceIPs,
 			InterfaceMAC:    selfMAC,
@@ -515,20 +514,13 @@ func (s *Server) collectNetSnapshot() netSnapshotData {
 // structured signal (kind/severity/subject/text) is carried straight through; the
 // templ decides presentation.
 func (s *Server) addInterfaceSnapshot(sig *netSignals, snap netmon.Snapshot) {
-	degraded := !snap.Available || snap.Level != netmon.LevelFull
-	// Note carries the honest reason: the monitor's own note (dev-mode /
-	// permanently-degraded) takes precedence; otherwise derive it from the
-	// actual governor level, so the card never claims "multicast paused" when
-	// it is really counters-only or fully paused.
-	note := snap.Note
-	if note == "" && degraded {
-		note = levelNote(snap.Level)
-	}
+	// A monitor is degraded only when it has no working capture (dev-mode / no
+	// privilege / permanently-degraded), all of which set snap.Note.
+	degraded := !snap.Available
 	ifc := views.NetHealthIface{
 		Iface:     snap.Iface,
 		Available: snap.Available,
-		Note:      note,
-		Level:     snap.Level.String(),
+		Note:      snap.Note,
 		Degraded:  degraded,
 		LinkMode:  strings.ToLower(s.net.GetLinkStatus(snap.Iface).LinkState),
 	}
@@ -636,8 +628,6 @@ func detectorKindOrder(kind string) int {
 		return 7
 	case "ptp":
 		return 8
-	case "sacn":
-		return 9
 	case "lldp":
 		return 10
 	case "storm":
@@ -659,21 +649,6 @@ func severityDot(sev netmon.Severity) string {
 		return "warn"
 	case netmon.SevOK:
 		return "ok"
-	default:
-		return ""
-	}
-}
-
-// levelNote returns the honest card banner for a degraded-but-available
-// interface, matching the actual governor level.
-func levelNote(level netmon.Level) string {
-	switch level {
-	case netmon.LevelNoPromisc:
-		return "multicast inspection paused - high load"
-	case netmon.LevelCountersOnly:
-		return "reduced monitoring - high load (counters only)"
-	case netmon.LevelPaused:
-		return "monitoring paused - high load"
 	default:
 		return ""
 	}
