@@ -20,7 +20,7 @@ BEGIN {
     floor["ggo-kea-dhcp/internal/kea"]       = 75
     floor["ggo-kea-dhcp/internal/netmon"]    = 75
     floor["ggo-kea-dhcp/internal/network"]   = 50
-    floor["ggo-kea-dhcp/internal/preflight"] = 15
+    floor["ggo-kea-dhcp/internal/preflight"] = 90
     floor["ggo-kea-dhcp/internal/web"]       = 50
     floor["ggo-kea-dhcp/internal/web/views"] = 50
 }

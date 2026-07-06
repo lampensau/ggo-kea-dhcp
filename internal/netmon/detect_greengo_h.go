@@ -108,7 +108,12 @@ func parseNibbleTLV(buf []byte) ([]tlvRec, bool) {
 				pos++
 			}
 		}
-		if pos+length > len(buf) {
+		// length is accumulated over up to four wire bytes, so on a 32-bit int build it
+		// can reach 0xffffffff and wrap negative, slipping past a bare pos+length guard
+		// into make([]byte, negative). Check length itself, width-independently: < 0
+		// catches the wrap, and comparing against len(buf)-pos avoids pos+length
+		// overflowing. Unreachable on the arm64/amd64 targets (64-bit int); defensive.
+		if length < 0 || length > len(buf)-pos {
 			return recs, false
 		}
 		acc += tdelta

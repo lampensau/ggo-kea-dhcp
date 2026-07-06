@@ -63,3 +63,40 @@ func FuzzParseAuxVLAN(f *testing.F) {
 		}
 	})
 }
+
+// FuzzFrameChain fuzzes the whole capture-to-detector path end to end -
+// etherInfo -> ipv4Info -> udpPorts -> each detector's Consume/Tick/Snapshot -
+// which the per-decoder targets above only reach indirectly (the framed LLDP/CDP
+// walks, the IGMP length clamp, PTP, and the sACN fixed-offset block). The set is
+// built once with multicast + Green-GO enabled so every detector attaches, then fed
+// a stream of fuzzed frames, matching how a real monitor accumulates state.
+// Property: no detector panics on any frame bytes.
+func FuzzFrameChain(f *testing.F) {
+	pool, _ := ParsePoolRange("10.0.0.20-10.0.0.200")
+	dets := newDetectors(
+		Spec{
+			Iface: "eth0", MulticastSniff: true, Greengo: true, WatchVLANs: true,
+			Pools:  []PoolRange{pool},
+			Leases: func() []LeasedAddr { return nil },
+		},
+		Thresholds{IGMPAbsence: defaultIGMPAbsence, StormPPS: defaultStormPPS},
+		func() (uint64, bool) { return 0, false },
+		func() bool { return true },
+	)
+
+	f.Add(declineFrame([4]byte{10, 0, 0, 5}).Data)
+	f.Add(sacnData(1, [16]byte{}, 100).Data)
+	f.Add(arpFrame(2, [6]byte{0x02, 0, 0, 0, 0, 1}, [4]byte{10, 0, 0, 5}).Data)
+	f.Add(hFrame([6]byte{0x00, 0x1f, 0x80, 0, 0, 1}, [4]byte{10, 0, 0, 6}, 0))
+	f.Add(arpFrameFor([6]byte{0x02, 0, 0, 0, 0, 2}, [4]byte{10, 0, 0, 7}))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		now := at(0)
+		for _, d := range dets {
+			d.Consume(Frame{Iface: "eth0", Data: data}, now)
+			d.Tick(now)
+			d.Snapshot()
+		}
+	})
+}

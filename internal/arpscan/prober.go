@@ -305,12 +305,21 @@ func (r *ifaceRunner) recvLoop() {
 		if frame == nil {
 			continue // recv-timeout tick: re-check quit and loop (bounds stop())
 		}
-		if ip, mac, ok := parseARPSender(frame); ok {
-			r.tracker.record(ip, time.Now())
-			if r.probes != nil {
-				r.probes.deliver(ip, mac) // satisfy any on-demand ProbeHost waiter
+		// Recover per frame so a future parser panic on one crafted ARP reply drops
+		// that frame instead of killing the whole receive goroutine.
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("[arpscan] recovered from a panic parsing an ARP frame: %v", rec)
+				}
+			}()
+			if ip, mac, ok := parseARPSender(frame); ok {
+				r.tracker.record(ip, time.Now())
+				if r.probes != nil {
+					r.probes.deliver(ip, mac) // satisfy any on-demand ProbeHost waiter
+				}
 			}
-		}
+		}()
 	}
 }
 

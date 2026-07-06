@@ -69,6 +69,16 @@ func (p *TrunkProbe) Start(iface string) {
 
 func (p *TrunkProbe) loop(sn Sniffer) {
 	defer p.wg.Done()
+	// ACTIVE detectors get a per-slot recover in the monitor; this onboarding probe
+	// runs the same parsers in a bare goroutine, so a future etherInfo panic on a
+	// crafted frame would crash the whole appliance mid-onboarding - the state with the
+	// least operator recourse. Recover and stop; VLANs() then returns what was seen so
+	// far, which is already its documented inert/partial state (no false confidence).
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[TrunkProbe] recovered from a parser panic, stopping the probe: %v", r)
+		}
+	}()
 	for f := range sn.Frames() {
 		// The 802.1Q tag is INLINE in the frame bytes when RX-VLAN offload is off
 		// (etherInfo parses it), or STRIPPED into PACKET_AUXDATA when offload is on
