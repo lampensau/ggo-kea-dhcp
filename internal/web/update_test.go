@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,35 @@ import (
 
 	"ggo-kea-dhcp/internal/db"
 )
+
+// watchUpdateResult must join the shutdown wait (addBackground), so a shutdown
+// already under way makes it skip rather than fold a result into the closing DB.
+// Without the gate it enters its poll loop (updateResultPollInterval) and would
+// process the staged result - the test catches both the missing skip (2s timeout
+// vs the 10s poll) and the folded state.
+func TestWatchUpdateResultSkipsDuringShutdown(t *testing.T) {
+	s, _ := newUpdateTestServer(t, nil)
+	s.done = make(chan struct{})
+
+	res := `{"version":"9.9.9","status":"needs_system","detail":"deps changed"}`
+	if err := os.WriteFile(filepath.Join(s.updateDir, updateResultFile), []byte(res), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.bgMu.Lock()
+	s.bgStopping = true // shutdown in progress: addBackground must refuse
+	s.bgMu.Unlock()
+
+	done := make(chan struct{})
+	go func() { s.watchUpdateResult("app"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchUpdateResult entered its poll loop instead of skipping on the shutdown gate")
+	}
+	if v, _ := s.sqlite.GetState(stateUpdateNeedsSystem); v == "1" {
+		t.Fatal("watchUpdateResult folded a result during shutdown; it must skip and let the boot path fold it")
+	}
+}
 
 func TestParseSemverAndOrdering(t *testing.T) {
 	cases := []struct {
