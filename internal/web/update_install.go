@@ -253,6 +253,17 @@ func (s *Server) releaseUpdateGuards() {
 // and free the guards. A silent timeout is audited so a wedged updater isn't
 // an invisible stuck state.
 func (s *Server) watchUpdateResult(scope string) {
+	// Join the shutdown wait like the other background loops (server.go's done-field
+	// comment lists this watcher among them). deferAfterResponse spawns us in a bare
+	// goroutine that stopBackground's Wait does not cover, so without this the loop
+	// could be mid-processUpdateResult - a DB write - when sqlite.Close runs, losing
+	// a failed/needs_system outcome. A refused registration means shutdown is under
+	// way: skip and let the boot-path reconcileUpdateResult fold the result instead.
+	// Mirrors kickUpdateCheck.
+	if !s.addBackground() {
+		return
+	}
+	defer s.bgWG.Done()
 	wait := updateResultWaitApp
 	if scope == "system" {
 		wait = updateResultWaitSystem
