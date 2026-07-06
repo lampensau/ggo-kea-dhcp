@@ -92,12 +92,6 @@ templ Settings(v SettingsView) {
 			</div>
 		</form>
 		@settingsBackupCard(v)
-		// Software Update sits outside #settings-form like the danger zone (its
-		// buttons are their own forms/dialogs). ACTIVE only: the check loop and the
-		// installer both require an applied profile.
-		if v.Page.State == "ACTIVE" {
-			@UpdateCard(v.Update)
-		}
 		// Reset is only meaningful once a profile is applied (it was an ACTIVE-only nav
 		// tab before being folded in here); the reset POST routes aren't whitelisted in
 		// ONBOARDING anyway. Destructive, so it sits last - just above the save bar.

@@ -2,85 +2,87 @@ package views
 
 // UpdateBadge is the footer's #update-badge live region, next to the version
 // line on every authenticated page. Empty (and invisible) when the box is
-// current or the operator dismissed this version; otherwise a compact link to
-// the Settings update card. The same partial renders first paint and the SSE
-// fragment.
-templ UpdateBadge(v UpdateBadgeView) {
+// current; otherwise a persistent indicator - a button that opens the update
+// dialog (mounted globally by UpdateDialogs) and stays until no update is
+// available. The same partial renders first paint and the SSE fragment.
+//
+// #update-badge and #update-dialogs are both shell live-regions pushed together
+// (publishUpdateBadge), so whenever the badge is shown its dialog is mounted -
+// including when the badge appears live over SSE on an already-open page. The
+// click can therefore always open the dialog directly.
+templ UpdateBadge(v UpdateView) {
 	<span id="update-badge">
-		if v.Show {
-			<a class="update-badge" href="/settings#update">@Icon("download") <span>Update <span class="mono">v{ v.Version }</span> available</span></a>
+		if v.Available {
+			<button type="button" class="update-badge" onclick="document.getElementById('update-dialog').showModal()" title={ "Update v" + v.Version + " available" }>@Icon("download") Update <span class="mono">v{ v.Version }</span></button>
 		}
 	</span>
 }
 
-// UpdateCard is the Settings "Software Update" card (anchor #update, the badge's
-// link target). Mounted OUTSIDE #settings-form - its buttons are their own
-// forms/dialogs, like the danger zone. Rendered only in ACTIVE (the check loop
-// and the installer both require it).
-templ UpdateCard(v UpdateView) {
-	<h2 class="section-title" id="update">@Icon("download") Software Update</h2>
-	<div class="card">
-		<div class="update-meta">
-			<span>Installed <span class="mono">v{ v.Current }</span></span>
-			if v.Available {
-				<span class="badge badge-ok">@Icon("download") <span class="mono">v{ v.Version }</span>&nbsp;available</span>
-				if v.Scope == "system" {
-					<span class="badge badge-warn">system update</span>
-				}
-			} else if v.LastCheck != "" {
-				<span class="badge">up to date</span>
-			}
-		</div>
+// UpdateDialogs is the #update-dialogs shell region mounted in the global footer
+// (base.templ) and re-pushed live alongside the badge. It carries no per-session
+// secret (the install form reads CSRF from the page <meta> at submit), so it is
+// safe to broadcast to every connected client.
+templ UpdateDialogs(v UpdateView) {
+	<div id="update-dialogs">
 		if v.Available {
-			<p class="help">{ updateScopeHint(v.Scope) }</p>
-			if !v.CanInstall {
-				<p class="help">This release publishes no verification digest, so it cannot be installed from here. Update by re-running the installer.</p>
+			@UpdateDialog(v)
+			if v.Notes != "" {
+				@ReleaseNotesDialog(v)
 			}
+			if v.CanInstall {
+				if v.NeedsSystem {
+					@updateInstallDialog(v, true)
+				} else {
+					@updateInstallDialog(v, false)
+				}
+			}
+		}
+	</div>
+}
+
+// UpdateDialog is the surface opened from the footer badge: the versions, the
+// release notes at a glance, and Install. The X and Close just close it - the
+// badge is a persistent indicator, not something to dismiss, so it stays until
+// the update is installed. Install hands off to the password-gated confirm.
+templ UpdateDialog(v UpdateView) {
+	<dialog id="update-dialog" class="update-dialog" aria-labelledby="update-dialog-title">
+		<div class="dialog-head" id="update-dialog-title">
+			<span>@Icon("download") Software Update</span>
+			<button type="button" class="dialog-x" aria-label="Close" onclick="this.closest('dialog').close()">@Icon("x")</button>
+		</div>
+		<div class="dialog-body">
+			<p class="update-versions">Installed <span class="mono">v{ v.Current }</span>, new <span class="mono">v{ v.Version }</span> available.</p>
+			<p class="help">{ updateScopeHint(v.Scope) }</p>
 			if v.NeedsSystem {
 				<div class="alert alert-warn" role="alert">
 					@Icon("triangle-alert")
 					<div class="alert-body">
 						<strong>This release needs a system-scope update</strong>
-						<span class="alert-detail">Installing with frozen dependencies failed because the release requires newer system packages. The broader install below also upgrades those packages - expect a brief DHCP interruption.</span>
+						<span class="alert-detail">Installing with frozen dependencies failed because the release requires newer system packages. The broader install also upgrades those packages - expect a brief DHCP interruption.</span>
 					</div>
 				</div>
 			}
-		} else {
-			<p class="help">The appliance checks for new releases while the WiFi uplink is connected. Installing is always a deliberate action - nothing updates on its own.</p>
-		}
-		<div class="btn-row">
-			if v.Available && v.CanInstall {
-				if v.NeedsSystem {
-					<button type="button" class="btn btn-danger" onclick="document.getElementById('update-install-sys-dlg').showModal()">@Icon("download") Install With System Updates</button>
-				} else {
-					<button type="button" class="btn btn-primary" onclick="document.getElementById('update-install-dlg').showModal()">@Icon("download") Install Update</button>
-				}
+			if !v.CanInstall {
+				<p class="help">This release publishes no verification digest, so it cannot be installed from here. Update by re-running the installer.</p>
 			}
-			<form method="post" action="/update/check" data-busy>
-				<input type="hidden" name="csrf_token" value={ v.CSRF }/>
-				<button type="submit" class="btn btn-secondary">@Icon("refresh-cw") Check Now</button>
-			</form>
-			if v.Available && v.Notes != "" {
-				<button type="button" class="btn btn-secondary" onclick="document.getElementById('update-notes-dlg').showModal()">@Icon("info") View Release Notes</button>
-			}
-			if v.Available && !v.Dismissed {
-				<form method="post" action="/update/dismiss">
-					<input type="hidden" name="csrf_token" value={ v.CSRF }/>
-					<button type="submit" class="btn btn-secondary">@Icon("x") Dismiss Notification</button>
-				</form>
+			if v.Notes != "" {
+				// Open notes on top of this dialog (native <dialog> stacking) instead of
+				// closing it, so closing the notes returns here rather than dismissing
+				// the whole update flow.
+				<button type="button" class="update-notes-link" onclick="document.getElementById('update-notes-dlg').showModal()">@Icon("info") View release notes</button>
 			}
 		</div>
-	</div>
-	if v.Available && v.Notes != "" {
-		@ReleaseNotesDialog(v)
-	}
-	if v.Available && v.CanInstall {
-		if v.NeedsSystem {
-			@updateInstallDialog(v, true)
-		} else {
-			@updateInstallDialog(v, false)
-		}
-	}
+		<div class="dialog-foot">
+			<button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">Close</button>
+			if v.CanInstall {
+				if v.NeedsSystem {
+					<button type="button" class="btn btn-danger" onclick="document.getElementById('update-install-sys-dlg').showModal()">@Icon("download") Install v{ v.Version }</button>
+				} else {
+					<button type="button" class="btn btn-primary" onclick="document.getElementById('update-install-dlg').showModal()">@Icon("download") Install v{ v.Version }</button>
+				}
+			}
+		</div>
+	</dialog>
 }
 
 // updateInstallDialog is the password-gated confirm for the privileged install
@@ -89,8 +91,8 @@ templ UpdateCard(v UpdateView) {
 // second-click broader path offered only after needs_system latched.
 templ updateInstallDialog(v UpdateView, system bool) {
 	<dialog id={ installDlgID(system) } aria-labelledby={ installDlgID(system) + "-title" }>
-		<form method="post" action="/update/install" data-busy>
-			<input type="hidden" name="csrf_token" value={ v.CSRF }/>
+		<form method="post" action="/update/install" data-busy onsubmit="this.querySelector('[name=csrf_token]').value=document.querySelector('meta[name=csrf-token]').content">
+			<input type="hidden" name="csrf_token" value=""/>
 			<input type="hidden" name="version" value={ v.Version }/>
 			if system {
 				<input type="hidden" name="scope" value="system"/>
@@ -98,11 +100,10 @@ templ updateInstallDialog(v UpdateView, system bool) {
 			<div class="dialog-head" id={ installDlgID(system) + "-title" }>Install update v{ v.Version }?</div>
 			<div class="dialog-body">
 				if system {
-					<p>This also upgrades the system packages the appliance depends on. Expect a brief DHCP interruption while they update; the page reconnects on its own.</p>
+					<p>Installing <span class="mono">v{ v.Version }</span> also updates system components the appliance depends on. DHCP pauses briefly and this page reconnects on its own.</p>
 				} else {
-					<p>{ updateScopeHint(v.Scope) }</p>
+					<p>Installing <span class="mono">v{ v.Version }</span> updates the appliance software. DHCP keeps serving and this page reconnects on its own.</p>
 				}
-				<p>The package is downloaded and verified against the release's published checksum before anything is installed.</p>
 				<div class="form-group">
 					<label class="form-label" for={ installDlgID(system) + "-pw" }>Confirm your password</label>
 					<input class="form-control" id={ installDlgID(system) + "-pw" } name="current_password" type="password" autocomplete="current-password" required/>

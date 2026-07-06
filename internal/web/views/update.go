@@ -2,15 +2,8 @@ package views
 
 import "strings"
 
-// UpdateBadgeView is the footer's #update-badge live region: empty when the box
-// is current (or the operator dismissed this version), a link to the Settings
-// update card when a newer release is known.
-type UpdateBadgeView struct {
-	Show    bool
-	Version string
-}
-
-// UpdateView is the Settings "Software Update" card. Available means a newer
+// UpdateView drives both the footer badge/dialog and the Settings "Software
+// Update" card. Available means a newer
 // release than the running version is known; CanInstall additionally requires
 // the release's published SHA-256 digest (no digest = notify only, never
 // install). NeedsSystem latches after a frozen-dependency install failed on
@@ -24,9 +17,6 @@ type UpdateView struct {
 	Notes       string
 	CanInstall  bool
 	NeedsSystem bool
-	Dismissed   bool
-	LastCheck   string
-	CSRF        string
 }
 
 // noteBlock is one rendered block of the escaped-plaintext release-notes

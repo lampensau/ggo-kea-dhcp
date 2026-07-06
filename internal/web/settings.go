@@ -60,7 +60,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		UplinkSSID:     upSSID,
 		UplinkPassword: upPass,
 		LeaseLifetime:  s.leaseLifetime(),
-		Update:         s.buildUpdateView(page.CSRFToken),
 	}))
 }
 
