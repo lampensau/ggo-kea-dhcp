@@ -55,7 +55,6 @@ type Detector interface {
 //   - greengoH.configs           config id            maxGgoConfigs
 //   - ptp.<domain>.gms           PTP clock identity   maxPTPGMs (domain map is uint8-keyed)
 //   - dupIP.conflicts            option-50 IP         maxDupIPConflicts
-//   - hostTracker.seen           source MAC           maxHostLiveness
 const (
 	maxRogueServers    = 64
 	maxStaticPoolHosts = 1024
@@ -64,7 +63,6 @@ const (
 	maxPTPGMs          = 32 // per domain; the domain map itself is uint8-keyed (bounded)
 
 	maxDupIPConflicts = 1024
-	maxHostLiveness   = 4096
 )
 
 // plural picks the singular/plural form for n.

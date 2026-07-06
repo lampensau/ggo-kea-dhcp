@@ -158,7 +158,6 @@ type Monitor struct {
 	store     *SnapshotStore
 	sink      EventSink
 	clock     func() time.Time
-	hosts     *hostTracker
 
 	tickInterval time.Duration
 	baseBackoff  time.Duration
@@ -218,7 +217,7 @@ func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *Snapsho
 	}
 	return &Monitor{
 		spec: spec, openFn: openFn, filter: filter, detectors: slots,
-		store: store, sink: sink, clock: clock, hosts: newHostTracker(),
+		store: store, sink: sink, clock: clock,
 		tickInterval: tick, baseBackoff: backoff, faultBudget: budget,
 		quit: make(chan struct{}),
 	}
@@ -386,7 +385,6 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 func (m *Monitor) handleFrame(f Frame) {
 	frameNow := m.frameNow()
 	real := m.clock()
-	m.hosts.record(f, real) // passive host-liveness (per-lease online/offline)
 	for _, s := range m.detectors {
 		if s.degraded {
 			continue
@@ -486,7 +484,6 @@ func (m *Monitor) publishSnapshot(available bool) {
 			snap.UnleasedPoolHosts = sp.unleasedPoolHosts()
 		}
 	}
-	snap.LiveMACs = m.hosts.liveWithin(m.clock())
 	m.store.Update(m.spec.Iface, snap)
 }
 
