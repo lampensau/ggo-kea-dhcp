@@ -604,23 +604,31 @@ func (s *Server) applyNAT(hasUplink bool) error {
 // renderKeaForScopes renders the profile Kea config from already-loaded scopes
 // (the caller loads them once and passes them in, avoiding a second DB read +
 // JSON unmarshal on the boot/converge critical path).
-func (s *Server) renderKeaForScopes(scopes []ScopeConfig) (string, []string, error) {
-	if len(scopes) == 0 {
-		return "", nil, fmt.Errorf("no scopes for profile")
-	}
-
+// baseRenderInput assembles the ProfileRenderInput fields shared by every render path -
+// the MariaDB DSN split, the Kea secret path, and the global DHCP options. Each caller
+// then sets Scopes plus its path-specific fields (LeaseLifetime for the served reconcile,
+// IfaceWildcard for the apply/switch validation renders) before calling RenderProfile.
+func (s *Server) baseRenderInput() kea.ProfileRenderInput {
 	host, user, pass, name := config.ParseMariaDSN(s.cfg.MariaDBDSN)
-	in := kea.ProfileRenderInput{
+	g := s.globalDHCPOptions()
+	return kea.ProfileRenderInput{
 		MariaDBHost:   host,
 		MariaDBUser:   user,
 		MariaDBPass:   pass,
 		MariaDBName:   name,
 		KeaSecretPath: s.cfg.KeaSecretPath,
-		LeaseLifetime: s.leaseLifetime(),
+		GlobalDNS:     g.DNS,
+		GlobalOptions: g.keaOptions(),
 	}
-	g := s.globalDHCPOptions()
-	in.GlobalDNS = g.DNS
-	in.GlobalOptions = g.keaOptions()
+}
+
+func (s *Server) renderKeaForScopes(scopes []ScopeConfig) (string, []string, error) {
+	if len(scopes) == 0 {
+		return "", nil, fmt.Errorf("no scopes for profile")
+	}
+
+	in := s.baseRenderInput()
+	in.LeaseLifetime = s.leaseLifetime()
 	boxUplink, _, _ := s.uplinkSettings()
 	for _, sc := range scopes {
 		ri := sc.ToRenderInput()

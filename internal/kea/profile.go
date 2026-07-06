@@ -138,6 +138,52 @@ func hasOption(opts []OptionKV, name string) bool {
 // per-scope override or the site-wide global defaults; the GATEWAY is the isolation-
 // critical one - per-scope override or the uplink-derived .1, never global - so an
 // isolated scope still advertises no default route (PRD D5/D8).
+// rankScopePools orders one scope's placements into Kea pools by client-class match
+// precedence and returns the generated client classes the caller must register (vendor
+// pools and the per-scope GGO-OTHERS get generated names). Kea picks the first pool
+// whose client-class a device belongs to, so a non-Green-GO device (which also matches
+// the broad OTHERS catch-all) must hit its vendor pool first, and where prefixes overlap
+// the longer (more specific) prefix wins. Precedence keys off the PLAN class (p.Class),
+// not the rendered name, so the generated renames don't break ordering. Ranges are
+// per-pool, so this reorder is precedence-only and never changes which addresses a pool
+// serves. idx is the scope index (for the generated class names); pooledGGO is the set
+// of Green-GO classes that have their own pool in this scope (the GGO-OTHERS exclusion).
+func rankScopePools(placements []PoolPlacement, plan []PoolSpec, idx int, pooledGGO []DeviceClass) (pools []PoolConfig, classes []ClientClassConfig) {
+	type ranked struct {
+		pc   PoolConfig
+		prec int
+	}
+	var rps []ranked
+	for i, p := range placements {
+		if p.Kind == PoolReserve || p.Range == "" {
+			continue
+		}
+		renderedClass := p.Class
+		prec := 100 // specific, non-conflicting (Green-GO device classes, etc.)
+		switch {
+		case i < len(plan) && VendorClassTest(plan[i].Vendors) != "":
+			renderedClass = fmt.Sprintf("VENDOR-%d-%d", idx, i)
+			classes = append(classes, ClientClassConfig{Name: renderedClass, Test: VendorClassTest(plan[i].Vendors)})
+			prec = 10 + maxOUILen(plan[i].Vendors) // longer prefix → earlier
+		case p.Class == ClassNameOthers:
+			prec = 0 // non-Green-GO pool (not 001f80) → strictly last
+		case p.Class == ClassNameGGOOthers:
+			// Per-scope Green-GO catch-all: Green-GO devices whose model has no pool in
+			// this scope. Generated here (not global) so the exclusion set is the scope's
+			// own pooled classes.
+			renderedClass = fmt.Sprintf("%s-%d", ClassNameGGOOthers, idx)
+			classes = append(classes, ClientClassConfig{Name: renderedClass, Test: GGOOthersTest(pooledGGO)})
+			prec = 1 // after model pools, before OTHERS
+		}
+		rps = append(rps, ranked{PoolConfig{ClientClass: renderedClass, Range: p.Range}, prec})
+	}
+	sort.SliceStable(rps, func(a, b int) bool { return rps[a].prec > rps[b].prec })
+	for _, r := range rps {
+		pools = append(pools, r.pc)
+	}
+	return pools, classes
+}
+
 func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, err error) {
 	var subnets []SubnetConfig
 	// Per-pool vendor classes generated from custom pools' OUIs (appended to the
@@ -201,49 +247,10 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 			}
 		}
 
-		// Build pools with a precedence so Kea tries the MOST SPECIFIC match first.
-		// Kea picks the first pool whose client-class a device belongs to, so a
-		// non-Green-GO device (which also matches the broad OTHERS catch-all) must
-		// hit its vendor pool first; and where prefixes overlap, the longer
-		// (more specific) prefix wins. Ranges are per-pool, so this reorder is
-		// precedence-only and never changes which addresses a pool serves.
-		type ranked struct {
-			pc   PoolConfig
-			prec int
-		}
-		var pools []PoolConfig
-		var rps []ranked
-		for i, p := range placements {
-			if p.Kind == PoolReserve || p.Range == "" {
-				continue
-			}
-			// renderedClass is the Kea client-class name guarding this pool; it may
-			// differ from the plan class (vendor pools and the per-scope GGO-OTHERS get
-			// generated names). Precedence keys off the PLAN class (p.Class), not the
-			// rendered name, so the GGO-OTHERS-<idx> rename below doesn't break ordering.
-			renderedClass := p.Class
-			prec := 100 // specific, non-conflicting (Green-GO device classes, etc.)
-			switch {
-			case i < len(sc.PoolPlan) && VendorClassTest(sc.PoolPlan[i].Vendors) != "":
-				renderedClass = fmt.Sprintf("VENDOR-%d-%d", idx, i)
-				vendorClasses = append(vendorClasses, ClientClassConfig{Name: renderedClass, Test: VendorClassTest(sc.PoolPlan[i].Vendors)})
-				prec = 10 + maxOUILen(sc.PoolPlan[i].Vendors) // longer prefix → earlier
-			case p.Class == ClassNameOthers:
-				prec = 0 // non-Green-GO pool (not 001f80) → strictly last
-			case p.Class == ClassNameGGOOthers:
-				// Per-scope Green-GO catch-all: Green-GO devices whose model has no pool
-				// in this scope. Generated here (not global) so the exclusion set is the
-				// scope's own pooled classes.
-				renderedClass = fmt.Sprintf("%s-%d", ClassNameGGOOthers, idx)
-				vendorClasses = append(vendorClasses, ClientClassConfig{Name: renderedClass, Test: GGOOthersTest(pooledGGO)})
-				prec = 1 // after model pools, before OTHERS
-			}
-			rps = append(rps, ranked{PoolConfig{ClientClass: renderedClass, Range: p.Range}, prec})
-		}
-		sort.SliceStable(rps, func(a, b int) bool { return rps[a].prec > rps[b].prec })
-		for _, r := range rps {
-			pools = append(pools, r.pc)
-		}
+		// Order this scope's placements into Kea pools by client-class match precedence,
+		// collecting the generated vendor / per-scope GGO-OTHERS classes to register.
+		pools, scopeClasses := rankScopePools(placements, sc.PoolPlan, idx, pooledGGO)
+		vendorClasses = append(vendorClasses, scopeClasses...)
 
 		// DNS + extra options: a per-scope explicit value wins, then the local-DNS
 		// self-reference (the box's own per-scope address, mirroring the uplink

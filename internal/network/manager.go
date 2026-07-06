@@ -142,17 +142,19 @@ func (m *Manager) DeleteApplianceConnections() error {
 	// down, or not yet autoconnected) would otherwise survive the teardown and later
 	// autoconnect with stale addressing. Every caller runs this on a ModeApply
 	// "tear down then rebuild" pass, so evicting inactive ones too is the intent.
-	output, err := m.cmd.Run("nmcli", "connection", "show")
+	// -t -f NAME: terse output, one connection NAME per line (a colon inside a name is
+	// backslash-escaped). splitNmcliTerse unescapes it - so a ggo- name containing a
+	// space no longer mis-splits the way the old columnar strings.Fields[0] did.
+	output, err := m.cmd.Run("nmcli", "-t", "-f", "NAME", "connection", "show")
 	if err != nil {
 		return err
 	}
 
-	// Columns: NAME, UUID, TYPE, DEVICE - the connection name is at the start.
 	for line := range strings.SplitSeq(output, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		parts := strings.Fields(line)
+		parts := splitNmcliTerse(line)
 		if len(parts) > 0 && strings.HasPrefix(parts[0], "ggo-") {
 			conName := parts[0]
 			log.Printf("Deleting connection %s...", conName)
