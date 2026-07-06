@@ -12,7 +12,7 @@ import (
 //
 // Prefixes are matched at offset 6 of hexstring(pkt4.mac,”) - i.e. the low-24
 // device-type nibble that follows the `001f80` OUI. BPX is matched on 2 hex
-// digits ("20") because its serial blocks span 0x200xxx–0x202xxx; every other
+// digits ("20") because its serial blocks span 0x200xxx-0x202xxx; every other
 // type is matched on 3 digits.
 type DeviceClass struct {
 	Name     string   // Kea class name, e.g. "GGO-BPX"

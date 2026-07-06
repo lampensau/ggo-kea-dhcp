@@ -93,31 +93,34 @@ func (c *Config) initKeaSecret() error {
 	// Ensure directory exists
 	dir := filepath.Dir(c.KeaSecretPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		// Fallback to a local path if the system directory is not writable (e.g. read-only fs, permission denied)
-		localDir := "./test-kea-gui"
 		slog.Warn("kea secret dir not writable - falling back to local dev paths (Kea configs will be written there too)",
-			"dir", dir, "fallback", localDir, "err", err)
-		c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
-		c.KeaConfDir = localDir
-		if err := os.MkdirAll(localDir, 0755); err != nil {
-			return fmt.Errorf("failed to create fallback directory %s: %w", localDir, err)
-		}
+			"dir", dir, "err", err)
+		return c.fallbackToLocalDir(token)
 	}
 
 	// Write token to file
 	if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
-		// Fallback on write error
-		localDir := "./test-kea-gui"
 		slog.Warn("kea secret not writable - falling back to local dev paths (Kea configs will be written there too)",
-			"path", c.KeaSecretPath, "fallback", localDir, "err", err)
-		c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
-		c.KeaConfDir = localDir
-		_ = os.MkdirAll(localDir, 0755)
-		if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
-			return fmt.Errorf("failed to write fallback secret file: %w", err)
-		}
+			"path", c.KeaSecretPath, "err", err)
+		return c.fallbackToLocalDir(token)
 	}
 
+	return nil
+}
+
+// fallbackToLocalDir repoints the Kea secret + conf paths at a writable local
+// directory (the dev / read-only-fs case) and writes the secret there. Both the
+// dir-create and write failure paths in initKeaSecret converge here.
+func (c *Config) fallbackToLocalDir(token string) error {
+	const localDir = "./test-kea-gui"
+	c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
+	c.KeaConfDir = localDir
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create fallback directory %s: %w", localDir, err)
+	}
+	if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
+		return fmt.Errorf("failed to write fallback secret file: %w", err)
+	}
 	return nil
 }
 

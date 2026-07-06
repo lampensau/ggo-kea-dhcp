@@ -100,7 +100,7 @@ func (s *Server) evictForReservation(ctx context.Context, reservedIP string, isO
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
 	if err != nil {
 		log.Printf("[Reservation] lease lookup for eviction failed: %v", err)
 		return
@@ -108,6 +108,40 @@ func (s *Server) evictForReservation(ctx context.Context, reservedIP string, isO
 	del := map[string]bool{}
 	for _, l := range leases {
 		if l.IPAddress == reservedIP || isOwner(l) {
+			del[l.IPAddress] = true
+		}
+	}
+	for ip := range del {
+		if err := s.kea.DeleteLease(ctx, ip); err != nil {
+			log.Printf("[Reservation] lease4-del %s failed: %v", ip, err)
+		}
+	}
+}
+
+// evictForReservations is the batch form for a bulk import: it dumps the lease set ONCE
+// and deletes every lease that collides with any imported reservation (holds a reserved
+// IP, or is owned by a reserved MAC), instead of one full GetLeases per row (an N-dump
+// import). Same eviction set as calling evictForReservation per owner.
+func (s *Server) evictForReservations(ctx context.Context, owners []importOwner) {
+	if s.kea == nil || len(owners) == 0 {
+		return
+	}
+	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
+	if err != nil {
+		log.Printf("[Reservation] lease lookup for eviction failed: %v", err)
+		return
+	}
+	reservedIP := make(map[string]bool, len(owners))
+	reservedMAC := make(map[string]bool, len(owners))
+	for _, o := range owners {
+		reservedIP[o.ip] = true
+		if m := normalizeMAC(o.mac); m != "" {
+			reservedMAC[m] = true
+		}
+	}
+	del := map[string]bool{}
+	for _, l := range leases {
+		if reservedIP[l.IPAddress] || reservedMAC[normalizeMAC(l.HWAddress)] {
 			del[l.IPAddress] = true
 		}
 	}
@@ -137,7 +171,7 @@ func (s *Server) evictForPin(ctx context.Context, reservedIP, wantMAC, portIdent
 	if s.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(ctx, 1000)
+	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
 	if err != nil {
 		log.Printf("[Pinning] lease lookup for eviction failed: %v", err)
 		return
@@ -314,13 +348,10 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 			s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Post-commit eviction runs once per imported row (each its own GetLeases): a
-		// large import can take many seconds, so it must not be abortable by the
-		// operator's browser disconnecting mid-request - the rows are already committed.
-		for _, o := range owners {
-			wantMAC := normalizeMAC(o.mac)
-			s.evictForReservation(context.Background(), o.ip, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
-		}
+		// Post-commit eviction dumps leases once for the whole batch: a large import
+		// must not be abortable by the operator's browser disconnecting mid-request -
+		// the rows are already committed - so it runs on a background context.
+		s.evictForReservations(context.Background(), owners)
 	}
 
 	result := "SUCCESS"

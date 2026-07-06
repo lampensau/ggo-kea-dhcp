@@ -15,6 +15,10 @@ import (
 // search keystrokes, SSE connect snapshots) then ride for free.
 const leaseSrcTTL = 3 * time.Second
 
+// defaultLeasePageSize is the page size for a full lease dump from Kea. Well above
+// any real fleet on one appliance, so a single page returns every active lease.
+const defaultLeasePageSize = 1000
+
 // leaseCache is the shared short-TTL Kea lease provider. The background
 // cadences and display paths that used to each run their own GetLeases against
 // the control socket read through this one cache, collapsing four-plus
@@ -47,7 +51,7 @@ func newLeaseCache(fetch func(ctx context.Context) ([]kea.ActiveLease, error)) *
 // nil-tolerant snapshot.
 func (s *Server) getLeases(ctx context.Context, maxAge time.Duration) ([]kea.ActiveLease, error) {
 	if s.leaseSrc == nil {
-		return s.kea.GetLeases(ctx, 1000)
+		return s.kea.GetLeases(ctx, defaultLeasePageSize)
 	}
 	return s.leaseSrc.get(ctx, maxAge)
 }

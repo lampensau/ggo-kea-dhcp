@@ -104,7 +104,6 @@ func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 	}))
 }
 
-// fetchPortLabels reads the SQLite flex-id -> label map.
 // legacyLabelKey returns the pre-hex key form of a port identity (the printable
 // text of the same flex-id bytes) when one exists. Labels written before the
 // key became always-hex live under that form; fetchPortLabels translates them
@@ -128,6 +127,7 @@ func (s *Server) clearLegacyLabelAlias(portIdentity string) {
 	}
 }
 
+// fetchPortLabels reads the SQLite flex-id -> label map.
 func (s *Server) fetchPortLabels() (map[string]string, error) {
 	rows, err := s.sqlite.Query("SELECT flex_id_hex, label FROM port_labels")
 	if err != nil {

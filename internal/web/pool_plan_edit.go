@@ -453,6 +453,19 @@ func splitVendors(s string) []string {
 // rejected by Kea's config validation (kea -t) on save with a surfaced error,
 // rather than being silently accepted. The reassembly side (cidrPrefix) calls
 // back into this function, so display-split and reassembly can't drift.
+// splitRange splits a "start - end" display range into the shared subnet prefix and
+// the two host suffixes at maskSize. ok is false when s carries no " - " separator
+// (the caller handles that no-separator case itself).
+func splitRange(s string, maskSize int) (prefix, start, end string, ok bool) {
+	parts := strings.Split(s, " - ")
+	if len(parts) != 2 {
+		return "", "", "", false
+	}
+	pref, st := splitIPByMask(parts[0], maskSize)
+	_, ed := splitIPByMask(parts[1], maskSize)
+	return pref, st, ed, true
+}
+
 func splitIPByMask(ipStr string, maskSize int) (prefix, host string) {
 	ip := net.ParseIP(ipStr).To4()
 	if ip == nil {

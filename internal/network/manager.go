@@ -412,8 +412,11 @@ func splitNmcliTerse(line string) []string {
 	return append(fields, b.String())
 }
 
-// parseNmcliScan parses the output of nmcli wifi list (SSID:SIGNAL:SECURITY).
-func parseNmcliScan(out string, seen map[string]bool) []WifiAP {
+// parseNmcliScan parses the output of nmcli wifi list (SSID:SIGNAL:SECURITY). The
+// dedupe set is call-local: ScanWifi returns on the first backend that yields APs, so
+// there is never a second parse call to share it across.
+func parseNmcliScan(out string) []WifiAP {
+	seen := map[string]bool{}
 	var aps []WifiAP
 	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -474,7 +477,7 @@ func (m *Manager) ScanWifi() ([]WifiAP, error) {
 
 	_, _ = m.cmd.Run("nmcli", "device", "wifi", "rescan")
 	if out, err := m.cmd.Run("nmcli", "--terse", "--fields", "SSID,SIGNAL,SECURITY", "device", "wifi", "list"); err == nil {
-		if aps := parseNmcliScan(out, make(map[string]bool)); len(aps) > 0 {
+		if aps := parseNmcliScan(out); len(aps) > 0 {
 			sortBySignal(aps)
 			return aps, nil
 		}

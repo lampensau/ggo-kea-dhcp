@@ -26,7 +26,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // (live.go), so first paint and every live fragment derive from the same
 // computation and cannot drift. pd is the shell context (empty for the ticker).
 func (s *Server) buildDashboardView(ctx context.Context, pd views.PageData) views.DashboardView {
-	leases, keaErr := s.kea.GetLeases(ctx, 1000)
+	// Read through the shared cache: the page render then primes leaseSrc so the SSE
+	// connect snapshot that follows 0-3s later rides it instead of re-polling Kea.
+	leases, keaErr := s.getLeases(ctx, leaseSrcTTL)
 	if keaErr != nil {
 		log.Printf("[Dashboard] Kea lease query failed: %v", keaErr)
 	}
@@ -206,7 +208,9 @@ func poolDataForScope(sc ScopeConfig, leases []parsedLease) []views.PoolRow {
 }
 
 func (s *Server) handleLeases(w http.ResponseWriter, r *http.Request) {
-	leases, err := s.kea.GetLeases(r.Context(), 1000)
+	// Read through the shared cache (see buildDashboardView) so the connect snapshot
+	// that follows this page render does not issue a second lease poll.
+	leases, err := s.getLeases(r.Context(), leaseSrcTTL)
 	if err != nil {
 		log.Printf("Kea API lease query failed: %v", err)
 		s.renderTempl(w, r, views.Leases(views.LeasesView{
@@ -282,7 +286,7 @@ func (s *Server) handleLeaseRelease(w http.ResponseWriter, r *http.Request) {
 	// list, but patching here makes the release feel immediate. On a re-fetch
 	// error leave the table untouched: repainting from a failed query would show
 	// an empty table under the green toast, indistinguishable from a real wipe.
-	if leases, err := s.kea.GetLeases(r.Context(), 1000); err != nil {
+	if leases, err := s.kea.GetLeases(r.Context(), defaultLeasePageSize); err != nil {
 		log.Printf("[Leases] post-release refresh failed (table left as-is): %v", err)
 	} else {
 		_ = sse.PatchElementTempl(views.LeasesBody(s.unifiedLeaseRows(r.Context(), leases), s.mariadb != nil))
