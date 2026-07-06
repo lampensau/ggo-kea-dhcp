@@ -158,3 +158,30 @@ func TestForeignKeysCascadeAcrossPool(t *testing.T) {
 		t.Fatalf("scopes not CASCADE-deleted (n=%d); foreign_keys pragma not in force", n)
 	}
 }
+
+// TestInitializeAdmin verifies the factory bootstrap is atomic: one call creates the
+// admin AND flips the lifecycle to ONBOARDING, and a duplicate-username retry fails
+// whole (the UNIQUE violation rolls the transaction back) rather than half-applying.
+func TestInitializeAdmin(t *testing.T) {
+	sdb := openTestDB(t)
+
+	if err := sdb.InitializeAdmin("admin", "pbkdf2$hash"); err != nil {
+		t.Fatalf("InitializeAdmin: %v", err)
+	}
+	var n int
+	if err := sdb.QueryRow("SELECT COUNT(*) FROM users WHERE username='admin'").Scan(&n); err != nil || n != 1 {
+		t.Errorf("admin rows = %d (err %v), want 1", n, err)
+	}
+	if st, _ := sdb.GetState(LifecycleStateKey); st != StateOnboarding {
+		t.Errorf("lifecycle = %q, want %q", st, StateOnboarding)
+	}
+
+	// A second init under the same username must fail (users UNIQUE), leaving the
+	// existing admin and state untouched - the whole tx rolls back.
+	if err := sdb.InitializeAdmin("admin", "pbkdf2$other"); err == nil {
+		t.Error("duplicate-username InitializeAdmin should fail")
+	}
+	if err := sdb.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); err != nil || n != 1 {
+		t.Errorf("after failed retry, user rows = %d, want 1 (no second admin)", n)
+	}
+}

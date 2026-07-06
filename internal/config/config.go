@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // Config represents the application settings.
@@ -129,6 +131,25 @@ func (c *Config) fallbackToLocalDir(token string) error {
 // hosts-database config needs. The returned host has any :port stripped (Kea's
 // MySQL connector defaults to 3306). Missing fields come back empty.
 func ParseMariaDSN(dsn string) (host, user, pass, name string) {
+	// An empty/whitespace DSN means MariaDB is unconfigured - return all-empty rather
+	// than let the driver fill in its 127.0.0.1:3306 defaults (which would put a bogus
+	// host into the Kea config for a box that has no host store).
+	if strings.TrimSpace(dsn) == "" {
+		return "", "", "", ""
+	}
+	// Prefer the driver's own parser: the hand-split below mis-reads a password that
+	// contains '@' or '/', which would feed Kea the wrong credentials and silently kill
+	// host reservations. ParseDSN is strict, so a partial/non-standard DSN (empty, no
+	// '/', no '@') still falls through to the lenient hand-parse that preserves prior
+	// behavior.
+	if cfg, err := mysql.ParseDSN(dsn); err == nil {
+		host = cfg.Addr
+		if colon := strings.LastIndex(host, ":"); colon != -1 { // strip the :port
+			host = host[:colon]
+		}
+		return host, cfg.User, cfg.Passwd, cfg.DBName
+	}
+
 	rest := dsn
 
 	// dbname is everything after the last '/'

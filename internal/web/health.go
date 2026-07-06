@@ -1,10 +1,12 @@
 package web
 
 import (
+	"log"
 	"strings"
 	"sync"
 	"time"
 
+	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/preflight"
 	"ggo-kea-dhcp/internal/web/views"
 )
@@ -235,6 +237,44 @@ func (s *Server) onBackendChange(backend string, healthy bool, detail string) {
 	if backend == "KEA" {
 		s.live.publishIfChanged("kea-toast", renderFragment(views.KeaToastSlot(!healthy)))
 	}
+	// A MariaDB blip during a subnet-renumbering switch can leave pins with a stale
+	// dhcp4_subnet_id; the MARIADB_UP edge otherwise only flips the banner green. Re-run
+	// the remap so recovery closes that window instead of waiting for the next reconcile.
+	if backend == "MARIADB" && healthy {
+		s.remapOnMariaDBRecovery()
+	}
+}
+
+// remapOnMariaDBRecovery re-drives the reservation subnet-remap after MariaDB comes
+// back (see the MARIADB_UP call site). Only meaningful in ACTIVE, where a profile is
+// served and pins exist; ModeConverge so orphaned rows are not re-audited (this is a
+// recovery re-drive, not a profile change). Runs on a joined background goroutine so it
+// neither blocks the health probe nor writes into a closing DB on shutdown.
+func (s *Server) remapOnMariaDBRecovery() {
+	if s.mariadb == nil {
+		return
+	}
+	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive {
+		return
+	}
+	_, _, scopes, ok := s.activeProfileScopes()
+	if !ok || len(scopes) == 0 {
+		return
+	}
+	if !s.addBackground() {
+		return
+	}
+	go func() {
+		defer s.bgWG.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[remap] MariaDB-recovery remap recovered from panic: %v", r)
+			}
+		}()
+		ctx, cancel := opCtx()
+		defer cancel()
+		s.remapReservationSubnets(ctx, scopes, ModeConverge)
+	}()
 }
 
 // publishBackendAlert pushes the always-on #backend-alert strip (above the page h1)

@@ -102,6 +102,12 @@ type Server struct {
 	// firmware-mismatch findings to the owning scope's Network Health sub-card.
 	// Never cleared on Stop - outside ACTIVE netmon is down too, so there are no
 	// interface cards to attach to and a stale mapping is inert.
+	// reservationMu serializes the reservation conflict-check + insert (single add and
+	// bulk import) so two concurrent writes can't both pass the check for the same IP
+	// and both insert - the hosts unique key does not include ipv4_address, so the DB
+	// would not catch it. Single-process, so an in-process mutex is sufficient.
+	reservationMu sync.Mutex
+
 	ggoFwMu     sync.Mutex
 	ggoFwScopes []fwScope
 	// ggoFwLastSig is the last audited firmware-mismatch census ("" = uniform), so

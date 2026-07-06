@@ -61,16 +61,13 @@ func (s *Server) handleFactorySetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save admin to SQLite
-	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", username, passwordHash); err != nil {
-		log.Printf("Failed to create admin user: %v", err)
+	// Create the admin AND flip to ONBOARDING atomically: a crash between the two
+	// writes used to commit the admin under a still-FACTORY state, bricking re-onboarding
+	// (a same-username retry hits the users UNIQUE constraint; a different-username retry
+	// silently mints a second admin).
+	if err := s.sqlite.InitializeAdmin(username, passwordHash); err != nil {
+		log.Printf("Failed to initialize admin user: %v", err)
 		s.handleError(w, r, "failed to initialize user", http.StatusInternalServerError)
-		return
-	}
-
-	// Transition state to ONBOARDING
-	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); err != nil {
-		s.handleError(w, r, "Failed to update appliance state", http.StatusInternalServerError)
 		return
 	}
 	_ = s.sqlite.LogAudit("SYSTEM", "INITIALIZE_ADMIN", username, "", "", "SUCCESS")
@@ -324,6 +321,22 @@ func parseUplinkForm(r *http.Request) (UplinkConfig, error) {
 // else the first scope). boxUplink is the box-level master enable - a scope only
 // advertises the uplink gateway when its own toggle AND the master are on. Pure, so
 // it is unit-testable.
+// allScopesTagged reports whether every scope is served on a tagged VLAN (none
+// untagged on eth0). When true, the reconnect address after an apply/switch is a
+// VLAN-only IP, so the interstitial warns the operator they may lose access from an
+// access port. False for an empty scope set (nothing to warn about).
+func allScopesTagged(scopes []ScopeConfig) bool {
+	if len(scopes) == 0 {
+		return false
+	}
+	for _, sc := range scopes {
+		if sc.VlanID == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func buildRenderScopes(scopes []ScopeConfig, boxUplink bool) (renderScopes []kea.ScopeInput, gatewayIP string) {
 	for _, sc := range scopes {
 		ri := sc.ToRenderInput()
@@ -378,7 +391,7 @@ func (s *Server) handleSetupApply(w http.ResponseWriter, r *http.Request) {
 	// imminent eth0/VLAN re-IP will drop this very connection.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, interstitialHTML(plan.gatewayIP))
+	_, _ = io.WriteString(w, interstitialHTML(plan.gatewayIP, allScopesTagged(scopes)))
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}

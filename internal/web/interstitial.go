@@ -13,7 +13,7 @@ import (
 func (s *Server) respondInterstitial(w http.ResponseWriter, targetIP string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, interstitialHTML(targetIP))
+	_, _ = io.WriteString(w, interstitialHTML(targetIP, false))
 }
 
 // respondSystemInterstitial writes a self-contained full-page response for a
@@ -76,7 +76,14 @@ func systemInterstitialHTML(title, body string, poll bool) string {
 // interstitialHTML returns a self-contained page that polls the new gateway
 // address (which the client can only reach after it gets a fresh DHCP lease in
 // the new subnet) and redirects to the dashboard once it answers.
-func interstitialHTML(newIP string) string {
+func interstitialHTML(newIP string, allTagged bool) string {
+	// allTagged: the profile serves only tagged VLANs, so the reconnect address lives on
+	// a VLAN an untagged (access-port) browser can't reach. Warn - do not block; tagged-only
+	// is a legitimate config, the operator just needs a VLAN-aware path back in.
+	warn := ""
+	if allTagged {
+		warn = fmt.Sprintf(`<div id="ggo-vlan-warn" style="margin-top:1.25rem;padding:1rem;background:#3a2e10;border-radius:.5rem;font-size:.9rem;text-align:left">This profile serves only tagged VLANs, so <code>%s</code> is on a VLAN. If this computer is on an untagged (access) port you may lose access - reconnect from a device on that VLAN or a trunk port.</div>`, newIP)
+	}
 	// Returned as a full-page response to a native POST navigation: the browser
 	// replaces the document and executes the embedded script.
 	return fmt.Sprintf(`<style>
@@ -91,6 +98,7 @@ func interstitialHTML(newIP string) string {
  <div class="spin"></div>
  <h2>Applying network profile…</h2>
  <p>The appliance is switching to its new address. Your computer needs a new IP from the new subnet - this usually takes a few seconds.</p>
+ %s
  <div id="ggo-recovery">
    Couldn't reach the new gateway automatically. Verify your computer received a new IP address (or reconnect to the management AP), then browse to
    <code id="ggo-recovery-url"></code>.
@@ -131,5 +139,5 @@ func interstitialHTML(newIP string) string {
    setInterval(probe, 2000);
    probe();
  })();
-</script>`, newIP)
+</script>`, warn, newIP)
 }

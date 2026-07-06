@@ -7,12 +7,31 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 )
+
+// reservedProfileName matches the ".stash-<n>" shape persistProfile uses to park a
+// same-named profile aside. listProfiles hides it (GLOB '*.stash-[0-9]*') and
+// sweepOrphanedStashes deletes it, so an operator profile saved under that form would
+// disappear from the UI and later be swept with its scopes - reject it.
+var reservedProfileName = regexp.MustCompile(`\.stash-[0-9]`)
+
+// validateProfileName rejects an empty name and the reserved stash shape.
+func validateProfileName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("Profile name cannot be empty.")
+	}
+	if reservedProfileName.MatchString(name) {
+		return fmt.Errorf(`Profile name may not contain the reserved ".stash-<number>" form.`)
+	}
+	return nil
+}
 
 // applyPlan carries everything the asynchronous finishApply step needs, handed
 // off from the synchronous beginApply step.
@@ -42,6 +61,9 @@ type applyPlan struct {
 // the appliance untouched (state still ONBOARDING, uplink credentials restored,
 // apply guard cleared).
 func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink UplinkConfig) (applyPlan, error) {
+	if err := validateProfileName(profileName); err != nil {
+		return applyPlan{}, err
+	}
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
 
 	host, user, dbpass, name := config.ParseMariaDSN(s.cfg.MariaDBDSN)

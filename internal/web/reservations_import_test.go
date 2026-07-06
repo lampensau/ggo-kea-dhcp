@@ -92,6 +92,43 @@ func TestBuildImportReservations_DBConflict(t *testing.T) {
 
 // TestBuildImportReservations_TooFewColumns checks a one-column row (no IP) is skipped
 // with a clear reason rather than panicking on rec[1].
+// TestBuildImportReservations_TrunkedMACAcrossSubnets pins that dedup is keyed on
+// MAC+subnet, not MAC alone: a trunked device legitimately holds one reservation per
+// subnet under the same MAC, so both must import; only a repeat in the SAME subnet is
+// a file duplicate.
+func TestBuildImportReservations_TrunkedMACAcrossSubnets(t *testing.T) {
+	subnetFor := func(ip net.IP) (int, bool) {
+		if v4 := ip.To4(); v4 != nil {
+			switch v4[2] {
+			case 0:
+				return 1, true // 10.0.0.x -> subnet 1
+			case 1:
+				return 2, true // 10.0.1.x -> subnet 2
+			}
+		}
+		return 0, false
+	}
+	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
+	hostnameFor := func(string) string { return "" }
+
+	records := [][]string{
+		{"00:1f:80:00:00:01", "10.0.0.10", ""}, // MAC in subnet 1
+		{"00:1f:80:00:00:01", "10.0.1.10", ""}, // SAME MAC, subnet 2 (trunked device) -> KEEP
+		{"00:1f:80:00:00:01", "10.0.0.11", ""}, // SAME MAC + subnet 1 again -> a real file dup
+	}
+	toInsert, _, skipped, problems := buildImportReservations(records, subnetFor, noConflict, hostnameFor)
+
+	if len(toInsert) != 2 {
+		t.Fatalf("want 2 imported (same MAC across two subnets), got %d (%+v)", len(toInsert), toInsert)
+	}
+	if toInsert[0].SubnetID == toInsert[1].SubnetID {
+		t.Errorf("the two kept rows should be in different subnets, both = %d", toInsert[0].SubnetID)
+	}
+	if skipped != 1 {
+		t.Errorf("want 1 skipped (the same MAC+subnet repeat), got %d (%v)", skipped, problems)
+	}
+}
+
 func TestBuildImportReservations_TooFewColumns(t *testing.T) {
 	subnetFor := func(net.IP) (int, bool) { return 1, true }
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
