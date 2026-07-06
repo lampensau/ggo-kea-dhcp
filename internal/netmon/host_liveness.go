@@ -8,8 +8,8 @@ import (
 
 // hostLivenessWindow is how long after a host's last frame we still consider it
 // "online". Green-GO devices are chatty (PTP every 1-2s, audio multicast, periodic
-// ARP/lease renewals), all of which the monitor sees even at LevelNoPromisc, so a
-// live device refreshes well within this window; a powered-off device ages out.
+// ARP/lease renewals), all of which the monitor sees, so a live device refreshes
+// well within this window; a powered-off device ages out.
 const hostLivenessWindow = 120 * time.Second
 
 // hostTracker records the last time each source MAC was seen on the wire. It is the
@@ -36,10 +36,9 @@ func (h *hostTracker) record(f Frame, now time.Time) {
 	}
 	h.mu.Lock()
 	if _, ok := h.seen[mac]; !ok && len(h.seen) >= maxHostLiveness {
-		// Attacker-forgeable key (source MAC) recorded on every captured frame with
-		// no MulticastSniff gate, so a broadcast flood of spoofed MACs would grow
-		// this without bound between prune ticks. Evict the stalest so live hosts,
-		// re-seen every frame, survive.
+		// Attacker-forgeable key (source MAC) recorded on every captured frame, so a
+		// broadcast flood of spoofed MACs would grow this without bound between prune
+		// ticks. Evict the stalest so live hosts, re-seen every frame, survive.
 		evictStalest(h.seen, func(t time.Time) time.Time { return t })
 	}
 	h.seen[mac] = now

@@ -30,8 +30,7 @@ type OpenFunc func(iface string, promisc bool, filter []bpf.RawInstruction) (Sni
 // Spec describes one interface to monitor. The reconciler builds these from the
 // served scopes (eth0 / eth0.<vid>) - never wlan0.
 type Spec struct {
-	Iface          string
-	MulticastSniff bool
+	Iface string
 	// Greengo marks an interface served by a Green-GO-preset scope: it attaches the
 	// Green-GO census + config detectors and the UDP-5810 BPF clause. Off on
 	// non-Green-GO scopes so they neither run those detectors nor capture 5810.
@@ -76,10 +75,10 @@ type detectorSlot struct {
 	d    Detector
 	kind string // cached at construction so a degraded snapshot keeps its Kind
 	// counterFed marks a detector whose Tick reads out-of-band counters (sysfs)
-	// rather than the frame stream - only the storm detector. Counter-fed
-	// detectors keep ticking at LevelCountersOnly (where frames are dropped); the
-	// frame-fed presence detectors are frozen there (see onTick) so their absence
-	// timers don't run down against frames they are no longer being fed.
+	// rather than the frame stream - only the storm detector. Counter-fed detectors
+	// tick on the real clock; frame-fed detectors tick on the frame-clock, which
+	// pauses while frames are being dropped so their absence timers don't run down
+	// against frames they never received (see onTick).
 	counterFed bool
 	degraded   bool
 }
@@ -131,13 +130,6 @@ func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFu
 			newGreengoHDetector(spec.Iface, 0, vid),
 		)
 	}
-	// sACN is UDP 5568 multicast, visible only under promiscuous capture, so the
-	// detector is attached only when this scope opted into multicast sniffing.
-	// Without it the detector would be blind and falsely report "no sACN traffic";
-	// gating it also keeps the card free of sACN noise on a comms-only deployment.
-	if spec.MulticastSniff {
-		dets = append(dets, newSACNDetector(spec.Iface, 0))
-	}
 	if spec.WatchVLANs {
 		dets = append(dets, newVLANDetector(spec.Iface, spec.ConfiguredVIDs, linkUp))
 	}
@@ -157,8 +149,7 @@ func vidFromIface(iface string) int {
 
 // Monitor runs one interface: a single WaitGroup-tracked goroutine that binds an
 // OS thread + nices it ONCE, then loops over a recover-wrapped serveOnce. Restart
-// is the inner loop (never a re-spawn), shutdown is the quit select, and the
-// goroutine is the sole writer of the promiscuous bit.
+// is the inner loop (never a re-spawn), shutdown is the quit select.
 type Monitor struct {
 	spec      Spec
 	openFn    OpenFunc
@@ -166,7 +157,6 @@ type Monitor struct {
 	detectors []*detectorSlot
 	store     *SnapshotStore
 	sink      EventSink
-	gov       *governor
 	clock     func() time.Time
 	hosts     *hostTracker
 
@@ -181,39 +171,37 @@ type Monitor struct {
 	cur     Sniffer
 	stopped bool
 
-	// promiscuous single-owner state (monitor goroutine only)
-	promiscOn bool
-	joiner    *multicastJoiner
+	joiner *multicastJoiner
 
-	// Frame-clock: a clock for the frame-fed detectors that PAUSES while frames
-	// are being dropped (>= LevelCountersOnly). Their absence/debounce timers run
-	// on clock()-frameClockOffset, so a blind period is elided rather than counted
-	// as the subject going absent - preventing false "lost" alarms both during L2
-	// and on the climb back to L1. The counter-fed storm detector always uses the
-	// real clock. Touched only on the monitor goroutine.
+	// Frame-clock: a clock for the frame-fed detectors that PAUSES for any tick in
+	// which the capture is dropping frames (either overflow counter rose: an
+	// AF_PACKET socket-buffer drop or a frame-channel drop-on-full). Their
+	// absence/debounce timers run on clock()-frameClockOffset, so a blind interval
+	// is elided rather than counted as the subject going absent - preventing false
+	// "lost" alarms under a control-frame storm and on the recovery afterward. The
+	// counter-fed storm detector always uses the real clock. Touched only on the
+	// monitor goroutine.
 	frameClockOffset time.Duration
 	lastTickNow      time.Time
-	prevDropping     bool
+	prevBlind        bool
 	haveTick         bool
 }
 
-// framesDropped reports whether the given level drops frames unparsed (L2/L3).
-func framesDropped(level Level) bool { return level >= LevelCountersOnly }
-
 // framesFreezer is implemented by hybrid detectors (storm) that have a frame-fed
 // half needing to freeze when frames are dropped, even though the detector is
-// counter-fed overall and keeps ticking at L2.
+// counter-fed overall and keeps ticking through a blind stretch.
 type framesFreezer interface{ setFramesDropped(bool) }
 
 // frameNow returns the frame-fed detector clock (real clock minus accumulated
 // blind time).
 func (m *Monitor) frameNow() time.Time { return m.clock().Add(-m.frameClockOffset) }
 
-func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, gov *governor, clock func() time.Time, tick, backoff time.Duration, budget int) *Monitor {
+func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, clock func() time.Time, tick, backoff time.Duration, budget int) *Monitor {
 	slots := make([]*detectorSlot, len(detectors))
 	for i, d := range detectors {
-		// sysfs-counter-fed detectors survive L2 (counters-only), so they keep ticking
-		// while frame capture is shed.
+		// sysfs-counter-fed detectors read out-of-band counters, not the frame stream,
+		// so they tick on the real clock while frame-fed detectors run on the
+		// blind-time-eliding frame-clock.
 		var counterFed bool
 		switch d.(type) {
 		case *stormDetector, *idleDetector:
@@ -221,7 +209,7 @@ func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *Snapsho
 		}
 		slots[i] = &detectorSlot{d: d, kind: safeKind(d), counterFed: counterFed}
 	}
-	filter, err := buildFilter(spec.MulticastSniff, spec.Greengo)
+	filter, err := buildFilter(spec.Greengo)
 	if err != nil {
 		// A bad filter is a programming bug; fall back to no kernel filter
 		// (correctness preserved - detectors still ignore uninteresting frames).
@@ -230,7 +218,7 @@ func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *Snapsho
 	}
 	return &Monitor{
 		spec: spec, openFn: openFn, filter: filter, detectors: slots,
-		store: store, sink: sink, gov: gov, clock: clock, hosts: newHostTracker(),
+		store: store, sink: sink, clock: clock, hosts: newHostTracker(),
 		tickInterval: tick, baseBackoff: backoff, faultBudget: budget,
 		quit: make(chan struct{}),
 	}
@@ -356,16 +344,11 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 
 	available := !isNop(sn)
 	cc, _ := sn.(capControl)
-	m.promiscOn = false
 	m.joiner = nil
 	// Join the cheap, fixed known groups (PTP + mDNS) whenever we have a real
-	// capture socket - independent of MulticastSniff. These are benign receiver
-	// joins (no promiscuous, no querier, low rate), so PTP-over-UDP (319/320 ->
-	// 224.0.1.129-132) is observable for Stride / AES67 (PTPv2) clocks even without
-	// the expensive multicast sniff - PTP must always be legible (see detect_ptp).
-	// The per-universe sACN group discovery at the fan-out below stays behind the
-	// opt-in: its frames are BPF-gated by spec.MulticastSniff, so the always-present
-	// joiner never sees them to join when sniff is off.
+	// capture socket. These are benign receiver joins (no promiscuous, no querier,
+	// low rate), so PTP-over-UDP (319/320 -> 224.0.1.129-132) is observable for
+	// Stride / AES67 (PTPv2) clocks - PTP must always be legible (see detect_ptp).
 	if cc != nil && cc.socketFD() >= 0 {
 		m.joiner = newMulticastJoiner(cc.socketFD(), cc.ifIndex())
 		if jerr := m.joiner.joinKnown(); jerr != nil {
@@ -397,16 +380,10 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 }
 
 // handleFrame fans one frame out to every live detector, then enforces the
-// no-retention invariant by poisoning the buffer (debug builds only). At
-// LevelCountersOnly and above, frames are dropped unparsed - this is what makes
-// L2 a real rung below L1 (L1 still parses the narrow-BPF frames; L2 stops the
-// per-frame parse cost). Frame-fed detectors run on the frame-clock so the blind
-// L2/L3 interval is elided from their absence timers (see frameNow).
+// no-retention invariant by poisoning the buffer (debug builds only). Frame-fed
+// detectors run on the frame-clock so a blind interval (frames dropped under load)
+// is elided from their absence timers (see frameNow).
 func (m *Monitor) handleFrame(f Frame) {
-	if framesDropped(m.gov.currentLevel()) {
-		poison(f.Data)
-		return
-	}
 	frameNow := m.frameNow()
 	real := m.clock()
 	m.hosts.record(f, real) // passive host-liveness (per-lease online/offline)
@@ -419,13 +396,6 @@ func (m *Monitor) handleFrame(f Frame) {
 			now = real
 		}
 		m.consumeOne(s, f, now)
-	}
-	// Discover-then-join: during promiscuous windows (and steady-state on joined
-	// groups) learn sACN universes and join them cheaply.
-	if m.joiner != nil {
-		if u, ok := sacnUniverseOf(f); ok {
-			_ = m.joiner.join(sacnUniverseGroup(u))
-		}
 	}
 	poison(f.Data) // after the FULL fan-out - a retained slice reads poison next access
 }
@@ -443,78 +413,51 @@ func (m *Monitor) consumeOne(s *detectorSlot, f Frame, now time.Time) {
 func (m *Monitor) onTick(cc capControl, available bool) {
 	now := m.clock()
 
-	// Advance the frame-clock offset by the interval just elapsed if frames were
-	// being dropped during it, so the frame-fed detectors never count blind time
-	// as absence (the N1 fix: without this, a transient L2 makes short-window
-	// detectors like PTP emit false "lost" both during L2 and on the climb back).
-	if m.haveTick && m.prevDropping {
+	// Advance the frame-clock offset by the interval just elapsed if the capture
+	// was dropping frames during it, so the frame-fed detectors never count blind
+	// time as absence: without this, a control-frame storm that overflows the
+	// capture makes short-window detectors like PTP emit false "lost" both during
+	// the storm and on the climb back.
+	if m.haveTick && m.prevBlind {
 		m.frameClockOffset += now.Sub(m.lastTickNow)
 	}
 
-	// Dual overflow signals → governor level (see govInputs). Wire pps is
-	// deliberately not consulted for promiscuous or level: a busy-but-healthy show
-	// LAN runs enormous pps with zero drops, so escalating on pps would black out
-	// monitoring on exactly the networks the feature targets.
+	// Either overflow counter rising means the capture fell behind and dropped
+	// frames this tick - an AF_PACKET socket-buffer drop (tpDrops) or a
+	// frame-channel drop-on-full (chanDrops). That is the blindness signal the
+	// frame-clock keys on. Wire pps is deliberately NOT consulted: a busy-but-healthy
+	// show LAN runs enormous pps with zero drops (the in-kernel BPF sheds the flood),
+	// so a pps signal would freeze the frame-clock on exactly the healthy networks
+	// this monitor targets.
 	var tpDrops, chanDrops uint32
 	if cc != nil {
 		tpDrops, chanDrops = cc.stats()
 	}
-	level := m.gov.observe(govInputs{tpDrops: tpDrops, chanDrops: chanDrops})
-	dropping := framesDropped(level)
+	blind := tpDrops > 0 || chanDrops > 0
 
-	// Promiscuous single-owner: ONE boolean recomputed here, the only caller of
-	// setPromiscuous. Promiscuous exists for one legitimate purpose - capturing the
-	// multicast traffic (sACN 5568, PTP) a scope opted into via MulticastSniff - so
-	// it is gated on that opt-in, never enabled steady-state. It is deliberately NOT
-	// turned on for rogue-DHCP detection: on a switched network (the appliance's
-	// normal deployment) promiscuous only relaxes the NIC's own receive filter, not
-	// the switch's forwarding, so the unicast OFFER/ACK a rogue sends straight to
-	// another client never reaches the Pi's port regardless - that needs a SPAN /
-	// mirror port. What promiscuous WOULD add is the kernel running BPF in softirq
-	// over every frame on the segment, which yields zero ring-buffer tp_drops and so
-	// never trips this governor: unbounded, ungoverned softirq CPU competing with
-	// Kea's packet path for near-zero added rogue visibility. Rogue detection instead
-	// runs on the non-promiscuous capture (broadcast OFFERs + any OFFER/ACK directed
-	// at the box), which is the honest, switch-correct posture. When MulticastSniff
-	// IS on, the governor still owns the ceiling: it sheds promiscuous first (drops
-	// to LevelNoPromisc) the instant either overflow counter fires.
-	want := level == LevelFull && m.spec.MulticastSniff
-	if cc != nil {
-		m.applyPromiscuous(cc, want)
-	}
-
-	// Tick policy by level: L0/L1 tick everyone; L2 (counters-only) ticks ONLY the
-	// counter-fed storm detector - the frame-fed presence detectors are frozen so
-	// they don't false-"lost" while blind; L3 (paused) freezes everyone.
 	frameNow := m.frameNow()
-	if level != LevelPaused {
-		for _, s := range m.detectors {
-			if s.degraded {
-				continue
-			}
-			if dropping && !s.counterFed {
-				continue // frozen: blind, so do not evaluate absence
-			}
-			// Hybrid detectors (storm) keep their counter-fed half running at L2 but
-			// must freeze their frame-fed half while blind - same reasoning as the
-			// presence freeze above.
-			if fz, ok := s.d.(framesFreezer); ok {
-				fz.setFramesDropped(dropping)
-			}
-			tn := frameNow
-			if s.counterFed {
-				tn = now
-			}
-			for _, e := range m.tickOne(s, tn) {
-				if m.sink != nil {
-					m.sink(e)
-				}
+	for _, s := range m.detectors {
+		if s.degraded {
+			continue
+		}
+		// The hybrid storm detector freezes its frame-fed half while blind (its
+		// counter-fed half keeps counting off sysfs).
+		if fz, ok := s.d.(framesFreezer); ok {
+			fz.setFramesDropped(blind)
+		}
+		tn := frameNow
+		if s.counterFed {
+			tn = now
+		}
+		for _, e := range m.tickOne(s, tn) {
+			if m.sink != nil {
+				m.sink(e)
 			}
 		}
 	}
-	m.publishSnapshot(level, available, dropping)
+	m.publishSnapshot(available)
 
-	m.prevDropping = dropping
+	m.prevBlind = blind
 	m.lastTickNow = now
 	m.haveTick = true
 }
@@ -530,30 +473,16 @@ func (m *Monitor) tickOne(s *detectorSlot, now time.Time) (events []Event) {
 	return s.d.Tick(now)
 }
 
-// applyPromiscuous is the sole writer of PACKET_MR_PROMISC; it acts only on a
-// change so there is never a double add/drop.
-func (m *Monitor) applyPromiscuous(cc capControl, want bool) {
-	if want == m.promiscOn {
-		return
-	}
-	if err := cc.setPromiscuous(want); err != nil {
-		log.Printf("[netmon] %s set promiscuous=%v: %v", m.spec.Iface, want, err)
-		return
-	}
-	m.promiscOn = want
-}
-
-func (m *Monitor) publishSnapshot(level Level, available, dropping bool) {
-	snap := Snapshot{Iface: m.spec.Iface, Available: available, Level: level}
+func (m *Monitor) publishSnapshot(available bool) {
+	snap := Snapshot{Iface: m.spec.Iface, Available: available}
 	if !available {
 		snap.Note = "monitoring idle - no capture socket (dev mode or no privilege)"
 	}
 	for _, s := range m.detectors {
-		snap.Detectors = append(snap.Detectors, m.snapshotOne(s, dropping))
-		// The unleased-pool-host list rides in the same snapshot; skipped while frames
-		// are dropped (stale ARP state) or the detector is degraded, matching the
-		// "don't claim a status you aren't observing" rule in snapshotOne.
-		if sp, ok := s.d.(*staticInPoolDetector); ok && !s.degraded && !dropping {
+		snap.Detectors = append(snap.Detectors, m.snapshotOne(s))
+		// The unleased-pool-host list rides in the same snapshot; skipped when the
+		// detector is degraded.
+		if sp, ok := s.d.(*staticInPoolDetector); ok && !s.degraded {
 			snap.UnleasedPoolHosts = sp.unleasedPoolHosts()
 		}
 	}
@@ -561,15 +490,9 @@ func (m *Monitor) publishSnapshot(level Level, available, dropping bool) {
 	m.store.Update(m.spec.Iface, snap)
 }
 
-func (m *Monitor) snapshotOne(s *detectorSlot, dropping bool) (ds DetectorSnapshot) {
+func (m *Monitor) snapshotOne(s *detectorSlot) (ds DetectorSnapshot) {
 	if s.degraded {
 		return DetectorSnapshot{Kind: s.kind, Severity: SevInfo, Text: "detector unavailable (internal fault)"}
-	}
-	// A frame-fed detector that is frozen (frames dropped at L2/L3) has stale
-	// state we no longer trust - report "unknown", never its last ok/lost value,
-	// so the card doesn't claim a status it isn't observing.
-	if dropping && !s.counterFed {
-		return DetectorSnapshot{Kind: s.kind, Severity: SevInfo, Text: "status unknown - reduced monitoring"}
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -585,7 +508,6 @@ func (m *Monitor) markPermanentlyDegraded() {
 		Iface:     m.spec.Iface,
 		Available: false,
 		Note:      "monitoring unavailable - repeated fault",
-		Level:     LevelPaused,
 	})
 	log.Printf("[netmon iface=%s] permanently degraded after repeated serve-level faults", m.spec.Iface)
 }
@@ -675,7 +597,6 @@ func (mm *MonitorManager) Start(specs []Spec) {
 		return
 	}
 	th := mm.loadThresholds()
-	gcfg := defaultGovConfig()
 
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
@@ -687,7 +608,7 @@ func (mm *MonitorManager) Start(specs []Spec) {
 		rx := sysfsRxReader(spec.Iface)
 		link := sysfsLinkReader(spec.Iface)
 		dets := mm.detectorsFor(spec, th, rx, link)
-		mon := newMonitor(spec, mm.openFn, dets, mm.store, mm.sink, newGovernor(gcfg), mm.clock, mm.tickInterval, mm.baseBackoff, mm.faultBudget)
+		mon := newMonitor(spec, mm.openFn, dets, mm.store, mm.sink, mm.clock, mm.tickInterval, mm.baseBackoff, mm.faultBudget)
 		mon.start()
 		mm.monitors[spec.Iface] = mon
 	}

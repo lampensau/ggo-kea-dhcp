@@ -41,15 +41,15 @@ type stormDetector struct {
 
 	tcnTimes     []time.Time
 	churning     bool
-	framesFrozen bool // set by the monitor at L2/L3: freeze the frame-fed STP half
+	framesFrozen bool // set by the monitor while frames are dropped: freeze the frame-fed STP half
 }
 
 // setFramesDropped tells the storm detector whether the monitor is dropping
-// frames (>= LevelCountersOnly). Storm is hybrid - its pps half is counter-fed
-// (keeps running at L2) but its STP/BPDU-churn half is frame-fed, so when frames
-// are dropped the churn half must freeze, exactly like the N1 presence freeze;
-// otherwise a blind L2 stretch drains tcnTimes and emits a false "STP stabilized"
-// (cleared because we stopped looking, not because the tree settled).
+// frames. Storm is hybrid - its pps half is counter-fed (keeps running) but its
+// STP/BPDU-churn half is frame-fed, so when frames are dropped the churn half must
+// freeze, like the frame-fed presence detectors; otherwise a blind stretch drains
+// tcnTimes and emits a false "STP stabilized" (cleared because we stopped looking,
+// not because the tree settled).
 func (d *stormDetector) setFramesDropped(dropping bool) { d.framesFrozen = dropping }
 
 func newStormDetector(iface string, threshold int, rx rxCounterFunc) *stormDetector {

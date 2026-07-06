@@ -1,22 +1,14 @@
 package netmon
 
-import (
-	"log"
+import "golang.org/x/sys/unix"
 
-	"golang.org/x/sys/unix"
-)
+// Multicast strategy: the fixed control-plane groups are joined directly - a
+// benign *receiver* action (not a querier; harmless extra joiner; no effect on
+// audio). With the NIC's hardware multicast filter, only joined groups + broadcast
+// reach the kernel, so the audio flood never wakes userspace.
 
-// Multicast strategy (discover-then-join, cheaper than holding promiscuous):
-// known/derivable groups are joined directly - a benign *receiver* action (not a
-// querier; harmless extra joiner; no effect on audio). PTP and mDNS groups are
-// fixed and joined up front; sACN groups are per-universe and joined as universes
-// are discovered under the steady-state promiscuous socket (when MulticastSniff is
-// on). With the NIC's hardware multicast filter, only joined groups + broadcast
-// reach the kernel, far cheaper than holding promiscuous against the full audio flood.
-
-// knownGroups are the multicast groups we can join directly without discovery:
-// PTP (IEEE 1588 default + pdelay) and mDNS. sACN groups are per-universe and are
-// derived (sacnUniverseGroup) as universes are discovered.
+// knownGroups are the multicast groups we join directly up front:
+// PTP (IEEE 1588 default + pdelay) and mDNS.
 var knownGroups = [][4]byte{
 	{224, 0, 1, 129}, // PTP primary
 	{224, 0, 1, 130},
@@ -38,43 +30,13 @@ var knownMACs = [][6]byte{
 	{0x01, 0x80, 0xc2, 0x00, 0x00, 0x00}, // STP/BPDU
 }
 
-// sacnUniverseGroup derives the E1.31 multicast group for a universe:
-// 239.255.<hi>.<lo>, where the last two octets are the universe number.
-func sacnUniverseGroup(universe uint16) [4]byte {
-	return [4]byte{239, 255, byte(universe >> 8), byte(universe)}
-}
-
-// sacnUniverseOf returns the E1.31 universe carried by an sACN data frame, used
-// to join that universe's multicast group during discovery.
-func sacnUniverseOf(f Frame) (uint16, bool) {
-	et, off, _, ok := etherInfo(f.Data)
-	if !ok || et != etherTypeIPv4 {
-		return 0, false
-	}
-	proto, _, _, l4, ok := ipv4Info(f.Data, off)
-	if !ok || proto != ipProtoUDP {
-		return 0, false
-	}
-	_, dport, payload, ok := udpPorts(f.Data, l4)
-	if !ok || dport != sacnPort {
-		return 0, false
-	}
-	p := f.Data[payload:]
-	if len(p) < 115 {
-		return 0, false
-	}
-	return be16(p, 113), true
-}
-
 // multicastJoiner owns the IGMP group memberships on one capture socket. It is
-// the only thing that joins/leaves groups, and join is idempotent so the
-// discover-then-join loop can call it freely.
+// the only thing that joins/leaves groups, and join is idempotent.
 type multicastJoiner struct {
 	fd        int
 	ifIndex   int
 	joined    map[[4]byte]bool
 	joinedMAC map[[6]byte]bool
-	capLogged bool // one-shot: join set hit maxJoinedGroups
 }
 
 func newMulticastJoiner(fd, ifIndex int) *multicastJoiner {
@@ -101,20 +63,6 @@ func multicastMAC(group [4]byte) [6]byte {
 // the reliable multicast path; this join is the cheap optimisation on top.
 func (m *multicastJoiner) join(group [4]byte) error {
 	if m.joined[group] {
-		return nil
-	}
-	// Cap the join set. The group is derived from the attacker-forgeable sACN
-	// universe (join is called per discovered universe, monitor.go), so an
-	// unbounded set would both grow the map and spray PACKET_ADD_MEMBERSHIP calls
-	// that overflow the NIC's hardware multicast filter into ALLMULTI - ungoverned
-	// softirq the load governor cannot shed. Past the cap, refuse: promiscuous
-	// still covers real universes while it runs, and the once-seen forged groups
-	// are exactly the ones we decline.
-	if len(m.joined) >= maxJoinedGroups {
-		if !m.capLogged {
-			m.capLogged = true
-			log.Printf("[netmon] multicast join set at cap (%d groups) - refusing further joins; likely a spoofed sACN universe flood", maxJoinedGroups)
-		}
 		return nil
 	}
 	if err := m.membership(multicastMAC(group), unix.PACKET_ADD_MEMBERSHIP); err != nil {

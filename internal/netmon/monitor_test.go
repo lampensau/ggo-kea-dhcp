@@ -223,172 +223,59 @@ func TestMonitorManager_PromptStopDuringBackoff(t *testing.T) {
 	}
 }
 
-// TestMonitor_PromiscuousOffWithoutMulticastSniff proves the switch-correct posture:
-// a plain ACTIVE scope (MulticastSniff off) never goes promiscuous, because
-// promiscuous buys near-zero rogue visibility on a switched network for real
-// ungoverned softirq cost. It is reserved for multicast capture (see below).
-func TestMonitor_PromiscuousOffWithoutMulticastSniff(t *testing.T) {
-	clk := newFakeClock(base)
-	fs := NewFakeSniffer()
-	openFn := func(string, bool, []bpf.RawInstruction) (Sniffer, error) { return fs, nil }
-	mm, _ := fastManager(openFn, clk)
-	defer mm.Stop()
-
-	mm.Start([]Spec{{Iface: "eth0"}}) // no MulticastSniff
-
-	// Give the tick loop time to run many ticks; promiscuous must stay OFF throughout.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		for _, on := range fs.PromiscLog() {
-			if on {
-				t.Fatalf("promiscuous enabled without MulticastSniff: %v", fs.PromiscLog())
-			}
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-}
-
-// TestMonitor_PromiscuousGatedOnMulticastSniff proves promiscuous IS enabled at L0
-// for a scope that opted into multicast sniffing (its legitimate purpose: sACN /
-// PTP multicast capture), and that the governor still sheds it first under overflow.
-func TestMonitor_PromiscuousGatedOnMulticastSniff(t *testing.T) {
-	clk := newFakeClock(base)
-	fs := NewFakeSniffer()
-	openFn := func(string, bool, []bpf.RawInstruction) (Sniffer, error) { return fs, nil }
-	mm, _ := fastManager(openFn, clk)
-	defer mm.Stop()
-
-	mm.Start([]Spec{{Iface: "eth0", MulticastSniff: true}})
-
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		log := fs.PromiscLog()
-		if len(log) > 0 && log[len(log)-1] {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	if log := fs.PromiscLog(); len(log) == 0 || !log[len(log)-1] {
-		t.Fatalf("promiscuous never enabled at L0 with MulticastSniff: %v", log)
-	}
-
-	// Now drive sustained overflow → governor sheds to >=L1 → promiscuous forced off.
-	fs.SetStats(100, 100)
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		log := fs.PromiscLog()
-		if len(log) > 0 && !log[len(log)-1] {
-			return // last toggle was OFF - governor reclaimed the ceiling
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("governor did not force promiscuous off after shedding: %v", fs.PromiscLog())
-}
-
-// countingDetector records how many frames it consumed (H4 fan-out gating test).
-type countingDetector struct{ consumed int }
-
-func (c *countingDetector) Consume(Frame, time.Time) { c.consumed++ }
-func (c *countingDetector) Tick(time.Time) []Event   { return nil }
-func (c *countingDetector) Snapshot() DetectorSnapshot {
-	return DetectorSnapshot{Kind: "counting", Severity: SevOK}
-}
-
-// TestHandleFrame_LevelGating proves L2+ stops the per-frame parse cost while L0/L1
-// still fan out - i.e. L2 is a real rung, not a no-op of L1.
-func TestHandleFrame_LevelGating(t *testing.T) {
-	cd := &countingDetector{}
-	m := &Monitor{
-		spec:      Spec{Iface: "eth0"},
-		clock:     func() time.Time { return base },
-		gov:       newGovernor(defaultGovConfig()),
-		detectors: []*detectorSlot{{d: cd, kind: "counting"}},
-	}
-
-	// L0: consumed.
-	m.handleFrame(igmpQuery([4]byte{10, 0, 0, 1}, 2))
-	// L1 (drop promiscuous): still parses narrow-BPF frames.
-	m.gov.level = LevelNoPromisc
-	m.handleFrame(igmpQuery([4]byte{10, 0, 0, 1}, 2))
-	if cd.consumed != 2 {
-		t.Fatalf("L0/L1 consumed %d frames, want 2", cd.consumed)
-	}
-	// L2 (counters-only): frame dropped unparsed.
-	m.gov.level = LevelCountersOnly
-	m.handleFrame(igmpQuery([4]byte{10, 0, 0, 1}, 2))
-	// L3 (paused): also dropped.
-	m.gov.level = LevelPaused
-	m.handleFrame(igmpQuery([4]byte{10, 0, 0, 1}, 2))
-	if cd.consumed != 2 {
-		t.Fatalf("L2/L3 consumed extra frames (%d total) - should drop unparsed", cd.consumed)
-	}
-}
-
-// TestMonitor_L2FreezesPresenceNoFalseLost guards N1: at LevelCountersOnly the
-// frame-fed presence detectors are frozen and run on the blind-time-eliding
-// frame-clock, so holding L2 well past PTP's 15s absence window - and climbing
-// back to L1 - never produces a false "PTP grandmaster lost".
-func TestMonitor_L2FreezesPresenceNoFalseLost(t *testing.T) {
+// TestMonitor_FrameClockFreezesPresenceNoFalseLost guards the frame-clock: when the
+// capture is dropping frames (an overflow counter rises), the frame-fed presence
+// detectors run on the blind-time-eliding frame-clock, so holding a blind period
+// well past PTP's 15s absence window - and recovering afterward - never produces a
+// false "PTP grandmaster lost". This is the re-anchored N1 invariant: the trigger
+// is the drop counters, not a governor level.
+func TestMonitor_FrameClockFreezesPresenceNoFalseLost(t *testing.T) {
 	clk := newFakeClock(base)
 	fs := NewFakeSniffer()
 	rs := &recordingSink{}
 	ptp := newPTPDetector("eth0", 15*time.Second)
-	storm := newStormDetector("eth0", 1000, nil)
 	m := &Monitor{
-		spec:  Spec{Iface: "eth0"},
-		gov:   newGovernor(testGovConfig()),
-		store: NewSnapshotStore(),
-		sink:  rs.sink,
-		clock: clk.Now,
-		detectors: []*detectorSlot{
-			{d: ptp, kind: "ptp", counterFed: false},
-			{d: storm, kind: "storm", counterFed: true},
-		},
+		spec:      Spec{Iface: "eth0"},
+		store:     NewSnapshotStore(),
+		sink:      rs.sink,
+		clock:     clk.Now,
+		detectors: []*detectorSlot{{d: ptp, kind: "ptp", counterFed: false}},
 	}
 
-	// Establish a present grandmaster at L0.
+	// Establish a present grandmaster with no drops.
 	m.handleFrame(ptpAnnounce(0, 0x1, 128, 128, false))
 	m.onTick(fs, true)
 	if got := snapshotKind(m, "ptp").Severity; got != SevOK {
 		t.Fatalf("PTP not present after announce: %v", got)
 	}
 
-	// Drive to L2 with sustained overflow (stepDownAfter=2 → 4 breach ticks),
-	// advancing the clock only a little so PTP stays present during the descent.
+	// Begin dropping frames. One small blind tick arms prevBlind so the subsequent
+	// long interval is absorbed into the frame-clock offset.
 	fs.SetStats(10, 10)
-	for range 4 {
-		clk.Advance(time.Second)
-		m.onTick(fs, true)
-	}
-	if m.gov.currentLevel() < LevelCountersOnly {
-		t.Fatalf("did not reach L2: %v", m.gov.currentLevel())
-	}
+	clk.Advance(time.Second)
+	m.onTick(fs, true)
 
-	// Hold L2 far past the 15s absence window. Frozen → no lost event, and the
-	// card reports "unknown" rather than a stale or false status.
+	// Hold the blind period far past the 15s absence window: the interval is elided,
+	// so PTP never goes "lost" and the card still reports it present.
 	clk.Advance(60 * time.Second)
 	m.onTick(fs, true)
 	if got := rs.byAction("PTP grandmaster lost"); got != 0 {
-		t.Fatalf("false 'PTP grandmaster lost' fired while frozen at L2 (%d)", got)
+		t.Fatalf("false 'PTP grandmaster lost' fired while blind (%d)", got)
 	}
-	if s := snapshotKind(m, "ptp"); s.Text != "status unknown - reduced monitoring" {
-		t.Fatalf("frozen PTP snapshot = %q, want 'status unknown'", s.Text)
+	if got := snapshotKind(m, "ptp").Severity; got != SevOK {
+		t.Fatalf("PTP snapshot = %v while blind, want still present", got)
 	}
 
-	// Resume: calm signals climb back to L0/L1; a present GM keeps announcing.
+	// Recover: drops stop, the GM keeps announcing, and no false lost ever fired
+	// across the whole blind-hold-and-recover sequence.
 	fs.SetStats(0, 0)
 	for range 12 {
 		clk.Advance(time.Second)
 		m.handleFrame(ptpAnnounce(0, 0x1, 128, 128, false))
 		m.onTick(fs, true)
 	}
-	// The blind interval was elided, so no false lost ever fired across the whole
-	// L2-hold-and-recover sequence.
 	if got := rs.byAction("PTP grandmaster lost"); got != 0 {
-		t.Fatalf("false 'PTP grandmaster lost' fired across L2/resume (%d)", got)
-	}
-	if m.gov.currentLevel() != LevelFull {
-		t.Fatalf("did not recover to L0 after sustained calm: %v", m.gov.currentLevel())
+		t.Fatalf("false 'PTP grandmaster lost' fired across blind/resume (%d)", got)
 	}
 }
 
@@ -396,7 +283,7 @@ func TestMonitor_L2FreezesPresenceNoFalseLost(t *testing.T) {
 func snapshotKind(m *Monitor, kind string) DetectorSnapshot {
 	for _, s := range m.detectors {
 		if s.kind == kind {
-			return m.snapshotOne(s, framesDropped(m.gov.currentLevel()))
+			return m.snapshotOne(s)
 		}
 	}
 	return DetectorSnapshot{}
@@ -428,17 +315,5 @@ func TestMonitorManager_RejectsWlan0Spec(t *testing.T) {
 		if s.Iface == "wlan0" {
 			t.Fatal("wlan0 was monitored - the uplink-exclusion guard failed")
 		}
-	}
-}
-
-func TestNewDetectors_SACNGatedOnMulticastSniff(t *testing.T) {
-	// sACN is multicast-only (UDP 5568): without promiscuous capture the detector
-	// is blind, so it must be attached only when the scope opted into multicast
-	// sniffing - otherwise the card shows a false "no sACN traffic" on a comms-only
-	// deployment. Count is the cheap invariant: sniff adds exactly the sACN detector.
-	off := newDetectors(Spec{Iface: "eth0"}, Thresholds{}, nil, nil)
-	on := newDetectors(Spec{Iface: "eth0", MulticastSniff: true}, Thresholds{}, nil, nil)
-	if len(on) != len(off)+1 {
-		t.Fatalf("MulticastSniff should add exactly the sACN detector: off=%d on=%d", len(off), len(on))
 	}
 }

@@ -425,14 +425,14 @@ func TestNetHealthRenders(t *testing.T) {
 		{Iface: "eth0.30", Available: true, LinkMode: "trunk", ErrCount: 1, Rows: []NetHealthRow{
 			{Kind: "rogue_dhcp", Severity: "error", Title: "Rogue DHCP server detected", Detail: "server 10.30.0.66"},
 		}},
-		{Iface: "eth0.40", Available: false, LinkMode: "trunk", Note: "multicast inspection paused - high load"},
+		{Iface: "eth0.40", Available: false, LinkMode: "trunk", Note: "monitoring idle - no capture socket (dev mode or no privilege)"},
 	}}
 	html := render(t, NetHealth(v))
 	for _, want := range []string{
 		"eth0", "eth0.30", "eth0.40",
 		"Rogue DHCP server detected",
 		"LLDP neighbor: core-sw1",
-		"multicast inspection paused - high load", // honest unavailable note
+		"monitoring idle - no capture socket (dev mode or no privilege)", // honest unavailable note
 		"1 alert", // the trunk iface rollup
 	} {
 		if !strings.Contains(html, want) {

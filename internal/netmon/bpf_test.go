@@ -14,9 +14,9 @@ func danteLikeFrame() Frame {
 	return Frame{Iface: "eth0", Data: buildEth(macTestSwitch, macTestSwitch, etherTypeIPv4, ip)}
 }
 
-func runFilter(t *testing.T, multicastSniff, greengo bool, f Frame) bool {
+func runFilter(t *testing.T, greengo bool, f Frame) bool {
 	t.Helper()
-	vm, err := bpf.NewVM(buildBPFInstructions(multicastSniff, greengo))
+	vm, err := bpf.NewVM(buildBPFInstructions(greengo))
 	if err != nil {
 		t.Fatalf("assemble/VM: %v", err)
 	}
@@ -28,12 +28,10 @@ func runFilter(t *testing.T, multicastSniff, greengo bool, f Frame) bool {
 }
 
 func TestBPFFilter_AcceptsInterestingDropsFlood(t *testing.T) {
-	// Assembles cleanly to raw form (catches a bad skip), across the sniff/greengo combos.
-	for _, mc := range []bool{false, true} {
-		for _, gg := range []bool{false, true} {
-			if _, err := buildFilter(mc, gg); err != nil {
-				t.Fatalf("buildFilter(%v,%v): %v", mc, gg, err)
-			}
+	// Assembles cleanly to raw form (catches a bad skip), on both interface kinds.
+	for _, gg := range []bool{false, true} {
+		if _, err := buildFilter(gg); err != nil {
+			t.Fatalf("buildFilter(%v): %v", gg, err)
 		}
 	}
 
@@ -47,23 +45,14 @@ func TestBPFFilter_AcceptsInterestingDropsFlood(t *testing.T) {
 		"vlan":  taggedFrame(99),
 	}
 	for name, f := range accept {
-		if !runFilter(t, false, false, f) {
+		if !runFilter(t, false, f) {
 			t.Errorf("filter dropped %s, want accept", name)
 		}
 	}
 
-	// The audio flood must be dropped without multicast-sniff.
-	if runFilter(t, false, false, danteLikeFrame()) {
+	// The audio flood must be dropped in kernel.
+	if runFilter(t, false, danteLikeFrame()) {
 		t.Error("filter accepted Dante-like flood, want drop")
-	}
-
-	// sACN is dropped by default, accepted only under multicast-sniff.
-	sacn := sacnData(1, cid16(0xa1), 100)
-	if runFilter(t, false, false, sacn) {
-		t.Error("filter accepted sACN without multicast-sniff, want drop")
-	}
-	if !runFilter(t, true, false, sacn) {
-		t.Error("filter dropped sACN under multicast-sniff, want accept")
 	}
 }
 
@@ -78,24 +67,24 @@ func busFrameSub(subtype byte) Frame {
 
 func TestBPFFilter_Greengo(t *testing.T) {
 	// On a Green-GO interface the accepted subtype on 5810 passes...
-	if !runFilter(t, false, true, busFrameSub(0x68)) {
+	if !runFilter(t, true, busFrameSub(0x68)) {
 		t.Error("filter dropped the accepted subtype, want accept")
 	}
 	// ...but other 5810 subtypes are dropped in kernel.
-	if runFilter(t, false, true, busFrameSub(0x60)) {
+	if runFilter(t, true, busFrameSub(0x60)) {
 		t.Error("filter accepted a dropped subtype, want drop")
 	}
-	if runFilter(t, false, true, busFrameSub(0x06)) {
+	if runFilter(t, true, busFrameSub(0x06)) {
 		t.Error("filter accepted a dropped subtype, want drop")
 	}
 	// On a non-Green-GO interface 5810 is not captured at all.
-	if runFilter(t, false, false, busFrameSub(0x68)) {
+	if runFilter(t, false, busFrameSub(0x68)) {
 		t.Error("non-Green-GO filter accepted 5810 traffic, want drop")
 	}
 }
 
 func TestBPFFilter_PTPUDPAccepted(t *testing.T) {
-	if !runFilter(t, false, false, ptpAnnounce(0, 0x1, 128, 128, true)) {
+	if !runFilter(t, false, ptpAnnounce(0, 0x1, 128, 128, true)) {
 		t.Error("filter dropped PTP-UDP announce, want accept")
 	}
 }

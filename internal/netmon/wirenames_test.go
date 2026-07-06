@@ -36,17 +36,8 @@ func TestLLDPSystemNameFiltered(t *testing.T) {
 	}
 }
 
-// The sACN source-name and Green-GO config-name decoders share the invariant.
+// The Green-GO config-name decoder must run wire bytes through the printable funnel.
 func TestWireNameDecodersFiltered(t *testing.T) {
-	if got := trimName([]byte("desk\x1b[31m\x00pad")); got == "" {
-		t.Fatal("hostile sACN name dropped entirely")
-	} else {
-		noControlBytes(t, "sACN source name", got)
-	}
-	if got := trimName([]byte("Console A\x00\x00")); got != "Console A" {
-		t.Fatalf("clean sACN name = %q, want verbatim", got)
-	}
-
 	if got := asciiTrim([]byte("cfg\x07name\x00")); got == "" {
 		t.Fatal("hostile config name dropped entirely")
 	} else {

@@ -25,11 +25,10 @@ const frameChanSize = 256
 var errSnifferClosed = errors.New("netmon: capture socket closed")
 
 // capControl is the optional control surface a real capture socket exposes beyond
-// Sniffer: the single promiscuous toggle, the dual overflow counters, and the
-// fd/ifIndex for multicast joins. nopSniffer and FakeSniffer (without the test
-// shim) do not implement it, so the monitor treats those capabilities as no-ops.
+// Sniffer: the dual overflow counters (the frame-clock's blindness signal) and the
+// fd/ifIndex for multicast joins. nopSniffer does not implement it, so the monitor
+// treats those capabilities as no-ops.
 type capControl interface {
-	setPromiscuous(on bool) error
 	stats() (tpDrops, chanDrops uint32) // since last call; tp_drops is fetch-and-clear
 	socketFD() int
 	ifIndex() int
@@ -65,6 +64,9 @@ func (s *afpacketSniffer) Close() error {
 func (s *afpacketSniffer) socketFD() int { return s.sock }
 func (s *afpacketSniffer) ifIndex() int  { return s.ifindex }
 
+// setPromiscuous toggles PACKET_MR_PROMISC. Set once at open time when
+// openCapture is called with promisc=true (the onboarding RogueProbe's brief
+// bounded capture); the steady-state monitor always opens dark (promisc=false).
 func (s *afpacketSniffer) setPromiscuous(on bool) error {
 	mreq := &unix.PacketMreq{Ifindex: int32(s.ifindex), Type: unix.PACKET_MR_PROMISC}
 	op := unix.PACKET_ADD_MEMBERSHIP
@@ -146,14 +148,12 @@ func parseAuxVLAN(oob []byte) (vid int, known bool) {
 	return 0, false
 }
 
-// openCapture opens a non-promiscuous AF_PACKET socket on iface with the combined
-// filter attached. On EPERM/EACCES (no CAP_NET_RAW) or a missing interface it logs
+// openCapture opens an AF_PACKET socket on iface with the combined filter
+// attached. On EPERM/EACCES (no CAP_NET_RAW) or a missing interface it logs
 // [Dev Mode] and returns a nopSniffer - the same graceful bypass as the
 // Commander's toolPresent path - so the appliance runs in the dev sandbox. The
-// promisc argument is always false from the monitor: the monitor is the sole
-// writer of the promiscuous bit (via setPromiscuous), so capture opens dark and
-// the monitor turns it on at full fidelity (steady-state in ACTIVE, shed by the
-// governor under load).
+// steady-state monitor passes promisc=false (opens dark); only the onboarding
+// RogueProbe passes promisc=true, for its brief bounded capture.
 func openCapture(iface string, promisc bool, filter []bpf.RawInstruction) (Sniffer, error) {
 	ifi, err := net.InterfaceByName(iface)
 	if err != nil {

@@ -792,15 +792,7 @@ func scopeTemplate() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<span class=\"info-tip-text\" id=\"cidr-hint-__ID__\">Auto-sizing subnet…</span></span></label> <input class=\"form-control mono\" type=\"text\" id=\"scope-cidr-__ID__\" name=\"scopes[__ID__][cidr]\" value=\"10.0.0.0/24\" placeholder=\"10.0.0.0/24\" required data-on:change=\"@post('/setup/pools/edit?s=__ID__&op=recompute&mode=simple&size=custom', {contentType:'form'})\"></div><div class=\"form-group\"><label class=\"form-label\">Multicast inspect <span class=\"info-tip\" tabindex=\"0\" role=\"note\" aria-label=\"What inspecting multicast does\">")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = Icon("info").Render(ctx, templ_7745c5c3_Buffer)
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<span class=\"info-tip-text\">Adds a low-rate promiscuous sample on this scope so the dashboard can show PTP grandmaster and sACN health. Off by default - the monitor sheds it first under load.</span></span></label> <label class=\"switch scope-mcast-toggle\"><input type=\"checkbox\" aria-label=\"Multicast inspect\" name=\"scopes[__ID__][multicast_sniff]\" value=\"true\"> <span class=\"track\"></span> <span class=\"thumb\"></span> <span class=\"scope-mcast-text mc-on\">Enabled</span> <span class=\"scope-mcast-text mc-off\">Disabled</span></label></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<span class=\"info-tip-text\" id=\"cidr-hint-__ID__\">Auto-sizing subnet…</span></span></label> <input class=\"form-control mono\" type=\"text\" id=\"scope-cidr-__ID__\" name=\"scopes[__ID__][cidr]\" value=\"10.0.0.0/24\" placeholder=\"10.0.0.0/24\" required data-on:change=\"@post('/setup/pools/edit?s=__ID__&op=recompute&mode=simple&size=custom', {contentType:'form'})\"></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -808,7 +800,7 @@ func scopeTemplate() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "<div class=\"scope-pools\"><div id=\"poolplan-__ID__\" class=\"wizard-poolplan\" data-init=\"@post('/setup/pools/edit?s=__ID__&op=seed&mode=simple&size=small', {contentType:'form'})\"></div></div></div></template>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<div class=\"scope-pools\"><div id=\"poolplan-__ID__\" class=\"wizard-poolplan\" data-init=\"@post('/setup/pools/edit?s=__ID__&op=seed&mode=simple&size=small', {contentType:'form'})\"></div></div></div></template>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
