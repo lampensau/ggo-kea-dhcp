@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// The four presence maps below are keyed by attacker-controlled wire fields, so
-// each enforces a hard cap: a flood of unique spoofed keys must not grow the map
-// past it, and the at-cap insert must evict the STALEST entry - a freshly
-// re-seen old entry survives.
+// The presence maps below are keyed by attacker-controlled wire fields, so each
+// enforces a hard cap: a flood of unique spoofed keys must not grow the map past
+// it, and the at-cap insert must evict the STALEST entry - a freshly re-seen old
+// entry survives. detector.go's cap block enumerates the whole family.
 
 func TestRogueDHCP_ServerMapCapped(t *testing.T) {
 	d := newRogueDHCPDetector("eth0", selfMAC, true, 0, 120*time.Second)
@@ -97,5 +97,136 @@ func TestPTP_GMMapCapped(t *testing.T) {
 	}
 	if gms[2] != nil {
 		t.Fatal("stalest GM survived the at-cap insert")
+	}
+}
+
+func TestDuplicateIP_ConflictMapCapped(t *testing.T) {
+	d := newDuplicateIPDetector("eth0", 300*time.Second)
+	ip := func(i int) [4]byte { return [4]byte{10, 2, byte(i >> 8), byte(i)} }
+
+	for i := 0; i < maxDupIPConflicts; i++ {
+		d.Consume(declineFrame(ip(i)), at(time.Duration(i)*time.Millisecond))
+	}
+	d.Consume(declineFrame(ip(0)), at(500*time.Second))
+	d.Consume(declineFrame(ip(maxDupIPConflicts)), at(501*time.Second))
+
+	if len(d.conflicts) > maxDupIPConflicts {
+		t.Fatalf("conflict map grew past cap: %d", len(d.conflicts))
+	}
+	if d.conflicts[ip(0)] == nil {
+		t.Fatal("freshly re-seen entry was evicted")
+	}
+	if d.conflicts[ip(1)] != nil {
+		t.Fatal("stalest entry survived the at-cap insert")
+	}
+}
+
+func TestHostLiveness_SeenMapCapped(t *testing.T) {
+	h := newHostTracker()
+	mac := func(i int) [6]byte { return [6]byte{0x02, 0, 0, 0, byte(i >> 8), byte(i)} }
+	frame := func(i int) Frame { return Frame{Data: arpFrameFor(mac(i), [4]byte{10, 0, 0, 1})} }
+
+	for i := 0; i < maxHostLiveness; i++ {
+		h.record(frame(i), at(time.Duration(i)*time.Millisecond))
+	}
+	h.record(frame(0), at(500*time.Second))
+	h.record(frame(maxHostLiveness), at(501*time.Second))
+
+	if len(h.seen) > maxHostLiveness {
+		t.Fatalf("seen map grew past cap: %d", len(h.seen))
+	}
+	if _, ok := h.seen[mac(0)]; !ok {
+		t.Fatal("freshly re-seen entry was evicted")
+	}
+	if _, ok := h.seen[mac(1)]; ok {
+		t.Fatal("stalest entry survived the at-cap insert")
+	}
+}
+
+func TestGreengoH_ConfigMapCapped(t *testing.T) {
+	d := newGreengoHDetector("eth0", 0, 0)
+	id := func(i int) string { return "cfg" + itoa(i) }
+
+	for i := 0; i < maxGgoConfigs; i++ {
+		d.recordConfig(id(i), "n", "10.0.0.1", at(time.Duration(i)*time.Second))
+	}
+	d.recordConfig(id(0), "n", "10.0.0.1", at(900*time.Second))
+	d.recordConfig(id(maxGgoConfigs), "n", "10.0.0.1", at(901*time.Second))
+
+	if len(d.configs) > maxGgoConfigs {
+		t.Fatalf("config map grew past cap: %d", len(d.configs))
+	}
+	if d.configs[id(0)] == nil {
+		t.Fatal("freshly re-seen entry was evicted")
+	}
+	if d.configs[id(1)] != nil {
+		t.Fatal("stalest entry survived the at-cap insert")
+	}
+}
+
+func TestSACN_UniverseMapCapped(t *testing.T) {
+	d := newSACNDetector("eth0", 130*time.Second)
+	cid := func(i int) [16]byte { return [16]byte{byte(i >> 8), byte(i)} }
+	uni := func(i int) uint16 { return uint16(i + 1) }
+
+	for i := 0; i < maxSACNUniverses; i++ {
+		d.Consume(sacnData(uni(i), cid(i), 100), at(time.Duration(i)*time.Millisecond))
+	}
+	d.Consume(sacnData(uni(0), cid(0), 100), at(500*time.Second))                // refresh oldest universe
+	d.Consume(sacnData(uni(maxSACNUniverses), cid(0), 100), at(501*time.Second)) // insert at cap
+
+	if len(d.universes) > maxSACNUniverses {
+		t.Fatalf("universe map grew past cap: %d", len(d.universes))
+	}
+	if d.universes[uni(0)] == nil {
+		t.Fatal("freshly re-seen universe was evicted")
+	}
+	if d.universes[uni(1)] != nil {
+		t.Fatal("stalest universe survived the at-cap insert")
+	}
+}
+
+func TestSACN_SourceMapCapped(t *testing.T) {
+	d := newSACNDetector("eth0", 130*time.Second)
+	cid := func(i int) [16]byte { return [16]byte{byte(i >> 8), byte(i)} }
+	key := func(i int) string { c := cid(i); return hexBytes(c[:]) }
+
+	for i := 0; i < maxSACNSourcesPerUniverse; i++ {
+		d.Consume(sacnData(1, cid(i), 100), at(time.Duration(i)*time.Second))
+	}
+	d.Consume(sacnData(1, cid(0), 100), at(500*time.Second))
+	d.Consume(sacnData(1, cid(maxSACNSourcesPerUniverse), 100), at(501*time.Second))
+
+	u := d.universes[1]
+	if u == nil {
+		t.Fatal("universe 1 missing")
+	}
+	if len(u.sources) > maxSACNSourcesPerUniverse {
+		t.Fatalf("source map grew past cap: %d", len(u.sources))
+	}
+	if u.sources[key(0)] == nil {
+		t.Fatal("freshly re-seen source was evicted")
+	}
+	if u.sources[key(1)] != nil {
+		t.Fatal("stalest source survived the at-cap insert")
+	}
+}
+
+func TestMulticastJoiner_JoinSetCapped(t *testing.T) {
+	m := newMulticastJoiner(-1, 0)
+	// Pre-fill to the cap directly (the real join path does a setsockopt that a
+	// unit test can't make succeed on a fake fd). The refuse-past-cap check runs
+	// before that syscall, which is what this test exercises.
+	for i := 0; i < maxJoinedGroups; i++ {
+		m.joined[[4]byte{239, 255, byte(i >> 8), byte(i)}] = true
+	}
+	if err := m.join([4]byte{239, 255, 0xff, 0xff}); err != nil {
+		t.Fatalf("at-cap join should refuse quietly, got %v", err)
+	}
+	if len(m.joined) != maxJoinedGroups {
+		t.Fatalf("join set grew past cap: %d", len(m.joined))
+	}
+	if !m.capLogged {
+		t.Fatal("cap-hit should be logged once")
 	}
 }

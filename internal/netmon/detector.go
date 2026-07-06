@@ -44,15 +44,32 @@ type Detector interface {
 	Snapshot() DetectorSnapshot
 }
 
-// Presence-map ceilings. These maps are keyed by wire fields an on-LAN attacker
-// fully controls (DHCP server-id, ARP sender IP, source MAC, PTP clock identity),
-// so each enforces a hard entry cap independent of the governor's load shedding.
-// Sized generously above any legitimate population.
+// Presence-map ceilings. Every map keyed by a wire field an on-LAN attacker can
+// forge enforces a hard entry cap, independent of the governor's load shedding,
+// so a flood of unique spoofed keys evicts the once-seen (therefore stalest)
+// fakes instead of growing without bound. Sized generously above any legitimate
+// population. The full family and its attacker-controlled key:
+//   - rogueDHCP.servers          DHCP server-id       maxRogueServers
+//   - staticInPool.hosts         ARP sender IP        maxStaticPoolHosts
+//   - greengo.devices            device MAC           maxGgoDevices
+//   - greengoH.configs           config id            maxGgoConfigs
+//   - ptp.<domain>.gms           PTP clock identity   maxPTPGMs (domain map is uint8-keyed)
+//   - sacn.universes / .sources  universe + CID       maxSACNUniverses / maxSACNSourcesPerUniverse
+//   - dupIP.conflicts            option-50 IP         maxDupIPConflicts
+//   - hostTracker.seen           source MAC           maxHostLiveness
+//   - multicastJoiner.joined     sACN universe group  maxJoinedGroups (also bounds the PACKET_ADD_MEMBERSHIP storm)
 const (
 	maxRogueServers    = 64
 	maxStaticPoolHosts = 1024
 	maxGgoDevices      = 512
+	maxGgoConfigs      = 256
 	maxPTPGMs          = 32 // per domain; the domain map itself is uint8-keyed (bounded)
+
+	maxSACNUniverses          = 1024
+	maxSACNSourcesPerUniverse = 16
+	maxDupIPConflicts         = 1024
+	maxHostLiveness           = 4096
+	maxJoinedGroups           = 256
 )
 
 // evictStalest makes room in a full presence map by deleting the entry with the

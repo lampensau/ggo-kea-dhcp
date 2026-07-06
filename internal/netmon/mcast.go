@@ -1,6 +1,10 @@
 package netmon
 
-import "golang.org/x/sys/unix"
+import (
+	"log"
+
+	"golang.org/x/sys/unix"
+)
 
 // Multicast strategy (discover-then-join, cheaper than holding promiscuous):
 // known/derivable groups are joined directly - a benign *receiver* action (not a
@@ -70,6 +74,7 @@ type multicastJoiner struct {
 	ifIndex   int
 	joined    map[[4]byte]bool
 	joinedMAC map[[6]byte]bool
+	capLogged bool // one-shot: join set hit maxJoinedGroups
 }
 
 func newMulticastJoiner(fd, ifIndex int) *multicastJoiner {
@@ -96,6 +101,20 @@ func multicastMAC(group [4]byte) [6]byte {
 // the reliable multicast path; this join is the cheap optimisation on top.
 func (m *multicastJoiner) join(group [4]byte) error {
 	if m.joined[group] {
+		return nil
+	}
+	// Cap the join set. The group is derived from the attacker-forgeable sACN
+	// universe (join is called per discovered universe, monitor.go), so an
+	// unbounded set would both grow the map and spray PACKET_ADD_MEMBERSHIP calls
+	// that overflow the NIC's hardware multicast filter into ALLMULTI - ungoverned
+	// softirq the load governor cannot shed. Past the cap, refuse: promiscuous
+	// still covers real universes while it runs, and the once-seen forged groups
+	// are exactly the ones we decline.
+	if len(m.joined) >= maxJoinedGroups {
+		if !m.capLogged {
+			m.capLogged = true
+			log.Printf("[netmon] multicast join set at cap (%d groups) - refusing further joins; likely a spoofed sACN universe flood", maxJoinedGroups)
+		}
 		return nil
 	}
 	if err := m.membership(multicastMAC(group), unix.PACKET_ADD_MEMBERSHIP); err != nil {
