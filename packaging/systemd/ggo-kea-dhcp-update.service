@@ -7,6 +7,10 @@ Documentation=https://github.com/lampensau/ggo-kea-dhcp
 
 [Service]
 Type=oneshot
+# Optional override of the update origin/repo (GGO_UPDATE_API / GGO_UPDATE_REPO);
+# absent on a normal box, so the canonical GitHub feed is used. Must match the
+# main unit's copy so the app and the digest gate agree.
+EnvironmentFile=-/etc/ggo-kea-dhcp/update.env
 ExecStart=/usr/lib/ggo-kea-dhcp/updater.sh
 # A system-scope release runs a full apt update + dependency upgrade.
 TimeoutStartSec=20min

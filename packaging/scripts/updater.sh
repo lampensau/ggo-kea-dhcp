@@ -36,9 +36,15 @@ RESULT="$STAGE/result.json"
 MANIFEST="$STAGE/manifest.json"
 APT_LOG="$STAGE/apt.log"
 
-REPO=lampensau/ggo-kea-dhcp
+# REPO/GH_API default to the canonical GitHub feed but honor an override from the
+# unit's optional update.env EnvironmentFile - so a validation run can point the
+# authoritative digest gate at the same scratch repo the app stages from. The app
+# and this script MUST agree (see server.go): the digest is re-fetched here from
+# REPO, so a mismatch fails closed.
+REPO="${GGO_UPDATE_REPO:-lampensau/ggo-kea-dhcp}"
 ASSET=ggo-kea-dhcp_arm64.deb
-GH_API=https://api.github.com
+GH_API="${GGO_UPDATE_API:-https://api.github.com}"
+
 
 VERSION=unknown
 STATUS=failed

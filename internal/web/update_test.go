@@ -269,3 +269,38 @@ func TestUpdateBackoffParse(t *testing.T) {
 		t.Fatal("expired backoff should let the check run (and fail on the dead endpoint)")
 	}
 }
+
+// The update origin and repo default to the canonical feed but are overridable
+// via GGO_UPDATE_API / GGO_UPDATE_REPO (injected by the unit's update.env), and
+// the override reaches the /releases/latest request. Both sides must move
+// together, so this pins that the app honors the env; updater.sh's matching
+// override is covered by the shell defaults and the E2E run.
+func TestUpdateRepoEnvOverride(t *testing.T) {
+	// Default: no env, canonical values.
+	t.Setenv("GGO_UPDATE_API", "")
+	t.Setenv("GGO_UPDATE_REPO", "")
+	if got := envOr("GGO_UPDATE_API", defaultUpdateAPIBase); got != defaultUpdateAPIBase {
+		t.Errorf("default API base = %q, want %q", got, defaultUpdateAPIBase)
+	}
+	if got := envOr("GGO_UPDATE_REPO", updateRepo); got != updateRepo {
+		t.Errorf("default repo = %q, want %q", got, updateRepo)
+	}
+
+	// Override: the fetch URL is built from the overridden origin+repo. A stub
+	// server records the path it was asked for.
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9","assets":[]}`))
+	}))
+	defer ts.Close()
+
+	s, _ := newTestServer(t)
+	s.updateHTTP = newUpdateHTTPClient()
+	s.updateAPIBase = ts.URL
+	s.updateRepo = "scratch-owner/scratch-repo"
+	_, _, _ = s.fetchLatestRelease()
+	if gotPath != "/repos/scratch-owner/scratch-repo/releases/latest" {
+		t.Errorf("fetch path = %q, want the overridden repo path", gotPath)
+	}
+}
