@@ -58,6 +58,40 @@ func TestPeriodicVsFullFragments(t *testing.T) {
 	}
 }
 
+// TestConnectFragmentsPageScope proves the connect snapshot skips the MariaDB-backed
+// build for a page that shows none of those regions: a /settings connect delivers the
+// periodic/shell set with NO lease/MariaDB region, while a /dashboard connect still
+// carries them. Both must still carry the shell badge, so no page loses its live shell.
+func TestConnectFragmentsPageScope(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.metrics = newMetricsStore()
+	fakeNetmon(s)
+	defer s.netmon.Stop()
+	_ = seedActiveProfile(t, s)
+
+	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
+
+	settings := regionSet(s.connectFragments(t.Context(), leases, "/settings"))
+	dashboard := regionSet(s.connectFragments(t.Context(), leases, "/dashboard"))
+
+	for _, r := range []string{"pool-table", "leases-body", "recent-leases", "pinnings", "pinned-body", "learnable-body"} {
+		if settings[r] {
+			t.Errorf("/settings connect must not build lease/MariaDB region %q", r)
+		}
+	}
+	for _, r := range []string{"pool-table", "leases-body", "recent-leases"} {
+		if !dashboard[r] {
+			t.Errorf("/dashboard connect missing lease-derived region %q", r)
+		}
+	}
+	// Neither page loses its live shell.
+	for _, set := range []map[string]bool{settings, dashboard} {
+		if !set["state-badge"] {
+			t.Error("connect fragments missing shell region state-badge")
+		}
+	}
+}
+
 // TestTickDashboardKeaOutage proves a Kea outage does not freeze the live stream:
 // when GetLeases fails (the test server's Kea endpoint is unreachable),
 // tickDashboard still publishes the Kea-independent periodic regions (tiles,
