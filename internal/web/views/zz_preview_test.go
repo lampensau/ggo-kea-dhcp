@@ -259,15 +259,14 @@ func TestZZPreviewNetSignals(t *testing.T) {
 			{Kind: "igmp", Severity: "ok", Title: "IGMP querier present", Detail: "querier 10.0.0.1 v3"},
 			{Kind: "ptp", Severity: "ok", Title: "PTP grandmaster locked"},
 		}},
-		{Iface: "eth0.20", Available: true, LinkMode: "trunk", OKCount: 1, WarnCount: 1, Rows: []NetHealthRow{
+		{Iface: "eth0.20", Available: true, LinkMode: "trunk", OKCount: 0, WarnCount: 1, Rows: []NetHealthRow{
 			{Kind: "static_in_pool", Severity: "warn", Title: "Static device inside a pool", Detail: "00:1f:80:aa:bb:cc · pool 10.20.0.20-.170"},
-			{Kind: "sacn", Severity: "ok", Title: "sACN universe traffic seen"},
 		}},
 		{Iface: "eth0.30", Available: true, LinkMode: "trunk", ErrCount: 1, OKCount: 1, Rows: []NetHealthRow{
 			{Kind: "rogue_dhcp", Severity: "error", Title: "Rogue DHCP server detected", Detail: "server 10.30.0.66 · 9c:1f:80:de:ad:be"},
 			{Kind: "vlan", Severity: "ok", Title: "VLAN tags match configuration"},
 		}},
-		{Iface: "eth0.40", Available: false, LinkMode: "trunk", Note: "multicast inspection paused - high load"},
+		{Iface: "eth0.40", Available: false, LinkMode: "trunk", Note: "monitoring idle - no capture socket (dev mode or no privilege)"},
 	}}
 	lldp := LLDPChip{Present: true, Switch: "core-sw1", Port: "Gi1/0/12", NativeVLAN: "1"}
 	var b strings.Builder

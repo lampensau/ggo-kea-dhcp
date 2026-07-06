@@ -22,8 +22,7 @@ type FakeSniffer struct {
 	once   sync.Once
 	closed chan struct{}
 
-	promiscMu          sync.Mutex
-	promiscLog         []bool
+	mu                 sync.Mutex
 	tpDrops, chanDrops uint32
 }
 
@@ -52,39 +51,25 @@ func (f *FakeSniffer) Push(fr Frame) {
 
 // --- capControl test shim ---------------------------------------------------
 //
-// FakeSniffer implements capControl so monitor tests can drive the governor's
-// dual overflow signals and assert the promiscuous single-owner behavior.
-// socketFD returns -1 so the monitor skips real multicast joins.
-
-func (f *FakeSniffer) setPromiscuous(on bool) error {
-	f.promiscMu.Lock()
-	f.promiscLog = append(f.promiscLog, on)
-	f.promiscMu.Unlock()
-	return nil
-}
+// FakeSniffer implements capControl so monitor tests can drive the overflow
+// signals the frame-clock keys on. socketFD returns -1 so the monitor skips real
+// multicast joins.
 
 func (f *FakeSniffer) stats() (tpDrops, chanDrops uint32) {
-	f.promiscMu.Lock()
-	defer f.promiscMu.Unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.tpDrops, f.chanDrops
 }
 
 func (f *FakeSniffer) socketFD() int { return -1 }
 func (f *FakeSniffer) ifIndex() int  { return 0 }
 
-// SetStats injects the governor's per-tick overflow signals (sustained until
-// changed - like a kernel that keeps dropping).
+// SetStats injects the per-tick overflow signals (sustained until changed - like a
+// kernel that keeps dropping).
 func (f *FakeSniffer) SetStats(tpDrops, chanDrops uint32) {
-	f.promiscMu.Lock()
+	f.mu.Lock()
 	f.tpDrops, f.chanDrops = tpDrops, chanDrops
-	f.promiscMu.Unlock()
-}
-
-// PromiscLog returns the recorded promiscuous toggles in order.
-func (f *FakeSniffer) PromiscLog() []bool {
-	f.promiscMu.Lock()
-	defer f.promiscMu.Unlock()
-	return append([]bool(nil), f.promiscLog...)
+	f.mu.Unlock()
 }
 
 // fakeClock is a controllable clock for detector and manager tests: time only
@@ -218,31 +203,6 @@ func buildDHCP(op byte, chaddr [6]byte, serverID [4]byte, msgType byte) []byte {
 	return b
 }
 
-// sacnData builds an E1.31 (sACN) data packet for universe from source cid at
-// the given priority. Only the fields the parser reads (CID, priority, universe)
-// are populated; the rest is zero padding to a valid length.
-func sacnData(universe uint16, cid [16]byte, priority uint8) Frame {
-	return sacnDataEx(universe, cid, priority, "", 0)
-}
-
-// sacnDataEx builds an E1.31 data frame with an explicit source name and Options
-// byte (for the duplicate-CID and stream-terminated paths).
-func sacnDataEx(universe uint16, cid [16]byte, priority uint8, name string, options byte) Frame {
-	p := make([]byte, 126)
-	copy(p[22:38], cid[:])
-	p[40], p[41], p[42], p[43] = 0x00, 0x00, 0x00, vectorE131Data // framing vector
-	copy(p[44:108], name)
-	p[108] = priority
-	p[112] = options
-	p[113] = byte(universe >> 8)
-	p[114] = byte(universe)
-	udp := buildUDP(sacnPort, sacnPort, p)
-	dstIP := [4]byte{239, 255, byte(universe >> 8), byte(universe)}
-	ip := buildIPv4(ipProtoUDP, [4]byte{10, 0, 0, 7}, dstIP, udp)
-	dst := [6]byte{0x01, 0x00, 0x5e, 0x7f, byte(universe >> 8), byte(universe)}
-	return Frame{Iface: "eth0", TS: base, Data: buildEth(dst, macTestSwitch, etherTypeIPv4, ip)}
-}
-
 // arpFrame builds an ARP frame announcing senderIP/senderMAC (op 1 who-has or
 // op 2 reply - both carry the sender's claimed IP in spa, which is what the
 // static-in-pool detector keys on).
@@ -262,15 +222,6 @@ func taggedFrame(vid int) Frame {
 	udp := buildUDP(1024, 1025, []byte{0x00})
 	ip := buildIPv4(ipProtoUDP, [4]byte{10, 0, 0, 9}, [4]byte{10, 0, 0, 10}, udp)
 	return Frame{Iface: "eth0", TS: base, Data: buildEthVLAN(macTestSwitch, macTestSwitch, vid, etherTypeIPv4, ip)}
-}
-
-// cid16 builds a 16-byte CID from a single seed byte (distinct sources in tests).
-func cid16(seed byte) [16]byte {
-	var c [16]byte
-	for i := range c {
-		c[i] = seed
-	}
-	return c
 }
 
 // bpduFrame builds a spanning-tree BPDU to the STP group. tcn selects a TCN BPDU

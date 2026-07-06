@@ -24,7 +24,7 @@ const (
 // normal BMCA failover → info, not a warning. We do not assume a domain number
 // (Green-GO defaults to 0 but it is user-editable) - domains are discovered from
 // the wire. Announce arrives as L2 0x88F7 or UDP 319/320 (the PTP multicast
-// groups are always joined, so a GM is observable even without MulticastSniff).
+// groups are always joined, so a GM is always observable).
 type ptpDetector struct {
 	iface   string
 	absence time.Duration
@@ -34,8 +34,7 @@ type ptpDetector struct {
 // ptpDomain is intentionally NOT reclaimed when its GMs drain: an
 // everPopulated-but-empty domain is precisely the "grandmaster lost" warn state
 // the card must keep showing. Domains are bounded by the protocol (≤128) and in
-// practice number one or two, so retaining them is not a leak - unlike sACN
-// universes, which are reclaimed (see detect_sacn.go).
+// practice number one or two, so retaining them is not a leak.
 type ptpDomain struct {
 	gms           map[uint64]*ptpGM
 	everPopulated bool

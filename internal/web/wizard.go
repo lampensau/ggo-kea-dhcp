@@ -245,8 +245,7 @@ func parseSetupScopes(r *http.Request) ([]ScopeConfig, error) {
 			CIDR:   field("cidr", i),
 			// Per-scope uplink is now ONLY the toggle (route this scope through the
 			// box-level wlan0); the SSID/password are box-level (parseUplinkForm).
-			Uplink:         UplinkConfig{Enabled: field("uplink", i) == "true"},
-			MulticastSniff: field("multicast_sniff", i) == "true",
+			Uplink: UplinkConfig{Enabled: field("uplink", i) == "true"},
 		}
 		// Per-scope DHCP network services (explicit gateway/DNS, lease override, extra
 		// options). Shared with the /pools editor via parseScopeServices. Option rows

@@ -8,7 +8,7 @@ While serving DHCP, the appliance passively listens to the traffic on each netwo
 
 The monitor observes; it does not manage. Almost everything it knows comes from passively captured traffic, complemented by two light read-only queries: presence checks (so lease rows can show whether a device actually answers) and a Green-GO device scan that reads names and firmware versions. It never changes the DHCP configuration, never reconfigures a device, and never acts on the network on its own. A finding is information for you, not an automatic intervention - the one place it hands you a control is the rogue-server warning, which offers a one-click stand-down you choose to use (see below). Warnings and errors also appear in the dashboard's alert strip and are recorded in the audit log with timestamps.
 
-It runs only while the appliance is active, and only on the wired networks it serves. Under heavy traffic it deliberately sheds its own work to stay out of DHCP's way, and says so on the card instead of silently going blind.
+It runs only while the appliance is active, and only on the wired networks it serves. It runs at low priority and filters the traffic flood in the kernel before it reaches userspace, so it stays out of DHCP's way even on a busy network.
 
 ## Detector reference
 
@@ -32,20 +32,14 @@ Rows are ordered by severity, then by how directly a problem breaks DHCP.
 
 **PTP grandmaster.** Tracks the precision-time grandmaster per PTP domain, with its clock class. A stable grandmaster is what Dante and AES67 clocking depend on; grandmaster changes, failovers or flapping during a show mean audio devices are re-syncing. The current grandmaster state is also promoted to a dashboard stat tile.
 
-**sACN.** Reports lighting control traffic (sACN/E1.31) seen on the scope, so you can confirm the lighting network is where you think it is, and warns when two sources fight over a universe at the same priority or a source identity appears twice. Requires Multicast inspect (below).
-
 **Uplink (LLDP/CDP).** The switch and port the appliance is plugged into, as announced by the switch; the native VLAN sits behind the row's info icon. This is the dashboard's "you are here" chip; if the appliance ends up on the wrong patch, this row says so immediately. Switch announcements are untagged, so the neighbor appears on the physical interface's card; VLAN scopes show "No LLDP/CDP neighbor seen", which is normal.
 
 **Broadcast storm / STP.** Warns on broadcast storms (with the observed packet rate) and on spanning-tree topology churn. Both usually mean a loop: a cable plugged into two access ports, or a misbehaving switch. Find the loop before it takes the network down.
 
 **Link activity.** Notes when a monitored network has gone completely silent for an extended time - a dead port or an unplugged trunk looks exactly like this.
 
-## Multicast inspect
-
-Most detectors work from traffic the appliance receives anyway. Full multicast inspection (needed for sACN detail, and for richer multicast health generally) is a per-scope switch, off by default, set in the [wizard](setup-wizard.md): it adds a low-rate sample of all multicast traffic on that scope. It is also the first thing the monitor sheds under load. PTP grandmaster tracking works without it.
-
 ## Reading the card's state
 
 The card never goes blank on a running appliance: every detector reports a row per interface, green when it has confirmed the situation is good, gray when it simply has not observed that kind of traffic yet. A column of green "No ..." rows is the healthy baseline, not an absence of monitoring.
 
-Two special states replace that baseline. Before a profile is applied, the card shows "Monitoring idle" - monitoring starts with DHCP. And when an interface carries a note instead of a clean rollup, the note is the honest reason. Load shedding announces itself in stages ("multicast inspection paused - high load", then "reduced monitoring - high load", finally "monitoring paused - high load"), all of which lift themselves when traffic calms down. "Monitoring idle - no capture socket" means the monitor lacks its capture permission and cannot observe that interface at all (DHCP is unaffected either way). See [Troubleshooting](troubleshooting.md).
+Two special states replace that baseline. Before a profile is applied, the card shows "Monitoring idle" - monitoring starts with DHCP. And "Monitoring idle - no capture socket" means the monitor lacks its capture permission and cannot observe that interface at all (DHCP is unaffected either way). See [Troubleshooting](troubleshooting.md).

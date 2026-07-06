@@ -18,7 +18,6 @@ import (
 //	(5) CDP dst MAC 01:00:0c:cc:cc:cc · (6) BPDU dst MAC 01:80:c2:00:00:00
 //	(7) IPv4 + IGMP (proto 2)
 //	(8) IPv4 + UDP port 67 (DHCP, either direction) and PTP-UDP 319/320
-//	(9) [multicast-sniff only] UDP sACN 5568
 //
 // Storm volume is read from sysfs counter deltas, not this filter (a storm must
 // not turn into a per-packet userspace cost).
@@ -88,7 +87,7 @@ func (a *bpfAsm) resolve() {
 // buildAsm constructs the combined filter program (unresolved jumps). greengo adds
 // the Green-GO announce clause (UDP 5810) - attached only on
 // a Green-GO-preset interface so other deployments never capture 5810.
-func buildAsm(multicastSniff, greengo bool) *bpfAsm {
+func buildAsm(greengo bool) *bpfAsm {
 	a := newBPFAsm()
 
 	// --- L2 ethertype classes (offset 12, untagged) ---
@@ -127,17 +126,11 @@ func buildAsm(multicastSniff, greengo bool) *bpfAsm {
 	a.jump(bpf.JumpEqual, 67, "accept", "")
 	a.jump(bpf.JumpEqual, 320, "accept", "")
 	a.jump(bpf.JumpEqual, 319, "accept", "")
-	if multicastSniff {
-		a.jump(bpf.JumpEqual, sacnPort, "accept", "")
-	}
 	if greengo {
 		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "") // 5810 dport → verify the subtype
 	}
 	a.emit(bpf.LoadIndirect{Off: 14, Size: 2}) // UDP sport (X+14)
 	a.jump(bpf.JumpEqual, 67, "accept", "")
-	if multicastSniff {
-		a.jump(bpf.JumpEqual, sacnPort, "accept", "")
-	}
 	if greengo {
 		a.jump(bpf.JumpEqual, ggoBusPort, "g5h", "reject") // 5810 sport → subtype check; else reject
 
@@ -162,8 +155,8 @@ func buildAsm(multicastSniff, greengo bool) *bpfAsm {
 
 // buildBPFInstructions returns the resolved combined filter as bpf.Instructions
 // (the form the in-process VM tests run).
-func buildBPFInstructions(multicastSniff, greengo bool) []bpf.Instruction {
-	a := buildAsm(multicastSniff, greengo)
+func buildBPFInstructions(greengo bool) []bpf.Instruction {
+	a := buildAsm(greengo)
 	a.resolve()
 	return a.ins
 }
@@ -184,6 +177,6 @@ var rejectAllFilter = func() []bpf.RawInstruction {
 // SO_ATTACH_FILTER. An assemble error is a programming bug (bad skip); the caller
 // falls back to no kernel filter - correctness is preserved (detectors still
 // ignore uninteresting frames), only CPU suffers.
-func buildFilter(multicastSniff, greengo bool) ([]bpf.RawInstruction, error) {
-	return bpf.Assemble(buildBPFInstructions(multicastSniff, greengo))
+func buildFilter(greengo bool) ([]bpf.RawInstruction, error) {
+	return bpf.Assemble(buildBPFInstructions(greengo))
 }
