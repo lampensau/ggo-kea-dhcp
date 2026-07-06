@@ -54,10 +54,10 @@ func (s *Server) getLeases(ctx context.Context, maxAge time.Duration) ([]kea.Act
 
 // get returns the lease set no older than maxAge. maxAge 0 forces a poll: the
 // metrics sampler primes the Kea RTT and health signal from its own real
-// round-trip, and the event-driven publishes must see post-mutation state.
-// A forced caller that finds a refresh already in flight shares it - that
-// fetch IS a fresh poll. Errors age like results, so a Kea outage yields one
-// shared failure per window instead of a per-caller retry stampede.
+// round-trip, and the event-driven publishes must see post-mutation state. A
+// forced caller never joins an in-flight fetch (which may predate its mutation);
+// it waits that fetch out and leads its own. Errors age like results, so a Kea
+// outage yields one shared failure per window instead of a per-caller retry stampede.
 func (c *leaseCache) get(ctx context.Context, maxAge time.Duration) ([]kea.ActiveLease, error) {
 	c.mu.Lock()
 	if maxAge > 0 && !c.at.IsZero() && c.now().Sub(c.at) < maxAge {
@@ -65,7 +65,14 @@ func (c *leaseCache) get(ctx context.Context, maxAge time.Duration) ([]kea.Activ
 		c.mu.Unlock()
 		return l, err
 	}
-	if wait := c.inflight; wait != nil {
+	// A forced caller (maxAge 0) publishes right after a mutation and must see a poll
+	// dispatched AFTER that mutation, so it never joins an in-flight fetch - that fetch
+	// may have been dispatched before the mutation and would report pre-mutation state.
+	// It waits the in-flight fetch out and then leads its own fresh poll. A stale
+	// non-forced reader has no such constraint and shares the in-flight poll (the
+	// single-flight collapse #83 added). The loop re-checks after each wait: if another
+	// forced caller started a new poll in the gap, wait that one out too.
+	for wait := c.inflight; wait != nil; wait = c.inflight {
 		c.mu.Unlock()
 		select {
 		case <-wait:
@@ -73,9 +80,11 @@ func (c *leaseCache) get(ctx context.Context, maxAge time.Duration) ([]kea.Activ
 			return nil, ctx.Err()
 		}
 		c.mu.Lock()
-		l, err := c.leases, c.err
-		c.mu.Unlock()
-		return l, err
+		if maxAge > 0 {
+			l, err := c.leases, c.err
+			c.mu.Unlock()
+			return l, err
+		}
 	}
 	done := make(chan struct{})
 	c.inflight = done

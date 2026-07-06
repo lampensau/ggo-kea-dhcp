@@ -46,3 +46,33 @@ func TestBroadcastFetchesReservationsOnce(t *testing.T) {
 		t.Fatalf("sampler reservation fetches = %d, want 1 (independent fetch)", got)
 	}
 }
+
+// TestDNSZoneGenerationGuard proves last-writer-by-generation: a rebuild dispatched
+// earlier (a slow detached primeDNSZone carrying a lower generation) cannot clobber a
+// zone a later-dispatched rebuild already installed. dnsZoneAppliedGen is written only
+// alongside SetZone under dnsZoneMu, so its value reports which rebuild's SetZone won.
+func TestDNSZoneGenerationGuard(t *testing.T) {
+	s, _ := newTestServer(t) // s.dns is a real (non-listening) dns.Server
+	res := map[string]db.HostReservation{}
+	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
+
+	s.rebuildDNSZoneWith(leases, res, 10)
+	if s.dnsZoneAppliedGen != 10 {
+		t.Fatalf("applied generation = %d, want 10", s.dnsZoneAppliedGen)
+	}
+	// A lower generation (stale detached prime landing late) must be refused.
+	s.rebuildDNSZoneWith(leases, res, 5)
+	if s.dnsZoneAppliedGen != 10 {
+		t.Errorf("stale generation 5 was applied over 10 (now %d)", s.dnsZoneAppliedGen)
+	}
+	// A higher generation wins.
+	s.rebuildDNSZoneWith(leases, res, 12)
+	if s.dnsZoneAppliedGen != 12 {
+		t.Errorf("applied generation = %d, want 12", s.dnsZoneAppliedGen)
+	}
+	// Generation 0 (unversioned callers/tests) always applies.
+	s.rebuildDNSZoneWith(leases, res, 0)
+	if s.dnsZoneAppliedGen != 0 {
+		t.Errorf("gen 0 must always apply, applied generation = %d", s.dnsZoneAppliedGen)
+	}
+}
