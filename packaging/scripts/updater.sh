@@ -55,6 +55,12 @@ DETAIL="updater aborted unexpectedly"
 # control plane can reconcile and clean it up.
 # shellcheck disable=SC2329  # invoked via the EXIT trap
 write_result() {
+	# $STAGE is app-user-owned, so a compromised app user could pre-plant
+	# result.json.tmp as a symlink and have this root redirect follow it into an
+	# arbitrary file. rm unlinks the symlink itself (it does not follow), so the
+	# '>' below always creates a fresh regular file here. mv into $RESULT is safe
+	# on its own - rename(2) replaces a symlink name without following it.
+	rm -f "$RESULT.tmp"
 	printf '{"version":"%s","status":"%s","detail":"%s"}\n' "$VERSION" "$STATUS" "$DETAIL" > "$RESULT.tmp"
 	mv "$RESULT.tmp" "$RESULT"
 	chown ggo-kea-dhcp:ggo-kea-dhcp "$RESULT" 2>/dev/null || true
@@ -153,6 +159,12 @@ PKG="$(dpkg-deb -f "$DEB" Package 2>/dev/null || true)"
 [ "$PKG" = "ggo-kea-dhcp" ] || fail "staged file is not the ggo-kea-dhcp package (got '$PKG')"
 
 export DEBIAN_FRONTEND=noninteractive
+
+# Same symlink guard as write_result: apt.log lives in the app-owned $STAGE, and
+# the first write in either branch below is a truncating '>', so unlinking any
+# pre-planted symlink here makes that '>' create a fresh regular file (the later
+# '>>' then appends to it, not to an attacker's target).
+rm -f "$APT_LOG"
 
 if [ "$SCOPE" = "system" ]; then
 	# System scope: the release changed dependency requirements. Refresh the
