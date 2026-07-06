@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 )
@@ -66,23 +65,14 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	}
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
 
-	host, user, dbpass, name := config.ParseMariaDSN(s.cfg.MariaDBDSN)
-	g := s.globalDHCPOptions()
-	configStr, _, err := kea.RenderProfile(kea.ProfileRenderInput{
-		Scopes:        renderScopes,
-		MariaDBHost:   host,
-		MariaDBUser:   user,
-		MariaDBPass:   dbpass,
-		MariaDBName:   name,
-		KeaSecretPath: s.cfg.KeaSecretPath,
-		GlobalDNS:     g.DNS,
-		GlobalOptions: g.keaOptions(),
-		// Validate listening on "*": a VLAN scope's eth0.<vid> interface isn't created
-		// until finishApply's reconcile, so a per-interface kea -t here would wrongly
-		// fail "interface doesn't exist". The reconcile re-validates the real
-		// per-interface config (writeAndReloadKea) once the interfaces are up.
-		IfaceWildcard: true,
-	})
+	in := s.baseRenderInput()
+	in.Scopes = renderScopes
+	// Validate listening on "*": a VLAN scope's eth0.<vid> interface isn't created
+	// until finishApply's reconcile, so a per-interface kea -t here would wrongly fail
+	// "interface doesn't exist". The reconcile re-validates the real per-interface
+	// config (writeAndReloadKea) once the interfaces are up.
+	in.IfaceWildcard = true
+	configStr, _, err := kea.RenderProfile(in)
 	if err != nil {
 		return applyPlan{}, fmt.Errorf("Failed to generate Kea configuration: %w", err)
 	}

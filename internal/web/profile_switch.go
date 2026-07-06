@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"ggo-kea-dhcp/internal/config"
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
@@ -151,22 +150,13 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 	// Render + validate the candidate before anything irreversible.
 	boxUplink, _, _ := s.uplinkSettings()
 	renderScopes, gatewayIP := buildRenderScopes(scopes, boxUplink)
-	host, user, dbpass, dbname := config.ParseMariaDSN(s.cfg.MariaDBDSN)
-	g := s.globalDHCPOptions()
-	configStr, _, err := kea.RenderProfile(kea.ProfileRenderInput{
-		Scopes:        renderScopes,
-		MariaDBHost:   host,
-		MariaDBUser:   user,
-		MariaDBPass:   dbpass,
-		MariaDBName:   dbname,
-		KeaSecretPath: s.cfg.KeaSecretPath,
-		GlobalDNS:     g.DNS,
-		GlobalOptions: g.keaOptions(),
-		// Validate on "*": the target profile's VLAN interfaces aren't created until the
-		// reconcile below, so a per-interface kea -t here would fail "interface doesn't
-		// exist". writeAndReloadKea re-validates the real config once they're up.
-		IfaceWildcard: true,
-	})
+	in := s.baseRenderInput()
+	in.Scopes = renderScopes
+	// Validate on "*": the target profile's VLAN interfaces aren't created until the
+	// reconcile below, so a per-interface kea -t here would fail "interface doesn't
+	// exist". writeAndReloadKea re-validates the real config once they're up.
+	in.IfaceWildcard = true
+	configStr, _, err := kea.RenderProfile(in)
 	if err != nil {
 		return switchPlan{}, fmt.Errorf("Failed to generate configuration for %q: %w", name, err)
 	}

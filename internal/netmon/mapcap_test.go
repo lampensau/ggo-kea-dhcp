@@ -121,28 +121,6 @@ func TestDuplicateIP_ConflictMapCapped(t *testing.T) {
 	}
 }
 
-func TestHostLiveness_SeenMapCapped(t *testing.T) {
-	h := newHostTracker()
-	mac := func(i int) [6]byte { return [6]byte{0x02, 0, 0, 0, byte(i >> 8), byte(i)} }
-	frame := func(i int) Frame { return Frame{Data: arpFrameFor(mac(i), [4]byte{10, 0, 0, 1})} }
-
-	for i := 0; i < maxHostLiveness; i++ {
-		h.record(frame(i), at(time.Duration(i)*time.Millisecond))
-	}
-	h.record(frame(0), at(500*time.Second))
-	h.record(frame(maxHostLiveness), at(501*time.Second))
-
-	if len(h.seen) > maxHostLiveness {
-		t.Fatalf("seen map grew past cap: %d", len(h.seen))
-	}
-	if _, ok := h.seen[mac(0)]; !ok {
-		t.Fatal("freshly re-seen entry was evicted")
-	}
-	if _, ok := h.seen[mac(1)]; ok {
-		t.Fatal("stalest entry survived the at-cap insert")
-	}
-}
-
 func TestGreengoH_ConfigMapCapped(t *testing.T) {
 	d := newGreengoHDetector("eth0", 0, 0)
 	id := func(i int) string { return "cfg" + itoa(i) }

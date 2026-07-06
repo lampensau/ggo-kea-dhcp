@@ -46,19 +46,23 @@ func TestDeleteApplianceConnections(t *testing.T) {
 	// Only ggo-* connections may be torn down; a foreign connection must be left alone.
 	// The inactive ggo-eth0.20 (DEVICE "--") must be deleted too, so the listing must
 	// not be filtered with --active.
+	// Terse `-t -f NAME` output: one connection NAME per line, no columns. The last row
+	// is a ggo name CONTAINING A SPACE - the old columnar strings.Fields[0] parse would
+	// have truncated it to "ggo-space" and deleted the wrong (nonexistent) connection;
+	// terse parsing carries the full name.
 	rec := &RecordingCommander{Outputs: map[string]string{
-		"nmcli": "ggo-eth0           uuid1  ethernet  eth0\n" +
-			"Wired connection 1  uuid2  ethernet  eth1\n" +
-			"ggo-eth0.20         uuid4  vlan      --\n" +
-			"ggo-wifi-uplink     uuid3  wifi      wlan0\n",
+		"nmcli": "ggo-eth0\n" +
+			"Wired connection 1\n" + // foreign - leave alone
+			"ggo-eth0.20\n" + // inactive ggo VLAN - still delete
+			"ggo-space in name\n",
 	}}
 	m := NewManagerWithCommander(rec)
 	if err := m.DeleteApplianceConnections(); err != nil {
 		t.Fatalf("DeleteApplianceConnections: %v", err)
 	}
-	for _, name := range []string{"ggo-eth0", "ggo-eth0.20", "ggo-wifi-uplink"} {
+	for _, name := range []string{"ggo-eth0", "ggo-eth0.20", "ggo-space in name"} {
 		if !callContaining(rec, "connection", "delete", name) {
-			t.Errorf("expected delete of %s, calls=%v", name, rec.Calls)
+			t.Errorf("expected delete of %q (full name), calls=%v", name, rec.Calls)
 		}
 	}
 	if callContaining(rec, "connection", "delete", "Wired") {

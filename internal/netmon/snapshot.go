@@ -13,9 +13,6 @@ type Snapshot struct {
 	Available bool   // false in dev-mode (no socket) or when permanently degraded
 	Note      string // honest state when not fully available
 	Detectors []DetectorSnapshot
-	// LiveMACs are the source MACs seen on this interface within the liveness window
-	// (lowercase, colon-separated) - the passive basis for per-lease online/offline.
-	LiveMACs []string
 	// UnleasedPoolHosts are ARP-active hosts holding an in-pool address with no Kea
 	// lease (see staticInPoolDetector.unleasedPoolHosts) - the lease table shows them
 	// as "awaiting renewal" (or "static in pool" once Flagged).
