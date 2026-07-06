@@ -244,15 +244,6 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, ipStr+" is not inside any configured subnet.", http.StatusBadRequest)
 		return
 	}
-	// Hold reservationMu across the check AND the insert so a concurrent add/import
-	// can't slip a same-IP row in between them (see the field comment).
-	s.reservationMu.Lock()
-	if reason, conflict := s.reservationConflict(r.Context(), subnetID, kea.IPToUint32(ip), ipStr, []byte(hw), 0, hw.String()); conflict {
-		s.reservationMu.Unlock()
-		_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", reason, "WARNING")
-		s.handleError(w, r, reason, http.StatusConflict)
-		return
-	}
 	res := db.HostReservation{
 		Identifier:     []byte(hw),
 		IdentifierType: 0, // hardware-address
@@ -260,8 +251,25 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		IPv4Address:    kea.IPToUint32(ip),
 		Hostname:       hostname,
 	}
-	insErr := s.mariadb.InsertReservation(r.Context(), res)
-	s.reservationMu.Unlock()
+	// Check + insert under reservationMu so a concurrent add/import can't slip a same-IP
+	// row in between them (see the field comment). Deferred unlock in a closure: a panic
+	// in the check or insert must not leave the lock held and wedge every future write.
+	var reason string
+	var conflict bool
+	var insErr error
+	func() {
+		s.reservationMu.Lock()
+		defer s.reservationMu.Unlock()
+		if reason, conflict = s.reservationConflict(r.Context(), subnetID, kea.IPToUint32(ip), ipStr, []byte(hw), 0, hw.String()); conflict {
+			return
+		}
+		insErr = s.mariadb.InsertReservation(r.Context(), res)
+	}()
+	if conflict {
+		_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", reason, "WARNING")
+		s.handleError(w, r, reason, http.StatusConflict)
+		return
+	}
 	if insErr != nil {
 		s.handleError(w, r, "Database error: "+insErr.Error(), http.StatusInternalServerError)
 		return
@@ -340,23 +348,30 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 
 	// Hold reservationMu across the whole conflict-check + insert of this batch, so it
 	// is mutually exclusive with a single add (or another import) checking the same IPs
-	// (see the field comment). Released before the eviction, which needs no such guard.
-	s.reservationMu.Lock()
-	toInsert, owners, skipped, problems := buildImportReservations(records,
-		subnetFor,
-		// Skip the per-row ARP liveness probe (pass ownMAC=""): with it, each of N
-		// rows blocks up to ~400ms probing an almost-always-unused IP (a 200-row
-		// import would hang for ~80s). The IP-level config conflict check still runs.
-		func(subnetID int, ipU uint32, ipStr string, id []byte, mac string) (string, bool) {
-			return s.reservationConflict(r.Context(), subnetID, ipU, ipStr, id, 0, "")
-		},
-		s.defaultHostnameFor,
-	)
+	// (see the field comment). Deferred unlock in a closure so a panic in the build or
+	// insert can't strand the lock; released before the eviction, which needs no guard.
+	var toInsert []db.HostReservation
+	var owners []importOwner
+	var skipped int
+	var problems []string
 	var insErr error
-	if len(toInsert) > 0 {
-		insErr = s.mariadb.InsertReservations(r.Context(), toInsert)
-	}
-	s.reservationMu.Unlock()
+	func() {
+		s.reservationMu.Lock()
+		defer s.reservationMu.Unlock()
+		toInsert, owners, skipped, problems = buildImportReservations(records,
+			subnetFor,
+			// Skip the per-row ARP liveness probe (pass ownMAC=""): with it, each of N
+			// rows blocks up to ~400ms probing an almost-always-unused IP (a 200-row
+			// import would hang for ~80s). The IP-level config conflict check still runs.
+			func(subnetID int, ipU uint32, ipStr string, id []byte, mac string) (string, bool) {
+				return s.reservationConflict(r.Context(), subnetID, ipU, ipStr, id, 0, "")
+			},
+			s.defaultHostnameFor,
+		)
+		if len(toInsert) > 0 {
+			insErr = s.mariadb.InsertReservations(r.Context(), toInsert)
+		}
+	}()
 	if insErr != nil {
 		s.handleError(w, r, "Database error: "+insErr.Error(), http.StatusInternalServerError)
 		return
