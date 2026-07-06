@@ -30,9 +30,9 @@ templ Leases(v LeasesView) {
 					}
 				</div>
 				<div class="table-scroll">
-					<table>
+					<table id="leases-tbl" class="sortable" data-sort-region="leases-body">
 						<thead>
-							<tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Class</th><th>Expires in</th><th>Last seen</th><th aria-label="Actions"></th></tr>
+							<tr><th data-sort="ip"><button type="button" class="th-sort">IP</button></th><th data-sort="text"><button type="button" class="th-sort">MAC</button></th><th data-sort="text"><button type="button" class="th-sort">Hostname</button></th><th data-sort="text"><button type="button" class="th-sort">Class</button></th><th data-sort="num"><button type="button" class="th-sort">Expires in</button></th><th data-sort="num"><button type="button" class="th-sort">Last seen</button></th><th aria-label="Actions"></th></tr>
 						</thead>
 						@LeasesBody(v.Leases, v.CanReserve)
 					</table>
@@ -108,11 +108,11 @@ templ LeasesBody(rows []LeaseRow, canReserve bool) {
 					if l.NoLeaseState != "" {
 						// No data-expires: the countdown script rewrites every
 						// [data-expires] cell's text and would stomp the badge.
-						<td class="mono">
+						<td class="mono" data-sort-value="0">
 							<span class={ "badge", noLeaseBadgeClass(l.NoLeaseState) } title={ noLeaseTitle(l.NoLeaseState) }>{ noLeaseBadgeText(l.NoLeaseState) }</span>
 						</td>
 					} else {
-						<td class="mono" data-expires={ itoa64(l.ExpiresAt) }>
+						<td class="mono" data-expires={ itoa64(l.ExpiresAt) } data-sort-value={ itoa64(l.ExpiresAt) }>
 							if l.ExpiresIn != "" {
 								{ l.ExpiresIn }
 							} else {
@@ -120,7 +120,7 @@ templ LeasesBody(rows []LeaseRow, canReserve bool) {
 							}
 						</td>
 					}
-					<td class="mono">
+					<td class="mono" data-sort-value={ itoa64(l.LastSeen) }>
 						if l.LastSeenText != "" {
 							<span title={ "Last active " + l.LastSeenText }>{ l.LastSeenText }</span>
 							if l.Stale {

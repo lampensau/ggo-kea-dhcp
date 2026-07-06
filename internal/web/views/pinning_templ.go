@@ -288,7 +288,7 @@ func pinnedCard(v PinningView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<div class=\"table-scroll\"><table><thead><tr><th class=\"col-status\">Status</th><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>Label</th><th>IP</th><th>MAC</th><th>Hostname</th><th class=\"col-actions\" aria-label=\"Actions\"></th></tr></thead>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<div class=\"table-scroll\"><table id=\"pinned-tbl\" class=\"sortable\" data-sort-region=\"pinned-body\"><thead><tr><th class=\"col-status\" data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Status</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Remote&nbsp;ID</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Circuit&nbsp;ID</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Label</button></th><th data-sort=\"ip\"><button type=\"button\" class=\"th-sort\">IP</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">MAC</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Hostname</button></th><th class=\"col-actions\" aria-label=\"Actions\"></th></tr></thead>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -334,7 +334,7 @@ func learnableCard(v PinningView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<div class=\"table-scroll\"><table><thead><tr><th>Remote&nbsp;ID</th><th>Circuit&nbsp;ID</th><th>IP</th><th>MAC</th><th>Hostname</th><th>Last&nbsp;active</th><th class=\"col-actions\" aria-label=\"Actions\"></th></tr></thead>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<div class=\"table-scroll\"><table id=\"learnable-tbl\" class=\"sortable\" data-sort-region=\"learnable-body\"><thead><tr><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Remote&nbsp;ID</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Circuit&nbsp;ID</button></th><th data-sort=\"ip\"><button type=\"button\" class=\"th-sort\">IP</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">MAC</button></th><th data-sort=\"text\"><button type=\"button\" class=\"th-sort\">Hostname</button></th><th data-sort=\"num\"><button type=\"button\" class=\"th-sort\">Last&nbsp;active</button></th><th class=\"col-actions\" aria-label=\"Actions\"></th></tr></thead>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1409,20 +1409,33 @@ func LearnableBody(learnable []PortRow, csrf string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "</td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "</td><td data-sort-value=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var64 string
-			templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.JoinStringErrs(orDash(p.LastSeenText))
+			templ_7745c5c3_Var64, templ_7745c5c3_Err = templ.ResolveAttributeValue(itoa64(p.LastSeen))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pinning.templ`, Line: 306, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pinning.templ`, Line: 306, Col: 44}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var64))
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var64)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 101, "</td><td class=\"col-actions\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 101, "\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var65 string
+			templ_7745c5c3_Var65, templ_7745c5c3_Err = templ.JoinStringErrs(orDash(p.LastSeenText))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/pinning.templ`, Line: 306, Col: 71}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var65))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 102, "</td><td class=\"col-actions\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1430,12 +1443,12 @@ func LearnableBody(learnable []PortRow, csrf string) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 102, "</td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 103, "</td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 103, "</tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 104, "</tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1459,12 +1472,12 @@ func pinningScript() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var65 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var65 == nil {
-			templ_7745c5c3_Var65 = templ.NopComponent
+		templ_7745c5c3_Var66 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var66 == nil {
+			templ_7745c5c3_Var66 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 104, "<script>\n\t\twindow.ggoPinPrep = function (btn) {\n\t\t\tvar d = document.getElementById(\"pin-dialog\");\n\t\t\td.querySelector(\"[name=port_identity]\").value = btn.dataset.port || \"\";\n\t\t\td.querySelector(\"[name=ip]\").value = btn.dataset.ip || \"\"; // prefilled, editable\n\t\t\td.querySelector(\"[name=subnet_id]\").value = btn.dataset.subnet || \"\";\n\t\t\td.querySelector(\"[name=hostname]\").value = btn.dataset.hostname || \"\";\n\t\t\td.querySelector(\"[name=mac]\").value = btn.dataset.mac || \"\";\n\t\t\t// Carry any label typed inline on the row (pinned table) into the dialog;\n\t\t\t// fall back to the saved label. Learnable rows have no inline label field.\n\t\t\tvar row = btn.closest(\"tr\");\n\t\t\tvar typed = row ? row.querySelector(\"input[name=label]\") : null;\n\t\t\td.querySelector(\"[name=label]\").value = (typed && typed.value) ? typed.value : (btn.dataset.label || \"\");\n\t\t\tdocument.getElementById(\"pin-dialog-port\").textContent = btn.dataset.portlabel || btn.dataset.port || \"\";\n\t\t\td.showModal();\n\t\t};\n\t\twindow.ggoUnpinOpen = function (btn) {\n\t\t\tvar d = document.getElementById(\"unpin-dialog\");\n\t\t\tif (!d) return;\n\t\t\td.querySelector(\"[name=port_identity]\").value = btn.dataset.port || \"\";\n\t\t\td.querySelector(\"[name=subnet_id]\").value = btn.dataset.subnet || \"\";\n\t\t\tdocument.getElementById(\"unpin-dialog-port\").textContent = btn.dataset.portlabel || btn.dataset.port || \"\";\n\t\t\td.showModal();\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 105, "<script>\n\t\twindow.ggoPinPrep = function (btn) {\n\t\t\tvar d = document.getElementById(\"pin-dialog\");\n\t\t\td.querySelector(\"[name=port_identity]\").value = btn.dataset.port || \"\";\n\t\t\td.querySelector(\"[name=ip]\").value = btn.dataset.ip || \"\"; // prefilled, editable\n\t\t\td.querySelector(\"[name=subnet_id]\").value = btn.dataset.subnet || \"\";\n\t\t\td.querySelector(\"[name=hostname]\").value = btn.dataset.hostname || \"\";\n\t\t\td.querySelector(\"[name=mac]\").value = btn.dataset.mac || \"\";\n\t\t\t// Carry any label typed inline on the row (pinned table) into the dialog;\n\t\t\t// fall back to the saved label. Learnable rows have no inline label field.\n\t\t\tvar row = btn.closest(\"tr\");\n\t\t\tvar typed = row ? row.querySelector(\"input[name=label]\") : null;\n\t\t\td.querySelector(\"[name=label]\").value = (typed && typed.value) ? typed.value : (btn.dataset.label || \"\");\n\t\t\tdocument.getElementById(\"pin-dialog-port\").textContent = btn.dataset.portlabel || btn.dataset.port || \"\";\n\t\t\td.showModal();\n\t\t};\n\t\twindow.ggoUnpinOpen = function (btn) {\n\t\t\tvar d = document.getElementById(\"unpin-dialog\");\n\t\t\tif (!d) return;\n\t\t\td.querySelector(\"[name=port_identity]\").value = btn.dataset.port || \"\";\n\t\t\td.querySelector(\"[name=subnet_id]\").value = btn.dataset.subnet || \"\";\n\t\t\tdocument.getElementById(\"unpin-dialog-port\").textContent = btn.dataset.portlabel || btn.dataset.port || \"\";\n\t\t\td.showModal();\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -13,7 +13,7 @@
   --bg:#ffffff; --bg-subtle:#f6f7f9;
   --surface:#ffffff; --surface-2:#f6f7f9; --surface-3:#eef0f3; --surface-sunken:#eef0f3;
   --border:#e6e8ec; --border-strong:#d3d7dd;
-  --text:#0c0d0e; --text-secondary:#5c6370; --text-muted:#8a909b;
+  --text:#0c0d0e; --text-secondary:#5c6370; --text-muted:#6e747f;
   --accent:#007d00; --accent-hover:#016b01; --accent-active:#015701;
   --accent-tint:#e7f3e7; --accent-ring:rgba(0,125,0,.16); --accent-on:#ffffff;
   --ok:#127a2b; --ok-tint:#e6f4ea; --ok-border:#a8d8b4;
@@ -39,7 +39,7 @@
     --bg:#08090a; --bg-subtle:#0c0d0f;
     --surface:#111315; --surface-2:#181a1d; --surface-3:#202327; --surface-sunken:#0e1218;
     --border:#1f2227; --border-strong:#2c3036;
-    --text:#f4f5f6; --text-secondary:#9aa1ac; --text-muted:#6b727c;
+    --text:#f4f5f6; --text-secondary:#9aa1ac; --text-muted:#868d98;
     --accent:#3fb950; --accent-hover:#4cc85e; --accent-active:#36a046;
     --accent-tint:#12331a; --accent-ring:rgba(63,185,80,.22); --accent-on:#04140a;
     --ok:#3fb950; --ok-tint:#12331a; --ok-border:#235c2c;
@@ -55,7 +55,7 @@
   --bg:#08090a; --bg-subtle:#0c0d0f;
   --surface:#111315; --surface-2:#181a1d; --surface-3:#202327; --surface-sunken:#0e1218;
   --border:#1f2227; --border-strong:#2c3036;
-  --text:#f4f5f6; --text-secondary:#9aa1ac; --text-muted:#6b727c;
+  --text:#f4f5f6; --text-secondary:#9aa1ac; --text-muted:#868d98;
   --accent:#3fb950; --accent-hover:#4cc85e; --accent-active:#36a046;
   --accent-tint:#12331a; --accent-ring:rgba(63,185,80,.22); --accent-on:#04140a;
   --ok:#3fb950; --ok-tint:#12331a; --ok-border:#235c2c;
@@ -502,6 +502,9 @@ table td:has(> .row-actions) { width:1%; white-space:nowrap; }
 
 th[data-sort] { cursor:pointer; user-select:none; }
 th[data-sort]:hover { color:var(--text); }
+/* The sort trigger is a real <button> for keyboard/AT operability; strip all button
+   chrome so it reads as the plain header text (color follows th[data-sort]:hover). */
+.th-sort { font:inherit; color:inherit; letter-spacing:inherit; text-transform:inherit; text-align:inherit; vertical-align:baseline; background:none; border:0; margin:0; padding:0; cursor:pointer; }
 th[aria-sort]::after { content:" ↑"; font-size:10px; color:var(--text-muted); }
 th[aria-sort="descending"]::after { content:" ↓"; }
 
@@ -730,7 +733,8 @@ th[aria-sort="descending"]::after { content:" ↓"; }
   .pp-actions.pp-has-remove { position:absolute; right:0; top:0; bottom:0; width:48px; z-index:5; display:block; }
   .pp-actions-reveal { display:flex; position:absolute; right:0; top:0; bottom:0; width:72px; align-items:center; justify-content:flex-end; padding-right:12px; background:linear-gradient(to right, transparent, var(--row-bg) 35%); opacity:0; pointer-events:none; transition:opacity 0.25s ease-in-out; }
 
-  .pp-row:hover .pp-actions-reveal { opacity:1; pointer-events:auto; }
+  .pp-row:hover .pp-actions-reveal,
+  .pp-row:focus-within .pp-actions-reveal { opacity:1; pointer-events:auto; }
 }
 
 .pp-grid-util .pp-row { grid-template-columns:56px minmax(180px,1fr) 90px 110px 250px 120px; }
