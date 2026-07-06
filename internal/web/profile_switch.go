@@ -23,6 +23,7 @@ type switchPlan struct {
 	profileName     string
 	snapPath        string
 	gatewayIP       string // the address the operator's browser reconnects to
+	allTagged       bool   // every scope is tagged - reconnect IP is VLAN-only (interstitial warns)
 }
 
 // listProfiles returns every saved profile (active first, then newest) with its
@@ -87,7 +88,7 @@ func (s *Server) handleProfileActivate(w http.ResponseWriter, r *http.Request) {
 	// re-IP will drop this very connection.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, interstitialHTML(plan.gatewayIP))
+	_, _ = io.WriteString(w, interstitialHTML(plan.gatewayIP, plan.allTagged))
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -191,7 +192,7 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("Failed to snapshot current configuration: %w", err)
 	}
 
-	plan := switchPlan{targetProfileID: targetID, profileName: name, snapPath: snapPath, gatewayIP: gatewayIP}
+	plan := switchPlan{targetProfileID: targetID, profileName: name, snapPath: snapPath, gatewayIP: gatewayIP, allTagged: allScopesTagged(scopes)}
 	_ = s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&plan.prevProfileID)
 
 	tx, err := s.sqlite.Begin()

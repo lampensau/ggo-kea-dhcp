@@ -3,7 +3,6 @@ package web
 import (
 	"log"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -18,11 +17,11 @@ const (
 	// The rollback path holds its snapshot path in the in-flight plan, never this
 	// index, so keeping a recent window purely for the operator is safe.
 	snapshotKeepCount = 20
-	// auditKeepRows / auditKeepDays bound the audit log: age is the normal cap,
-	// the row cap is the backstop against an event flood (e.g. a flapping
-	// detector) filling the SD card within the age window.
+	// auditKeepRows bounds the audit log by newest-N rowid. Deliberately NOT an
+	// age window: the Pi has no RTC, so an NTP forward-jump would make pre-sync rows
+	// instantly "old" and purge real history. rowid order is monotonic regardless of
+	// the clock, so keeping the newest N is both the normal cap and the flood backstop.
 	auditKeepRows = 5000
-	auditKeepDays = 90
 )
 
 // maybeRunMaintenance runs the pruning pass at most once per maintenanceInterval.
@@ -76,12 +75,12 @@ func (s *Server) pruneSnapshots() {
 	log.Printf("[maintenance] pruned %d old config snapshots", len(paths))
 }
 
-// pruneAuditLog drops audit rows past the age window, with a row-count backstop.
+// pruneAuditLog keeps the newest auditKeepRows rows by rowid (clock-independent -
+// see the const comment on why an age window is wrong on the RTC-less Pi).
 func (s *Server) pruneAuditLog() {
 	res, err := s.sqlite.Exec(
-		`DELETE FROM audit_log WHERE ts < datetime('now', ?)
-		   OR id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)`,
-		"-"+strconv.Itoa(auditKeepDays)+" days", auditKeepRows)
+		`DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)`,
+		auditKeepRows)
 	if err != nil {
 		log.Printf("[maintenance] prune audit log: %v", err)
 		return

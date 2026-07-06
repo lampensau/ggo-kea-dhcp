@@ -58,12 +58,12 @@ func TestPruneSnapshotsKeepsNewestN(t *testing.T) {
 	}
 }
 
-// pruneAuditLog must drop rows past the age window and enforce the row-count
-// backstop, keeping the newest.
-func TestPruneAuditLogAgeAndCount(t *testing.T) {
+// pruneAuditLog keeps the newest auditKeepRows rows by rowid, independent of the
+// clock: an NTP forward-jump on the RTC-less Pi must NOT purge real history by age.
+func TestPruneAuditLogByRowCount(t *testing.T) {
 	s, _ := newTestServer(t)
 
-	// Three ancient rows, three fresh ones.
+	// Three rows with an ancient timestamp, three fresh ones - all under the row cap.
 	for i := 0; i < 3; i++ {
 		if _, err := s.sqlite.Exec(
 			"INSERT INTO audit_log (ts, actor, action, target, result) VALUES (datetime('now', '-100 days'), 'X', 'OLD', 't', 'OK')"); err != nil {
@@ -79,11 +79,13 @@ func TestPruneAuditLogAgeAndCount(t *testing.T) {
 
 	s.pruneAuditLog()
 
+	// Under the row cap, the ancient rows must SURVIVE - pruning is by rowid, not age,
+	// so a clock jump can never purge in-window history.
 	var old, fresh int
 	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'OLD'").Scan(&old)
 	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'FRESH'").Scan(&fresh)
-	if old != 0 || fresh != 3 {
-		t.Errorf("after age prune: old=%d fresh=%d, want 0/3", old, fresh)
+	if old != 3 || fresh != 3 {
+		t.Errorf("under the row cap, age must not prune: old=%d fresh=%d, want 3/3", old, fresh)
 	}
 
 	// Row-count backstop: flood past the cap, the newest auditKeepRows survive.
@@ -100,7 +102,7 @@ func TestPruneAuditLogAgeAndCount(t *testing.T) {
 	if n := countRows(t, s, "audit_log"); n != auditKeepRows {
 		t.Errorf("rows after count prune = %d, want %d", n, auditKeepRows)
 	}
-	// The three FRESH rows are older than the flood, so the cap evicted them first.
+	// The six seeded rows (OLD+FRESH) predate the flood, so the cap evicts them first.
 	var maxID, minID int
 	_ = s.sqlite.QueryRow("SELECT MAX(id), MIN(id) FROM audit_log").Scan(&maxID, &minID)
 	if maxID-minID != auditKeepRows-1 {

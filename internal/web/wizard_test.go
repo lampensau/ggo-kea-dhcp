@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -191,5 +192,37 @@ func TestShieldStatus(t *testing.T) {
 	// Carrier down wins even while a server is latched (no link = nothing answering us).
 	if st, d := s.shieldStatus("Suspended"); st != "Suspended" || d != "" {
 		t.Errorf("no carrier with latched server: got %q/%q, want Suspended", st, d)
+	}
+}
+
+// TestAllScopesTagged pins the all-tagged detection that drives the interstitial VLAN
+// warning: true only when there is at least one scope and none is untagged.
+func TestAllScopesTagged(t *testing.T) {
+	if allScopesTagged(nil) {
+		t.Error("no scopes -> false")
+	}
+	if !allScopesTagged([]ScopeConfig{{VlanID: 10}, {VlanID: 20}}) {
+		t.Error("all tagged -> true")
+	}
+	if allScopesTagged([]ScopeConfig{{VlanID: 0}, {VlanID: 20}}) {
+		t.Error("one untagged -> false")
+	}
+	if allScopesTagged([]ScopeConfig{{VlanID: 0}}) {
+		t.Error("single untagged -> false")
+	}
+}
+
+// TestInterstitialAllTaggedWarning: the reconnect interstitial carries the VLAN
+// "you may lose access" warning (naming the reconnect IP) only when all-tagged.
+func TestInterstitialAllTaggedWarning(t *testing.T) {
+	if strings.Contains(interstitialHTML("10.0.0.1", false), "only tagged VLANs") {
+		t.Error("no warning expected when a scope is untagged")
+	}
+	html := interstitialHTML("10.20.30.1", true)
+	if !strings.Contains(html, "only tagged VLANs") {
+		t.Error("all-tagged interstitial must carry the VLAN warning")
+	}
+	if !strings.Contains(html, "10.20.30.1") {
+		t.Error("the warning should name the reconnect IP")
 	}
 }

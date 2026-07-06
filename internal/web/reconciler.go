@@ -151,6 +151,16 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 			if errors.Is(err, errNoScopes) {
 				return s.rescueToOnboarding(err)
 			}
+			// Sweep a rollback stash orphaned by a crash between finishApply's ACTIVE
+			// write and its stash DELETE: that box boots straight into ACTIVE (never the
+			// CONFIGURING-resume path that also sweeps), so without this the hidden
+			// active=0 stash row + scopes leak forever. Boot-only (rescueOpen) and
+			// success-only, so it never races an in-flight apply's live rollback stash.
+			if err == nil {
+				if e := s.sweepOrphanedStashes(); e != nil {
+					log.Printf("[reconcile] failed to sweep orphaned stash on ACTIVE boot: %v", e)
+				}
+			}
 		}
 		return err
 	default: // FACTORY and ONBOARDING share identical network state.

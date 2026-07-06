@@ -244,7 +244,11 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, ipStr+" is not inside any configured subnet.", http.StatusBadRequest)
 		return
 	}
+	// Hold reservationMu across the check AND the insert so a concurrent add/import
+	// can't slip a same-IP row in between them (see the field comment).
+	s.reservationMu.Lock()
 	if reason, conflict := s.reservationConflict(r.Context(), subnetID, kea.IPToUint32(ip), ipStr, []byte(hw), 0, hw.String()); conflict {
+		s.reservationMu.Unlock()
 		_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", reason, "WARNING")
 		s.handleError(w, r, reason, http.StatusConflict)
 		return
@@ -256,8 +260,10 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		IPv4Address:    kea.IPToUint32(ip),
 		Hostname:       hostname,
 	}
-	if err := s.mariadb.InsertReservation(r.Context(), res); err != nil {
-		s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
+	insErr := s.mariadb.InsertReservation(r.Context(), res)
+	s.reservationMu.Unlock()
+	if insErr != nil {
+		s.handleError(w, r, "Database error: "+insErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Free the device's current lease and anything on the reserved IP so the device
@@ -332,6 +338,10 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 	// over the whole file.
 	subnetFor := s.importSubnetMatcher()
 
+	// Hold reservationMu across the whole conflict-check + insert of this batch, so it
+	// is mutually exclusive with a single add (or another import) checking the same IPs
+	// (see the field comment). Released before the eviction, which needs no such guard.
+	s.reservationMu.Lock()
 	toInsert, owners, skipped, problems := buildImportReservations(records,
 		subnetFor,
 		// Skip the per-row ARP liveness probe (pass ownMAC=""): with it, each of N
@@ -342,12 +352,16 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 		},
 		s.defaultHostnameFor,
 	)
-
+	var insErr error
 	if len(toInsert) > 0 {
-		if err := s.mariadb.InsertReservations(r.Context(), toInsert); err != nil {
-			s.handleError(w, r, "Database error: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		insErr = s.mariadb.InsertReservations(r.Context(), toInsert)
+	}
+	s.reservationMu.Unlock()
+	if insErr != nil {
+		s.handleError(w, r, "Database error: "+insErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(toInsert) > 0 {
 		// Post-commit eviction dumps leases once for the whole batch: a large import
 		// must not be abortable by the operator's browser disconnecting mid-request -
 		// the rows are already committed - so it runs on a background context.
@@ -399,8 +413,8 @@ func buildImportReservations(
 	conflictFn func(subnetID int, ipU uint32, ipStr string, id []byte, mac string) (string, bool),
 	hostnameFor func(mac string) string,
 ) (toInsert []db.HostReservation, owners []importOwner, skipped int, problems []string) {
-	seenIP := map[uint32]bool{}  // guard intra-file duplicate IPs (the DB conflict check can't see them yet)
-	seenMAC := map[string]bool{} // guard intra-file duplicate MACs (ON DUPLICATE KEY would silently collapse them)
+	seenIP := map[uint32]bool{}        // guard intra-file duplicate IPs (the DB conflict check can't see them yet)
+	seenMACSubnet := map[string]bool{} // guard intra-file duplicate MAC+subnet (the hosts unique key is per-subnet, so the SAME MAC in a different subnet - a trunked device - is legal and must NOT be collapsed)
 	skip := func(row int, reason string) {
 		skipped++
 		if len(problems) < 5 { // cap the summary; the rest are just counted
@@ -433,10 +447,6 @@ func buildImportReservations(
 			skip(i+1, "invalid MAC "+macStr)
 			continue
 		}
-		if seenMAC[hw.String()] {
-			skip(i+1, macStr+" duplicated in file")
-			continue
-		}
 		ip := net.ParseIP(ipStr)
 		if ip == nil || ip.To4() == nil {
 			skip(i+1, "invalid IPv4 "+ipStr)
@@ -452,6 +462,14 @@ func buildImportReservations(
 			skip(i+1, ipStr+" not in any configured subnet")
 			continue
 		}
+		// Dedupe on MAC+subnet, not MAC alone: a trunked device legitimately reserves
+		// one IP per subnet under the same MAC (the hosts unique key is per-subnet), so
+		// keying on MAC alone here would wrongly drop the second row as a file duplicate.
+		macKey := fmt.Sprintf("%s|%d", hw.String(), subnetID)
+		if seenMACSubnet[macKey] {
+			skip(i+1, macStr+" duplicated in file for subnet "+strconv.Itoa(subnetID))
+			continue
+		}
 		if reason, conflict := conflictFn(subnetID, ipU, ipStr, []byte(hw), hw.String()); conflict {
 			skip(i+1, reason)
 			continue
@@ -461,7 +479,7 @@ func buildImportReservations(
 			hostname = hostnameFor(hw.String())
 		}
 		seenIP[ipU] = true
-		seenMAC[hw.String()] = true
+		seenMACSubnet[macKey] = true
 		toInsert = append(toInsert, db.HostReservation{
 			Identifier:     []byte(hw),
 			IdentifierType: 0,

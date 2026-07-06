@@ -225,3 +225,20 @@ func TestBeginApplyValidatesBeforeClaimingGuard(t *testing.T) {
 		t.Fatal("beginApply released a guard it did not own")
 	}
 }
+
+// TestValidateProfileName pins the two beginApply guards: an empty/whitespace name is
+// rejected, and the reserved ".stash-<digit>" shape (which listProfiles hides and
+// sweepOrphanedStashes deletes) is refused - but a stash-like name without a trailing
+// digit, or "stash" on its own, is fine.
+func TestValidateProfileName(t *testing.T) {
+	for _, n := range []string{"Home", "venue-1", "stash", "my.profile", "x.stash-notadigit"} {
+		if err := validateProfileName(n); err != nil {
+			t.Errorf("validateProfileName(%q) = %v, want nil", n, err)
+		}
+	}
+	for _, n := range []string{"", "   ", "x.stash-1", "prod.stash-42", "a.stash-0suffix"} {
+		if err := validateProfileName(n); err == nil {
+			t.Errorf("validateProfileName(%q) = nil, want error", n)
+		}
+	}
+}

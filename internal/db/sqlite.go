@@ -315,6 +315,28 @@ func (db *SQLiteDB) LogAudit(actor, action, target, beforeJSON, afterJSON, resul
 	return err
 }
 
+// InitializeAdmin creates the first admin user and flips the lifecycle to ONBOARDING
+// in ONE transaction. Doing both atomically closes a factory-bootstrap recovery hole:
+// as two autocommit writes, a crash between them commits the admin but leaves the state
+// FACTORY, so re-onboarding either hits the users UNIQUE constraint (same username) or
+// mints a second admin (different username).
+func (db *SQLiteDB) InitializeAdmin(username, passwordHash string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", username, passwordHash); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO app_state (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, LifecycleStateKey, StateOnboarding); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 // SetState updates or inserts a key-value pair in app_state.
 func (db *SQLiteDB) SetState(key, value string) error {
 	_, err := db.Exec(`
