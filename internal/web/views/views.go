@@ -42,7 +42,7 @@ type PageData struct {
 	BackendAlerts []AlertRow
 	// Update is the footer's #update-badge first paint (a newer-release notice;
 	// the live hub re-patches the same partial when a check lands).
-	Update UpdateBadgeView
+	Update UpdateView
 }
 
 // StatusPillView is the header status pill: the lifecycle State plus aggregated live

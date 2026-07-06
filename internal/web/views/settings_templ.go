@@ -274,22 +274,12 @@ func Settings(v SettingsView) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if v.Page.State == "ACTIVE" {
-				templ_7745c5c3_Err = UpdateCard(v.Update).Render(ctx, templ_7745c5c3_Buffer)
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "    ")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			if v.Page.State == "ACTIVE" {
 				templ_7745c5c3_Err = ResetDangerZone(v.Page.CSRFToken).Render(ctx, templ_7745c5c3_Buffer)
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "    ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "    ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -299,7 +289,7 @@ func Settings(v SettingsView) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, " ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, " ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -342,7 +332,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 			templ_7745c5c3_Var13 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "<h2 class=\"section-title\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<h2 class=\"section-title\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -350,7 +340,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "Backup &amp; Restore</h2><div class=\"split-grid\"><div class=\"card\"><h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "Backup &amp; Restore</h2><div class=\"split-grid\"><div class=\"card\"><h3>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -358,20 +348,20 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "Backup</h3><p class=\"help\">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so confirm your password and keep the file somewhere safe.</p><form method=\"post\" action=\"/settings/backup\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "Backup</h3><p class=\"help\">Download a full snapshot of the appliance - administrators, profiles, scopes, port labels, and host reservations. It includes password hashes, so confirm your password and keep the file somewhere safe.</p><form method=\"post\" action=\"/settings/backup\"><input type=\"hidden\" name=\"csrf_token\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.ResolveAttributeValue(v.Page.CSRFToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 128, Col: 67}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/views/settings.templ`, Line: 122, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var14)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "\"><div class=\"form-group\"><label class=\"form-label\" for=\"backup_current_password\">Confirm your password</label> <input class=\"form-control\" id=\"backup_current_password\" name=\"current_password\" type=\"password\" autocomplete=\"current-password\" required></div><button type=\"submit\" class=\"btn btn-secondary\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "\"><div class=\"form-group\"><label class=\"form-label\" for=\"backup_current_password\">Confirm your password</label> <input class=\"form-control\" id=\"backup_current_password\" name=\"current_password\" type=\"password\" autocomplete=\"current-password\" required></div><button type=\"submit\" class=\"btn btn-secondary\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -379,7 +369,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "Download Backup</button></form></div><div class=\"card\"><h3>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "Download Backup</button></form></div><div class=\"card\"><h3>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -387,7 +377,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "Restore</h3><p class=\"help\">Load a backup file to bring saved configuration back. You choose which sections to restore - admins, profiles and scopes, port labels, reservations - and the selected ones are overwritten as the appliance re-applies them.</p><button type=\"button\" class=\"btn btn-secondary\" onclick=\"document.getElementById('settings-restore-dlg').showModal()\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "Restore</h3><p class=\"help\">Load a backup file to bring saved configuration back. You choose which sections to restore - admins, profiles and scopes, port labels, reservations - and the selected ones are overwritten as the appliance re-applies them.</p><button type=\"button\" class=\"btn btn-secondary\" onclick=\"document.getElementById('settings-restore-dlg').showModal()\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -395,7 +385,7 @@ func settingsBackupCard(v SettingsView) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "Restore from Backup</button></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "Restore from Backup</button></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -431,7 +421,7 @@ func settingsWifiScript() templ.Component {
 			templ_7745c5c3_Var15 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "<script>\n\t\twindow.ggoSettingsScanWifi = function (btn) {\n\t\t\tvar sel = document.getElementById(\"uplink_ssid\"); if (!sel) return;\n\t\t\tggoScanBusy(btn, true);\n\t\t\tvar cur = sel.value;\n\t\t\tsel.innerHTML = \"<option value=''>Scanning…</option>\";\n\t\t\tfetch(\"/wifi/scan\").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur + \" (current)\"; c.selected = true; sel.appendChild(c); }\n\t\t\t\t(aps || []).forEach(function (ap) {\n\t\t\t\t\tif (ap.ssid === cur) return;\n\t\t\t\t\tvar o = document.createElement(\"option\"); o.value = ap.ssid; o.textContent = ap.ssid + \" (\" + ap.signal + \"%, \" + ap.security + \")\"; sel.appendChild(o);\n\t\t\t\t});\n\t\t\t\tif (!sel.options.length) { sel.innerHTML = \"<option value=''>No networks found</option>\"; }\n\t\t\t}).catch(function () {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }\n\t\t\t\tvar e = document.createElement(\"option\"); e.value = \"\"; e.textContent = \"Scan failed, click Scan to retry\"; sel.appendChild(e);\n\t\t\t}).finally(function () { ggoScanBusy(btn, false); });\n\t\t};\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "<script>\n\t\twindow.ggoSettingsScanWifi = function (btn) {\n\t\t\tvar sel = document.getElementById(\"uplink_ssid\"); if (!sel) return;\n\t\t\tggoScanBusy(btn, true);\n\t\t\tvar cur = sel.value;\n\t\t\tsel.innerHTML = \"<option value=''>Scanning…</option>\";\n\t\t\tfetch(\"/wifi/scan\").then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (aps) {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur + \" (current)\"; c.selected = true; sel.appendChild(c); }\n\t\t\t\t(aps || []).forEach(function (ap) {\n\t\t\t\t\tif (ap.ssid === cur) return;\n\t\t\t\t\tvar o = document.createElement(\"option\"); o.value = ap.ssid; o.textContent = ap.ssid + \" (\" + ap.signal + \"%, \" + ap.security + \")\"; sel.appendChild(o);\n\t\t\t\t});\n\t\t\t\tif (!sel.options.length) { sel.innerHTML = \"<option value=''>No networks found</option>\"; }\n\t\t\t}).catch(function () {\n\t\t\t\tsel.innerHTML = \"\";\n\t\t\t\tif (cur) { var c = document.createElement(\"option\"); c.value = cur; c.textContent = cur; c.selected = true; sel.appendChild(c); }\n\t\t\t\tvar e = document.createElement(\"option\"); e.value = \"\"; e.textContent = \"Scan failed, click Scan to retry\"; sel.appendChild(e);\n\t\t\t}).finally(function () { ggoScanBusy(btn, false); });\n\t\t};\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

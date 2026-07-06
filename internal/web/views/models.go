@@ -71,6 +71,15 @@ func releaseConfirmExpr() string {
 		"{headers: {'X-CSRF-Token': document.querySelector('meta[name=\"csrf-token\"]').content}})"
 }
 
+// checkUpdatesExpr is the account menu's "Check for Updates" action: close the
+// dropdown, then POST a manual check. The result comes back as a toast and the
+// footer badge updates itself live. CSRF rides the X-CSRF-Token header read from
+// the page <meta> (the menu is on every page, with no per-action form token).
+func checkUpdatesExpr() string {
+	return "el.closest('details').removeAttribute('open'); @post('/update/check', " +
+		"{headers: {'X-CSRF-Token': document.querySelector('meta[name=\"csrf-token\"]').content}})"
+}
+
 // Page view models. These are plain data the web handlers populate; the views
 // package never imports web. Row types are defined here (not in web) so handlers
 // build them directly and there's a single source of truth for display shape.

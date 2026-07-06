@@ -354,7 +354,7 @@ templ poolDragScript() {
 templ appFooter(d PageData) {
 	<div class="save-bar-spacer" aria-hidden="true"></div>
 	<footer class="app-footer">
-		<div class="app-footer-inner">
+		<div class={ "app-footer-inner", templ.KV("has-actions", d.CurrentPath == "/settings" || d.CurrentPath == "/setup") }>
 			<span class="settings-version">Green-GO Kea DHCP v{ d.Version }</span>
 			@UpdateBadge(d.Update)
 			<div class="btn-row">
@@ -376,6 +376,11 @@ templ appFooter(d PageData) {
 			</div>
 		</div>
 	</footer>
+	// The update dialogs (hub + install confirm + notes) live outside the flex
+	// footer so they never affect its layout; the footer badge opens them by id.
+	// A shell live-region (#update-dialogs) re-pushed with the badge, so a live
+	// badge always has its dialog mounted.
+	@UpdateDialogs(d.Update)
 }
 
 templ themeToggleScript() {
@@ -495,6 +500,7 @@ templ accountMenu(d PageData) {
 			}
 			if d.State == "ACTIVE" {
 				<button type="button" class="account-item" onclick="this.closest('details').removeAttribute('open'); document.getElementById('dlg-account').showModal()">@Icon("key") Account</button>
+				<button type="button" class="account-item" data-on:click={ checkUpdatesExpr() }>@Icon("refresh-cw") Check for Updates</button>
 			}
 			<form method="post" action="/logout">
 				<input type="hidden" name="csrf_token" value={ d.CSRFToken }/>

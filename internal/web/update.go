@@ -13,6 +13,8 @@ import (
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/version"
 	"ggo-kea-dhcp/internal/web/views"
+
+	"github.com/starfederation/datastar-go/datastar"
 )
 
 // The self-update checker: while ACTIVE and the WiFi uplink is up, the box asks
@@ -40,8 +42,8 @@ const (
 )
 
 // app_state keys for the persisted check result. update_latest_* describe the
-// newest known release; the two latches keep the audit row and the badge
-// dismissal one-per-version across restarts.
+// newest known release; the notified latch keeps the audit row one-per-version
+// across restarts.
 const (
 	stateUpdateLastCheck    = "update_last_check"
 	stateUpdateVersion      = "update_latest_version"
@@ -50,7 +52,6 @@ const (
 	stateUpdateDebURL       = "update_latest_deb_url"
 	stateUpdateSHA256       = "update_latest_deb_sha256"
 	stateUpdateNotified     = "update_notified_version"
-	stateUpdateDismissed    = "update_dismissed_version"
 	stateUpdateBackoffUntil = "update_backoff_until"
 	stateUpdateNeedsSystem  = "update_needs_system"
 )
@@ -336,33 +337,25 @@ func (s *Server) fetchReleaseScope(rel *ghRelease) string {
 	return "app"
 }
 
-// publishUpdateBadge pushes the footer badge live region (shell region: every
-// authenticated page has the footer).
+// publishUpdateBadge pushes the footer badge AND its dialog set (both shell
+// regions: every authenticated page has the footer). Pushing the dialogs
+// together with the badge is what keeps the notification reliable - a badge that
+// appears live always has its dialog mounted to open.
 func (s *Server) publishUpdateBadge() {
 	if s.live == nil {
 		return
 	}
-	s.live.publishIfChanged("update-badge", renderFragment(views.UpdateBadge(s.updateBadgeView())))
+	v := s.buildUpdateView()
+	s.live.publishIfChanged("update-badge", renderFragment(views.UpdateBadge(v)))
+	s.live.publishIfChanged("update-dialogs", renderFragment(views.UpdateDialogs(v)))
 }
 
-// updateBadgeView derives the footer badge state: shown only when a strictly
-// newer release is known and the operator has not dismissed that exact version.
-func (s *Server) updateBadgeView() views.UpdateBadgeView {
+// buildUpdateView assembles the footer badge/dialog state from app_state. It
+// carries no CSRF token: the install form reads that from the page <meta> at
+// submit, so the view can be broadcast over the live channel to every client.
+func (s *Server) buildUpdateView() views.UpdateView {
 	latest, _ := s.sqlite.GetState(stateUpdateVersion)
-	if latest == "" || !semverNewer(latest, updateCurrentVersion) {
-		return views.UpdateBadgeView{}
-	}
-	if dismissed, _ := s.sqlite.GetState(stateUpdateDismissed); dismissed == latest {
-		return views.UpdateBadgeView{}
-	}
-	return views.UpdateBadgeView{Show: true, Version: latest}
-}
-
-// buildUpdateView assembles the Settings card's state from app_state.
-func (s *Server) buildUpdateView(csrf string) views.UpdateView {
-	latest, _ := s.sqlite.GetState(stateUpdateVersion)
-	v := views.UpdateView{Current: updateCurrentVersion, CSRF: csrf}
-	v.LastCheck, _ = s.sqlite.GetState(stateUpdateLastCheck)
+	v := views.UpdateView{Current: updateCurrentVersion}
 	if latest == "" || !semverNewer(latest, updateCurrentVersion) {
 		return v
 	}
@@ -382,42 +375,30 @@ func (s *Server) buildUpdateView(csrf string) views.UpdateView {
 	v.CanInstall = sha != ""
 	ns, _ := s.sqlite.GetState(stateUpdateNeedsSystem)
 	v.NeedsSystem = ns == "1"
-	dismissed, _ := s.sqlite.GetState(stateUpdateDismissed)
-	v.Dismissed = dismissed == latest
 	return v
 }
 
-// handleUpdateCheck is the Settings card's Check Now: one synchronous manual
-// check, result surfaced as a flash toast. Gated on ACTIVE like the background
-// loop - the box makes no update requests while onboarding or isolated.
+// handleUpdateCheck runs one manual check, triggered by the account menu's
+// "Check for Updates" from any page. checkForUpdate publishes the footer badge
+// and its dialogs live on a hit; here we just report the outcome as a toast.
 func (s *Server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if state, _ := s.sqlite.GetState(db.LifecycleStateKey); state != db.StateActive {
-		s.redirectHTMX(w, r, "/settings")
+		s.handleError(w, r, "Updates are checked only once the appliance is active.", http.StatusBadRequest)
 		return
 	}
 	newer, err := s.checkForUpdate(true)
+	msg, kind := "You are running the latest version.", "success"
 	switch {
 	case err != nil:
-		s.setFlash(w, r, "Update check failed - is the WiFi uplink connected?", "error")
+		msg, kind = "Update check failed - is the WiFi uplink connected?", "error"
 	case newer:
 		latest, _ := s.sqlite.GetState(stateUpdateVersion)
-		s.setFlash(w, r, "Update v"+latest+" is available.", "success")
-	default:
-		s.setFlash(w, r, "You are running the latest version.", "success")
+		msg, kind = "Update v"+latest+" is available.", "success"
 	}
-	s.redirectHTMX(w, r, "/settings")
-}
-
-// handleUpdateDismiss hides the footer badge for the currently known version
-// (the Settings card keeps showing it; a NEWER release resurfaces the badge).
-func (s *Server) handleUpdateDismiss(w http.ResponseWriter, r *http.Request) {
-	latest, _ := s.sqlite.GetState(stateUpdateVersion)
-	if latest != "" {
-		if err := s.sqlite.SetState(stateUpdateDismissed, latest); err != nil {
-			s.handleError(w, r, "Failed to save the dismissal", http.StatusInternalServerError)
-			return
-		}
-		s.publishUpdateBadge()
+	if isDatastar(r) {
+		toast(datastar.NewSSE(w, r), msg, kind)
+		return
 	}
+	s.setFlash(w, r, msg, kind)
 	s.redirectHTMX(w, r, "/settings")
 }

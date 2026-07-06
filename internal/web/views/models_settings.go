@@ -26,9 +26,6 @@ type SettingsView struct {
 	UplinkPassword string
 	// LeaseLifetime is the active-profile DHCP lease lifetime in seconds.
 	LeaseLifetime int
-	// Update is the Software Update card (mounted outside #settings-form,
-	// ACTIVE only - like the danger zone).
-	Update UpdateView
 }
 
 // --- Setup wizard ---

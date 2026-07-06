@@ -533,7 +533,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /system/poweroff", s.handleSystemPowerOff)
 
 	mux.HandleFunc("POST /update/check", s.handleUpdateCheck)
-	mux.HandleFunc("POST /update/dismiss", s.handleUpdateDismiss)
 	mux.HandleFunc("POST /update/install", s.handleUpdateInstall)
 
 	// The dedicated CaptiveRedirectMiddleware was dropped: lifecycleMiddleware is
@@ -651,7 +650,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request, title string) 
 		d.CSRFToken = csrf
 		d.SysHealth = s.buildSysHealthView(state)
 		d.HealthPill = s.buildStatusPill(state)
-		d.Update = s.updateBadgeView() // first paint of the footer #update-badge
+		d.Update = s.buildUpdateView() // first paint of the footer badge + its dialogs
 		if s.health != nil {
 			d.BackendAlerts = s.backendAlertRows() // first paint of the #backend-alert strip (health + preflight)
 		}
@@ -849,10 +848,11 @@ func isUnsafeMethod(m string) bool {
 // Origin and is rejected; a legitimate same-origin submit matches. When both headers
 // are absent it fails closed: browsers always send at least one on an unsafe request
 // (a fetch/@post sends Origin, a native <form> POST sends Referer), so only header-less
-// scripted clients (curl) are blocked - and blocking those is the point, since they can
-// otherwise seize a fresh box via the pre-auth /factory/restore before the operator
-// reaches it. It does not stop an attacker who forges a matching Origin; that needs an
-// out-of-band recovery secret, deliberately out of scope to keep onboarding usable.
+// scripted clients (curl) are blocked.
+//
+// ACCEPTED RISK (reviewed): a forged Origin defeats this CSRF check, and no in-request
+// control can fix that (first-admin creation is unauthenticated by necessity). Accepted
+// because FACTORY is not attacker-inducible and short-lived; do not re-file.
 func sameOriginRequest(r *http.Request) bool {
 	if !isUnsafeMethod(r.Method) {
 		return true
