@@ -103,8 +103,42 @@ var runCallRe = regexp.MustCompile(`(?s)\.Run\(([^)]*)\)`)
 // literal command name - an un-scannable call would otherwise silently bypass
 // the sudoers cross-check and fail only on the Pi, the exact gap this test
 // exists to close.
+// constRe matches a single-line package const bound to a string literal
+// (`const NAME = "value"`). Only true `const` declarations are resolved (never
+// vars, which can be reassigned), and const-block entries are deliberately left
+// out - an unresolved const stays non-literal, i.e. fail-closed.
+var constRe = regexp.MustCompile(`(?m)^\s*const\s+([A-Za-z_]\w*)\s*=\s*("(?:[^"\\]|\\.)*")`)
+
+// packageStringConsts maps this package's single-line string consts to their
+// value, so an exact-tier argv built from such a const (e.g. hostapd.go's wlan0
+// SoftAP CIDR) is still statically verifiable against the sudoers file.
+func packageStringConsts(t *testing.T) map[string]string {
+	t.Helper()
+	consts := map[string]string{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		for _, m := range constRe.FindAllStringSubmatch(string(data), -1) {
+			if v, err := strconv.Unquote(m[2]); err == nil {
+				consts[m[1]] = v
+			}
+		}
+	}
+	return consts
+}
+
 func scanInvocations(t *testing.T) []invocation {
 	t.Helper()
+	consts := packageStringConsts(t)
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read package dir: %v", err)
@@ -128,7 +162,7 @@ func scanInvocations(t *testing.T) []invocation {
 			if strings.TrimSpace(argSrc) == "" {
 				continue // zero-arg .Run() is exec.Cmd's own method, never a Commander call
 			}
-			inv := parseArgs(argSrc)
+			inv := parseArgs(argSrc, consts)
 			if inv.name == "" {
 				t.Errorf("%s:%d: .Run call with a non-literal command name - the sudoers cross-check cannot verify it", e.Name(), 1+strings.Count(src[:m[0]], "\n"))
 				continue
@@ -148,13 +182,20 @@ func scanInvocations(t *testing.T) []invocation {
 // A comma-split is sufficient: none of the fixed privileged argvs carry a comma
 // inside a string literal, and a non-literal expression containing one merely
 // splits into two non-literal tokens (still correctly flagged non-literal).
-func parseArgs(src string) invocation {
+func parseArgs(src string, consts map[string]string) invocation {
 	var inv invocation
 	inv.allLiteral = true
 	for i, tok := range strings.Split(src, ",") {
 		tok = strings.TrimSpace(tok)
 		lit, err := strconv.Unquote(tok)
 		isLiteral := err == nil && strings.HasPrefix(tok, `"`)
+		// A same-package `const NAME = "literal"` is as statically verifiable as the
+		// literal itself: resolve it so an exact-tier argv naming one still matches.
+		if !isLiteral {
+			if v, ok := consts[tok]; ok {
+				lit, isLiteral = v, true
+			}
+		}
 		switch {
 		case i == 0:
 			if !isLiteral {
