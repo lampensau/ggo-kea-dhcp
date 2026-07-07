@@ -317,3 +317,40 @@ func TestMonitorManager_RejectsWlan0Spec(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitor_ResetTickBaselineNoBlindGapAfterRestart is the #120 regression guard:
+// after a capture faults while blind, the fault-plus-backoff gap (no ticks, up to
+// maxBackoff) must NOT be billed as blind time on the first tick of the restarted
+// capture. serveOnce clears the per-capture tick baseline, so frameClockOffset does
+// not jump by the dead interval and frameNow is not spuriously rewound.
+func TestMonitor_ResetTickBaselineNoBlindGapAfterRestart(t *testing.T) {
+	clk := newFakeClock(base)
+	fs := NewFakeSniffer()
+	m := &Monitor{
+		spec:      Spec{Iface: "eth0"},
+		store:     NewSnapshotStore(),
+		clock:     clk.Now,
+		detectors: []*detectorSlot{},
+	}
+
+	// Healthy tick, then a blind tick: arms prevBlind/haveTick with no offset yet.
+	m.onTick(fs, true)
+	fs.SetStats(10, 10)
+	clk.Advance(time.Second)
+	m.onTick(fs, true)
+	if m.frameClockOffset != 0 {
+		t.Fatalf("offset after arming blind tick = %v, want 0", m.frameClockOffset)
+	}
+
+	// The capture faults and the restart loop backs off - no ticks for the whole gap.
+	clk.Advance(maxBackoff)
+
+	// serveOnce clears the baseline for the restarted (healthy) capture; the first
+	// tick must not accumulate the dead gap.
+	m.resetTickBaseline()
+	fs.SetStats(0, 0)
+	m.onTick(fs, true)
+	if m.frameClockOffset != 0 {
+		t.Fatalf("first tick after restart billed the dead gap as blind time: offset = %v, want 0", m.frameClockOffset)
+	}
+}
