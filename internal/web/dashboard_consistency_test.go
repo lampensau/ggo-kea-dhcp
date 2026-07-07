@@ -19,7 +19,7 @@ func TestPinningFiltersExpiredLease(t *testing.T) {
 	now := time.Now().Unix()
 	expired := kea.ActiveLease{ClientID: "0061622f6364", HWAddress: "aa:bb", IPAddress: "10.0.0.50", SubnetID: 1, Cltt: now - 10000, ValidLft: 100} // cltt+lft in the past
 	fresh := kea.ActiveLease{ClientID: "0078", HWAddress: "cc:dd", IPAddress: "10.0.0.51", SubnetID: 1}                                             // no timing -> active
-	rows := mergePortRows(nil, nil, activeLeases([]kea.ActiveLease{expired, fresh}), nil, now)
+	rows := mergePortRows(nil, nil, activeLeases([]kea.ActiveLease{expired, fresh}), nil, now, nil)
 	ips := map[string]bool{}
 	for _, r := range rows {
 		ips[r.IPAddress] = true

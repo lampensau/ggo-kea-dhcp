@@ -88,7 +88,7 @@ func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 
 	// Only live leases: an expired/reclaimed lease (state != 0 or past its lifetime)
 	// must not linger as a learnable port after its device is gone.
-	all := mergePortRows(labels, pinned, activeLeases(leases), s.lastSeenSnapshot(), time.Now().Unix())
+	all := mergePortRows(labels, pinned, activeLeases(leases), s.lastSeenSnapshot(), time.Now().Unix(), s.ggoNamesByMAC())
 	var pinnedRows, learnable []views.PortRow
 	for _, p := range all {
 		if p.Pinned {
@@ -176,8 +176,10 @@ func (s *Server) fetchPinnedPorts(ctx context.Context) (map[string]db.HostReserv
 // sorted per-port view rows shown on the pinning page. Pinned ports seed the set;
 // active leases fill in the live MAC/hostname or add unpinned Option-82 ports.
 // lastSeen (identity -> epoch) and now drive the "last active" column and the stale
-// flag on a pinned-but-offline port. Pure over its inputs, so it is unit-testable.
-func mergePortRows(labels map[string]string, pinned map[string]db.HostReservation, leases []kea.ActiveLease, lastSeen map[string]int64, now int64) []views.PortRow {
+// flag on a pinned-but-offline port. ggoNames (scanned Green-GO name by normalized
+// MAC) fills the hostname of a port whose device announces none, so pinning matches
+// the Leases page and DNS. Pure over its inputs, so it is unit-testable.
+func mergePortRows(labels map[string]string, pinned map[string]db.HostReservation, leases []kea.ActiveLease, lastSeen map[string]int64, now int64, ggoNames map[string]string) []views.PortRow {
 	portRows := make(map[string]views.PortRow)
 	cltt := make(map[string]int64) // flex-id key -> lease cltt, for the same-MAC dedup below
 	delim := make(map[string]bool) // flex-id key -> new-format (delimited) flex-id
@@ -290,6 +292,21 @@ func mergePortRows(labels map[string]string, pinned map[string]db.HostReservatio
 			row.Stale = row.HWAddress == "-" && now-ts > portStaleAfter
 		}
 		ports = append(ports, row)
+	}
+	// Fill the hostname of any port whose device announces none (Green-GO hardware)
+	// with its scanned name, keyed by live MAC - the same overlay overlayGgoNamesWith
+	// applies to the Leases page. Runs BEFORE the sanitize funnel so scan-filled names
+	// are slugged/deduped alongside announced ones. A pinned-offline port has no live
+	// MAC ("-"), so it stays nameless here (its operator Label identifies it), matching
+	// Leases where an absent device has no row at all.
+	if ggoNames != nil {
+		for i := range ports {
+			if ports[i].Hostname == "" {
+				if n := ggoNames[normalizeMAC(ports[i].HWAddress)]; n != "" {
+					ports[i].Hostname = n
+				}
+			}
+		}
 	}
 	sanitizePortHostnames(ports)
 	sort.Slice(ports, func(i, j int) bool {

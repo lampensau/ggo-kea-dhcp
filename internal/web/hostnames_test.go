@@ -156,7 +156,7 @@ func TestMergePortRowsSanitizesHostnames(t *testing.T) {
 		{ClientID: "007031", HWAddress: "00:1f:80:aa:00:01", IPAddress: "10.0.0.21", Hostname: "BPX 19666"},
 		{ClientID: "007032", HWAddress: "00:1f:80:bb:00:02", IPAddress: "10.0.0.22", Hostname: "BPX 19666"},
 	}
-	rows := mergePortRows(nil, nil, leases, nil, 0)
+	rows := mergePortRows(nil, nil, leases, nil, 0, nil)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
