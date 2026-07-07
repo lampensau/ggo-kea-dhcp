@@ -97,6 +97,7 @@ func (h *backendHealth) observeMariaDB(ok bool, detail string) (changed, healthy
 func (h *backendHealth) alertRows() []views.AlertRow {
 	h.mu.Lock()
 	keaOK, mariaOK := h.kea.healthy, h.mariadb.healthy
+	mariaDetail := h.mariadb.detail
 	upDown, upDetail := h.uplinkDown, h.uplinkDetail
 	h.mu.Unlock()
 
@@ -109,10 +110,17 @@ func (h *backendHealth) alertRows() []views.AlertRow {
 		})
 	}
 	if !mariaOK {
+		detail := "Dynamic leases continue to serve; host reservations and port pinning are unavailable until MariaDB returns."
+		// Surface the captured ping reason so an auth failure (wrong password in
+		// mariadb.env, which never self-clears) is distinguishable from a host-down
+		// outage - mirroring the uplink row, which already shows its nmcli reason.
+		if mariaDetail != "" {
+			detail += " Reason: " + mariaDetail
+		}
 		rows = append(rows, views.AlertRow{
 			Severity: "warn",
 			Title:    "Reservation Database Offline",
-			Detail:   "Dynamic leases continue to serve; host reservations and port pinning are unavailable until MariaDB returns.",
+			Detail:   detail,
 		})
 	}
 	if upDown {
