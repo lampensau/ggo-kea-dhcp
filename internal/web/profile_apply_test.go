@@ -48,7 +48,7 @@ func TestPersistProfileStashesSameName(t *testing.T) {
 	}
 	prevID, _ := res.LastInsertId()
 	if _, err := s.sqlite.Exec(
-		"INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset) VALUES (?, 'physical', 0, '10.0.0.0/24', 'greengo')",
+		"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?, 0, '10.0.0.0/24', 'greengo')",
 		prevID); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}

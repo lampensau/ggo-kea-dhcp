@@ -75,8 +75,8 @@ func seedSamplerTrunk(tb testing.TB, s *Server) []kea.ActiveLease {
 	for i, preset := range []string{"greengo", "dante", "greengo", "sacn", "greengo"} {
 		cidr := fmt.Sprintf("10.0.%d.0/24", i)
 		if _, err := s.sqlite.Exec(
-			`INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json)
-			 VALUES (?, 'physical', ?, ?, ?, '{}', '{}')`, pid, i*10, cidr, preset); err != nil {
+			`INSERT INTO scopes (profile_id, vlan_id, cidr, preset, pool_spec, uplink_json)
+			 VALUES (?, ?, ?, ?, '{}', '{}')`, pid, i*10, cidr, preset); err != nil {
 			tb.Fatalf("insert scope %d: %v", i, err)
 		}
 	}

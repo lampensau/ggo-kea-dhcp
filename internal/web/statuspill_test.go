@@ -113,8 +113,8 @@ func TestListProfiles(t *testing.T) {
 	p1, _ := r1.LastInsertId()
 	for i := 0; i < 2; i++ {
 		if _, err := s.sqlite.Exec(
-			"INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset) VALUES (?,?,?,?,?)",
-			p1, "physical", 0, "10.0.0.0/24", "greengo"); err != nil {
+			"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?,?,?,?)",
+			p1, 0, "10.0.0.0/24", "greengo"); err != nil {
 			t.Fatalf("seed scope: %v", err)
 		}
 	}
@@ -122,8 +122,8 @@ func TestListProfiles(t *testing.T) {
 	r2, _ := s.sqlite.Exec("INSERT INTO profiles (name, active) VALUES ('Live', 1)")
 	p2, _ := r2.LastInsertId()
 	if _, err := s.sqlite.Exec(
-		"INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset) VALUES (?,?,?,?,?)",
-		p2, "physical", 0, "10.0.1.0/24", "greengo"); err != nil {
+		"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?,?,?,?)",
+		p2, 0, "10.0.1.0/24", "greengo"); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
 	// A rollback stash: must be excluded from the switcher.

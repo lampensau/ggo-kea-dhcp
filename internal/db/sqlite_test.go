@@ -143,7 +143,7 @@ func TestForeignKeysCascadeAcrossPool(t *testing.T) {
 	}
 	pid, _ := res.LastInsertId()
 	if _, err := sdb.Exec(
-		"INSERT INTO scopes (profile_id, iface_mode, cidr) VALUES (?, 'physical', '10.0.0.0/24')", pid); err != nil {
+		"INSERT INTO scopes (profile_id, cidr) VALUES (?, '10.0.0.0/24')", pid); err != nil {
 		t.Fatalf("insert scope: %v", err)
 	}
 

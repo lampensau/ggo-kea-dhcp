@@ -19,8 +19,8 @@ func seedActiveProfile(t *testing.T, s *Server) int {
 	}
 	pid, _ := res.LastInsertId()
 	sr, err := s.sqlite.Exec(
-		`INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json)
-		 VALUES (?, 'physical', 0, '10.0.0.0/24', 'greengo', '{}', '{}')`, pid)
+		`INSERT INTO scopes (profile_id, vlan_id, cidr, preset, pool_spec, uplink_json)
+		 VALUES (?, 0, '10.0.0.0/24', 'greengo', '{}', '{}')`, pid)
 	if err != nil {
 		t.Fatalf("insert scope: %v", err)
 	}
