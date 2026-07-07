@@ -1039,18 +1039,6 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 // Pure, so the routing rules are unit-testable without spinning up a server.
 func stateRedirectFor(state, path string) string {
 	switch state {
-	case db.StateOnboarding:
-		switch path {
-		case "/setup", "/setup/apply", "/setup/pools/edit", "/settings", "/settings/save", "/settings/backup", "/settings/restore", "/logout", "/wifi/scan", "/sse/live":
-			// /sse/live is opened by the shell on every authenticated page (it keeps
-			// the wizard's link-status badge live). Without it whitelisted here, the
-			// middleware 302s the stream to /setup; Datastar follows the redirect,
-			// receives the full /setup page (whose #scopes-container is empty), and
-			// morphs it in - wiping the scope card the wizard JS just added.
-			return ""
-		default:
-			return "/setup"
-		}
 	case db.StateConfiguring:
 		// An apply is in flight: keep the operator on the dashboard (and stop a
 		// second apply from starting). The reconnect interstitial's /dashboard
@@ -1066,6 +1054,28 @@ func stateRedirectFor(state, path string) string {
 		// only for the pre-auth FACTORY window, so they must not be reachable here.
 		if strings.HasPrefix(path, "/factory") {
 			return "/dashboard"
+		}
+	case db.StateFactory:
+		// FACTORY is fully gated by lifecycleMiddleware's earlier branch, so this is
+		// never reached in production; keep it permissive so this router never
+		// second-guesses that gate. Only genuinely unrecognized states fail closed.
+		return ""
+	default:
+		// ONBOARDING and, as a fail-closed catch, any unrecognized/corrupt state
+		// string (a hand-edited or older/newer bundle, or an empty one). Without a
+		// default an unknown state returned "" (serve every route) while the
+		// reconciler tore the box down to onboarding; routing it like onboarding
+		// keeps the two in step.
+		switch path {
+		case "/setup", "/setup/apply", "/setup/pools/edit", "/settings", "/settings/save", "/settings/backup", "/settings/restore", "/logout", "/wifi/scan", "/sse/live":
+			// /sse/live is opened by the shell on every authenticated page (it keeps
+			// the wizard's link-status badge live). Without it whitelisted here, the
+			// middleware 302s the stream to /setup; Datastar follows the redirect,
+			// receives the full /setup page (whose #scopes-container is empty), and
+			// morphs it in - wiping the scope card the wizard JS just added.
+			return ""
+		default:
+			return "/setup"
 		}
 	}
 	return ""
