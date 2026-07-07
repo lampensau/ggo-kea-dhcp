@@ -41,7 +41,7 @@ func TestStopSoftAPRemovesAddress(t *testing.T) {
 	if err := m.StopSoftAP(); err != nil {
 		t.Fatalf("StopSoftAP: %v", err)
 	}
-	if !callContaining(rec, "ip", "addr", "del", softAPWlanCIDR, "dev", "wlan0") {
+	if !rec.Mentions("ip", "addr", "del", softAPWlanCIDR, "dev", "wlan0") {
 		t.Errorf("StopSoftAP must remove %s from wlan0; calls=%v", softAPWlanCIDR, rec.Calls)
 	}
 }
@@ -57,7 +57,7 @@ func TestStartSoftAPFlushesStaleAddr(t *testing.T) {
 	if err := m.StartSoftAP("GGO-Onboarding", "password1"); err != nil {
 		t.Fatalf("StartSoftAP: %v", err)
 	}
-	if !callContaining(rec, "ip", "-4", "addr", "flush", "dev", "wlan0") {
+	if !rec.Mentions("ip", "-4", "addr", "flush", "dev", "wlan0") {
 		t.Errorf("StartSoftAP must flush wlan0 before assigning the SoftAP IP; calls=%v", rec.Calls)
 	}
 }

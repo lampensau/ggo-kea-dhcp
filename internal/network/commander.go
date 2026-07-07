@@ -146,3 +146,23 @@ func (r *RecordingCommander) Ran(name string) bool {
 	}
 	return false
 }
+
+// Mentions reports whether any recorded call contains all of subs as substrings
+// (matched against the space-joined argv). Where Ran matches a command name,
+// Mentions finds an argument - or a set of them - anywhere in a call.
+func (r *RecordingCommander) Mentions(subs ...string) bool {
+	for _, call := range r.Calls {
+		joined := strings.Join(call, " ")
+		all := true
+		for _, s := range subs {
+			if !strings.Contains(joined, s) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}

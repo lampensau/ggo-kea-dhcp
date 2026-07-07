@@ -19,7 +19,9 @@ import (
 // Kea with an httptest control endpoint (returning result:0) and the network layer
 // with the RecordingCommander, so nothing touches the host or a real Kea. The monitor
 // starts (netmon/arp/ggoscan) are nil in a bare test server and each nil-guards, and
-// remap/rebalance nil-guard the absent MariaDB, so the pass runs clean.
+// remap/rebalance nil-guard the absent MariaDB, so the pass runs clean. It asserts each
+// of the three effects happened (conf written, reload sent, interface set), not their
+// ordering.
 func TestReconcileActiveHappyPath(t *testing.T) {
 	s, rec := newTestServer(t)
 
@@ -75,20 +77,7 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 
 	// 3) the served interface was configured with the scope gateway (.1). The manager
 	// runs this through the commander, so the recorded calls must mention 10.0.0.1/24.
-	if !callsMention(rec.Calls, "10.0.0.1/24") {
+	if !rec.Mentions("10.0.0.1/24") {
 		t.Errorf("expected the served interface to be set to 10.0.0.1/24; calls=%v", rec.Calls)
 	}
-}
-
-// callsMention reports whether any recorded commander invocation contains want in
-// one of its argument tokens.
-func callsMention(calls [][]string, want string) bool {
-	for _, c := range calls {
-		for _, tok := range c {
-			if strings.Contains(tok, want) {
-				return true
-			}
-		}
-	}
-	return false
 }

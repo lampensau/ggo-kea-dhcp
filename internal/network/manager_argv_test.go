@@ -13,7 +13,7 @@ func TestRestartService(t *testing.T) {
 	if err := m.RestartService("isc-kea-dhcp4-server"); err != nil {
 		t.Fatalf("RestartService: %v", err)
 	}
-	if !callContaining(rec, "systemctl", "restart", "isc-kea-dhcp4-server") {
+	if !rec.Mentions("systemctl", "restart", "isc-kea-dhcp4-server") {
 		t.Errorf("calls=%v", rec.Calls)
 	}
 	// Any other unit is refused before reaching sudo (whose exact-argument rule
@@ -21,7 +21,7 @@ func TestRestartService(t *testing.T) {
 	if err := m.RestartService("caddy"); err == nil {
 		t.Error("RestartService(caddy) must be refused")
 	}
-	if callContaining(rec, "systemctl", "restart", "caddy") {
+	if rec.Mentions("systemctl", "restart", "caddy") {
 		t.Errorf("refused unit still reached the Commander: %v", rec.Calls)
 	}
 }
@@ -36,7 +36,7 @@ func TestSetInterfaceManaged(t *testing.T) {
 		if err := m.SetInterfaceManaged("wlan0", c.managed); err != nil {
 			t.Fatalf("SetInterfaceManaged(%v): %v", c.managed, err)
 		}
-		if !callContaining(rec, "nmcli", "device", "set", "wlan0", "managed", c.want) {
+		if !rec.Mentions("nmcli", "device", "set", "wlan0", "managed", c.want) {
 			t.Errorf("managed=%v: want %q, calls=%v", c.managed, c.want, rec.Calls)
 		}
 	}
@@ -61,16 +61,16 @@ func TestDeleteApplianceConnections(t *testing.T) {
 		t.Fatalf("DeleteApplianceConnections: %v", err)
 	}
 	for _, name := range []string{"ggo-eth0", "ggo-eth0.20", "ggo-space in name"} {
-		if !callContaining(rec, "connection", "delete", name) {
+		if !rec.Mentions("connection", "delete", name) {
 			t.Errorf("expected delete of %q (full name), calls=%v", name, rec.Calls)
 		}
 	}
-	if callContaining(rec, "connection", "delete", "Wired") {
+	if rec.Mentions("connection", "delete", "Wired") {
 		t.Errorf("foreign connection must not be deleted, calls=%v", rec.Calls)
 	}
 	// The teardown must enumerate all connections, not just active ones, or inactive
 	// ggo-* connections survive and later autoconnect with stale addressing.
-	if callContaining(rec, "connection", "show", "--active") {
+	if rec.Mentions("connection", "show", "--active") {
 		t.Errorf("teardown must list all connections, not --active only; calls=%v", rec.Calls)
 	}
 }
@@ -107,7 +107,7 @@ func TestServiceLogTailArgvMatchesSudoers(t *testing.T) {
 		t.Fatalf("ServiceLogTail: %v", err)
 	}
 	want := "journalctl -u ggo-kea-dhcp -n 200 --no-pager"
-	if !callContaining(rec, "journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager") {
+	if !rec.Mentions("journalctl", "-u", "ggo-kea-dhcp", "-n", "200", "--no-pager") {
 		t.Errorf("argv drifted from the sudoers rule %q; calls=%v", want, rec.Calls)
 	}
 	sudoers, err := os.ReadFile(filepath.Join("..", "..", "packaging", "sudoers", "ggo-kea-dhcp"))

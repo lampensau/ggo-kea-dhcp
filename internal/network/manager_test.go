@@ -1,27 +1,8 @@
 package network
 
 import (
-	"strings"
 	"testing"
 )
-
-// callContaining reports whether any recorded call contains all the given tokens.
-func callContaining(rec *RecordingCommander, tokens ...string) bool {
-	for _, call := range rec.Calls {
-		joined := strings.Join(call, " ")
-		all := true
-		for _, tok := range tokens {
-			if !strings.Contains(joined, tok) {
-				all = false
-				break
-			}
-		}
-		if all {
-			return true
-		}
-	}
-	return false
-}
 
 func TestRebootAndPowerOffIssueSystemctl(t *testing.T) {
 	rec := &RecordingCommander{}
@@ -32,10 +13,10 @@ func TestRebootAndPowerOffIssueSystemctl(t *testing.T) {
 	if err := m.PowerOff(); err != nil {
 		t.Fatalf("PowerOff: %v", err)
 	}
-	if !callContaining(rec, "systemctl", "reboot") {
+	if !rec.Mentions("systemctl", "reboot") {
 		t.Errorf("expected systemctl reboot; calls=%v", rec.Calls)
 	}
-	if !callContaining(rec, "systemctl", "poweroff") {
+	if !rec.Mentions("systemctl", "poweroff") {
 		t.Errorf("expected systemctl poweroff; calls=%v", rec.Calls)
 	}
 }
@@ -46,10 +27,10 @@ func TestSetInterfaceStaticIssuesNmcli(t *testing.T) {
 	if err := m.SetInterfaceStatic("eth0", "10.0.0.1/24"); err != nil {
 		t.Fatalf("SetInterfaceStatic: %v", err)
 	}
-	if !callContaining(rec, "nmcli", "connection", "add", "ip4", "10.0.0.1/24") {
+	if !rec.Mentions("nmcli", "connection", "add", "ip4", "10.0.0.1/24") {
 		t.Errorf("expected an nmcli connection add with the ip4; calls=%v", rec.Calls)
 	}
-	if !callContaining(rec, "nmcli", "connection", "up", "ggo-eth0") {
+	if !rec.Mentions("nmcli", "connection", "up", "ggo-eth0") {
 		t.Errorf("expected an nmcli connection up ggo-eth0; calls=%v", rec.Calls)
 	}
 }
@@ -60,10 +41,10 @@ func TestSetVlanStaticIssuesNmcliVlan(t *testing.T) {
 	if err := m.SetVlanStatic("eth0", 20, "10.20.0.1/24"); err != nil {
 		t.Fatalf("SetVlanStatic: %v", err)
 	}
-	if !callContaining(rec, "nmcli", "connection", "add", "type", "vlan", "id", "20") {
+	if !rec.Mentions("nmcli", "connection", "add", "type", "vlan", "id", "20") {
 		t.Errorf("expected an nmcli vlan add with id 20; calls=%v", rec.Calls)
 	}
-	if !callContaining(rec, "ggo-eth0.20") {
+	if !rec.Mentions("ggo-eth0.20") {
 		t.Errorf("expected the ggo-eth0.20 connection name; calls=%v", rec.Calls)
 	}
 }
@@ -74,10 +55,10 @@ func TestApplyMasqueradeEnabledAddsRule(t *testing.T) {
 	if err := m.ApplyMasquerade("wlan0", true); err != nil {
 		t.Fatalf("ApplyMasquerade: %v", err)
 	}
-	if !callContaining(rec, "nft", "flush", "chain", "ggo_nat", "postrouting") {
+	if !rec.Mentions("nft", "flush", "chain", "ggo_nat", "postrouting") {
 		t.Errorf("expected a flush before adding the rule; calls=%v", rec.Calls)
 	}
-	if !callContaining(rec, "nft", "add", "rule", "oifname", "wlan0", "masquerade") {
+	if !rec.Mentions("nft", "add", "rule", "oifname", "wlan0", "masquerade") {
 		t.Errorf("expected a masquerade rule on wlan0; calls=%v", rec.Calls)
 	}
 }
@@ -88,10 +69,10 @@ func TestApplyMasqueradeDisabledFlushesOnly(t *testing.T) {
 	if err := m.ApplyMasquerade("wlan0", false); err != nil {
 		t.Fatalf("ApplyMasquerade(false): %v", err)
 	}
-	if !callContaining(rec, "nft", "flush", "chain", "ggo_nat", "postrouting") {
+	if !rec.Mentions("nft", "flush", "chain", "ggo_nat", "postrouting") {
 		t.Errorf("expected a flush; calls=%v", rec.Calls)
 	}
-	if callContaining(rec, "masquerade") {
+	if rec.Mentions("masquerade") {
 		t.Errorf("disabled masquerade must not add a masquerade rule; calls=%v", rec.Calls)
 	}
 }
