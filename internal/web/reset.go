@@ -178,7 +178,7 @@ func (s *Server) factoryWipeDB() error {
 		"DELETE FROM config_snapshots",
 		"DELETE FROM sessions",
 		"DELETE FROM users",
-		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','uplink_enabled','uplink_ssid','uplink_pass','dhcp_standdown')",
+		"DELETE FROM app_state WHERE key IN ('onboarding_ip','softap_ssid','softap_pass','uplink_dns','global_dhcp_options','lease_lifetime','uplink_enabled','uplink_ssid','uplink_pass','dhcp_standdown')",
 		// The self-update record (badge/card state) must not survive a factory reset.
 		`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`,
 	} {

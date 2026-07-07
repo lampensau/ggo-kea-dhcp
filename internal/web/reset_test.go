@@ -105,6 +105,7 @@ func TestFactoryWipeDB(t *testing.T) {
 	_, _ = s.sqlite.Exec("INSERT INTO port_labels (flex_id_hex, label) VALUES ('00aa', 'Camera 1')")
 	_, _ = s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', 'x')")
 	_ = s.sqlite.SetStates(map[string]string{"uplink_ssid": "VenueWiFi", "uplink_pass": "secret123", "uplink_enabled": "1"})
+	_ = s.sqlite.SetState("lease_lifetime", "7200")
 	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
 
@@ -117,6 +118,11 @@ func TestFactoryWipeDB(t *testing.T) {
 	}
 	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "" {
 		t.Errorf("factory reset must clear the WiFi uplink, got ssid %q", v)
+	}
+	// #133: lease_lifetime is a box-level DHCP default and must not survive a factory
+	// reset (it did until this fix - the wipe set matches the backup whitelist now).
+	if v, _ := s.sqlite.GetState("lease_lifetime"); v != "" {
+		t.Errorf("factory reset must clear lease_lifetime, got %q", v)
 	}
 	if s.dhcpStoodDown() {
 		t.Error("factory reset must clear the DHCP stand-down flag")
