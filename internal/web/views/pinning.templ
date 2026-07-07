@@ -271,7 +271,7 @@ templ PinnedBody(pinned []PortRow, csrf string) {
 				<td>@labelForm(p, csrf)</td>
 				<td class="mono">{ p.IPAddress }</td>
 				<td class="mono col-mac">{ orDash(p.HWAddress) }</td>
-				<td>{ orDash(p.Hostname) }</td>
+				<td>@hostCell(p.Hostname, p.HostnameDerived)</td>
 				<td class="col-actions">@unpinButton(p)</td>
 			</tr>
 		}
@@ -302,7 +302,7 @@ templ LearnableBody(learnable []PortRow, csrf string) {
 				@portIDCell("portHexLearnable", p.CircuitID, p.CircuitIDHex)
 				<td class="mono">{ p.IPAddress }</td>
 				<td class="mono">{ orDash(p.HWAddress) }</td>
-				<td>{ orDash(p.Hostname) }</td>
+				<td>@hostCell(p.Hostname, p.HostnameDerived)</td>
 				<td data-sort-value={ itoa64(p.LastSeen) }>{ orDash(p.LastSeenText) }</td>
 				<td class="col-actions">@pinButton(p)</td>
 			</tr>

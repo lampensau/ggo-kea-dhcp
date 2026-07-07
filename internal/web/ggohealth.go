@@ -200,6 +200,7 @@ func (s *Server) overlayGgoNamesWith(rows []views.LeaseRow, names map[string]str
 		if rows[i].Hostname == "" {
 			if n := names[normalizeMAC(rows[i].HWAddress)]; n != "" {
 				rows[i].Hostname = n
+				rows[i].HostnameDerived = true // filled from the scan, not device-reported
 			}
 		}
 	}

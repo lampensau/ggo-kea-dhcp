@@ -6,6 +6,7 @@ import (
 
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
+	"ggo-kea-dhcp/internal/web/views"
 )
 
 // TestFlexIDRoundTrip locks in the port-pinning identifier encoding. The decisive
@@ -305,13 +306,43 @@ func TestMergePortRowsOverlaysGgoName(t *testing.T) {
 	rows := mergePortRows(nil, nil, append(ggo, named...), nil, 0, ggoNames)
 
 	got := map[string]string{}
+	derived := map[string]bool{}
 	for _, r := range rows {
 		got[r.IPAddress] = r.Hostname
+		derived[r.IPAddress] = r.HostnameDerived
 	}
 	if got["10.0.0.22"] != "bpx-19678" {
 		t.Errorf("Green-GO port hostname = %q, want scan name %q", got["10.0.0.22"], "bpx-19678")
 	}
 	if got["10.0.0.187"] != "workstation-6fe6" {
 		t.Errorf("announced hostname was overwritten: got %q, want %q", got["10.0.0.187"], "workstation-6fe6")
+	}
+	// #117: the scan-filled name is flagged derived; the device-announced one is not.
+	if !derived["10.0.0.22"] {
+		t.Error("scan-filled port hostname should be marked HostnameDerived")
+	}
+	if derived["10.0.0.187"] {
+		t.Error("device-announced hostname must not be marked HostnameDerived")
+	}
+}
+
+// TestOverlayGgoNamesWithMarksDerived is the leases-side #117 guard: overlayGgoNamesWith
+// flags a row it fills from the scan as derived, and leaves an announced-name row alone.
+func TestOverlayGgoNamesWithMarksDerived(t *testing.T) {
+	const mac = "00:1f:80:20:4e:5e"
+	s := &Server{}
+	rows := []views.LeaseRow{
+		{IPAddress: "10.0.0.22", HWAddress: mac},                                                // Green-GO: no announced name
+		{IPAddress: "10.0.0.187", HWAddress: "c8:ff:bf:0e:6f:e6", Hostname: "workstation-6fe6"}, // announced
+	}
+	s.overlayGgoNamesWith(rows, map[string]string{
+		normalizeMAC(mac):                 "bpx-19678",
+		normalizeMAC("c8:ff:bf:0e:6f:e6"): "should-not-win",
+	})
+	if rows[0].Hostname != "bpx-19678" || !rows[0].HostnameDerived {
+		t.Errorf("scan-filled lease row = %q derived=%v, want bpx-19678 derived=true", rows[0].Hostname, rows[0].HostnameDerived)
+	}
+	if rows[1].Hostname != "workstation-6fe6" || rows[1].HostnameDerived {
+		t.Errorf("announced lease row = %q derived=%v, want workstation-6fe6 derived=false", rows[1].Hostname, rows[1].HostnameDerived)
 	}
 }
