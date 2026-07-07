@@ -446,9 +446,10 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 			// The request carried no additional records (a cheap proxy for "no
 			// EDNS0", see arCount), so the client is bound to 512 bytes; relaying
 			// a large upstream answer verbatim would make the box an amplifier.
-			// Truncate to the question with TC set - the same UDP-only stance as
-			// our own answers. The global forward ceiling is the real defense;
-			// this just avoids reflecting an oversized reply to a classic client.
+			// Truncate to the question with TC set, matching the UDP path for our
+			// own answers; a client that needs the full answer retries over TCP.
+			// The global forward ceiling is the real defense; this just avoids
+			// reflecting an oversized reply to a classic UDP client.
 			resp = respond(req, q, rcodeNoError, false)
 			resp[2] |= 0x02 // TC
 		}
@@ -548,7 +549,7 @@ func (l *listener) handleTCPConn(conn *net.TCPConn) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().(*net.TCPAddr).IP.String()
 	for {
-		_ = conn.SetDeadline(time.Now().Add(tcpIdleTimeout)) // read + the following write
+		_ = conn.SetReadDeadline(time.Now().Add(tcpIdleTimeout)) // idle between queries
 		req, ok := readTCPMessage(conn)
 		if !ok {
 			return // EOF, idle deadline, or a malformed frame
@@ -567,6 +568,10 @@ func (l *listener) handleTCPConn(conn *net.TCPConn) {
 		if resp == nil {
 			return // dropped query (e.g. a response sent to us): nothing to say
 		}
+		// Re-arm the deadline for the write: forwardTCP can burn seconds on a slow
+		// or dead upstream, and a fetched answer must not fail the write because the
+		// read deadline already lapsed.
+		_ = conn.SetWriteDeadline(time.Now().Add(tcpIdleTimeout))
 		if !writeTCPMessage(conn, resp) {
 			return
 		}
