@@ -1,6 +1,9 @@
 package web
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidVLANID(t *testing.T) {
 	cases := []struct {
@@ -33,8 +36,12 @@ func TestValidateUplink(t *testing.T) {
 		{"empty ssid", "", "supersecret", false},
 		{"ssid too long", "this-ssid-is-way-too-long-to-be-valid-x", "secret12", false},
 		{"ssid control char", "bad\nssid", "secret12", false},
-		{"password too short", "AP", "short", false},
-		{"password too long", "AP", string(make([]byte, 64)), false},
+		// Length bounds isolated to the count (all printable, no control chars) so a
+		// case named for the length rule can only fail on that rule.
+		{"password below min (7)", "AP", strings.Repeat("a", 7), false},
+		{"password at min boundary (8)", "AP", strings.Repeat("a", 8), true},
+		{"password at max boundary (63)", "AP", strings.Repeat("a", 63), true},
+		{"password above max (64)", "AP", strings.Repeat("a", 64), false},
 		{"password control char", "AP", "secret\x00pass", false},
 	}
 	for _, c := range cases {
@@ -79,8 +86,12 @@ func TestValidateSoftAPSave(t *testing.T) {
 		{"empty ssid and pass", "", "", true},
 		{"ssid too long", "this-ssid-is-definitely-over-32-chars", "secret12", false},
 		{"ssid control char", "bad\nssid", "", false},
-		{"password too short", "AP", "short", false},
-		{"password too long", "AP", string(make([]byte, 64)), false},
+		// Length bounds isolated to the count (all printable, no control chars) so a
+		// case named for the length rule can only fail on that rule.
+		{"password below min (7)", "AP", strings.Repeat("a", 7), false},
+		{"password at min boundary (8)", "AP", strings.Repeat("a", 8), true},
+		{"password at max boundary (63)", "AP", strings.Repeat("a", 63), true},
+		{"password above max (64)", "AP", strings.Repeat("a", 64), false},
 		{"password control char", "AP", "secret\x00pass", false},
 	}
 	for _, c := range cases {
