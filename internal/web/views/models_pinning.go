@@ -27,9 +27,13 @@ type PortRow struct {
 	// rewrote Hostname; the pin dialog prefills from it so an ephemeral "-0001"
 	// display tag is never stored permanently.
 	RawHostname string
-	SubnetID    int
-	Label       string
-	Pinned      bool
+	// HostnameDerived is true when the appliance filled Hostname from the Green-GO
+	// device scan (the device announced none), so the UI can mark it as inferred
+	// rather than device-reported. Set at the ggoscan overlay in mergePortRows.
+	HostnameDerived bool
+	SubnetID        int
+	Label           string
+	Pinned          bool
 	// LastSeen is the epoch (0 = never observed) the port was last active; LastSeenText
 	// is its coarse "3d ago" rendering and Stale flags a long-gone pinned port.
 	LastSeen     int64

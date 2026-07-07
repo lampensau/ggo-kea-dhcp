@@ -5,6 +5,19 @@ package views
 // debounced Datastar @get that re-merges #leases-body; the live channel pushes the
 // same region as leases come and go. LeasesBody is the shared partial (first paint
 // + fragment). "Reserve a Client IP" opens the ReserveDialog for a manual entry.
+// hostCell renders a hostname table cell. A name the appliance derived from the
+// Green-GO device scan (the device reports none over DHCP) is shown in italics with
+// a muted asterisk carrying an explanatory tooltip, so an operator can tell it from a
+// device-reported name. The marker follows the row-marker a11y pattern (title +
+// role=img + aria-label), so the distinction is not colour/glyph alone.
+templ hostCell(name string, derived bool) {
+	if derived {
+		<span class="host-derived" title="Name assigned from the Green-GO device scan; not reported by the device itself.">{ orDash(name) }<sup class="host-derived-mark" role="img" aria-label="appliance-derived name from the Green-GO scan; not reported by the device">*</sup></span>
+	} else {
+		{ orDash(name) }
+	}
+}
+
 templ Leases(v LeasesView) {
 	@Base(v.Page) {
 		@PageHead("Leases", "Active DHCP leases and client reservations - search by IP, MAC, hostname, or class.") {
@@ -103,7 +116,7 @@ templ LeasesBody(rows []LeaseRow, canReserve bool) {
 						}
 					</td>
 					<td class="mono">{ l.HWAddress }</td>
-					<td>{ orDash(l.Hostname) }</td>
+					<td>@hostCell(l.Hostname, l.HostnameDerived)</td>
 					<td><span class="badge" title={ l.Class }>{ ClassDisplay(l.Class).Label }</span></td>
 					if l.NoLeaseState != "" {
 						// No data-expires: the countdown script rewrites every

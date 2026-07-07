@@ -304,6 +304,7 @@ func mergePortRows(labels map[string]string, pinned map[string]db.HostReservatio
 			if ports[i].Hostname == "" {
 				if n := ggoNames[normalizeMAC(ports[i].HWAddress)]; n != "" {
 					ports[i].Hostname = n
+					ports[i].HostnameDerived = true // filled from the scan, not device-reported
 				}
 			}
 		}

@@ -209,6 +209,11 @@ a.status-pill:hover { filter:brightness(1.08); }
 .info-tip { position:relative; display:inline-flex; vertical-align:middle; margin-left:5px; color:var(--text-muted); cursor:help; }
 .info-tip .lucide { width:14px; height:14px; }
 .info-tip:hover, .info-tip:focus-visible { color:var(--text-secondary); outline:none; }
+/* Appliance-derived (Green-GO scan) hostname: italic name carrying the explanatory
+   tooltip, plus a spaced amber asterisk that flags it as inferred, not device-reported
+   (#117). The whole name is the hover target; the asterisk carries the SR label. */
+.host-derived { font-style:italic; cursor:help; }
+.host-derived-mark { margin-left:4px; color:var(--warn); font-style:normal; font-weight:600; }
 .info-tip-text { position:absolute; bottom:calc(100% + 7px); left:50%; transform:translateX(-50%); width:236px; padding:9px 11px; background:var(--surface-3); color:var(--text); border:1px solid var(--border-strong); border-radius:var(--r-sm); box-shadow:var(--shadow-md); font-size:12px; font-weight:400; line-height:1.45; white-space:normal; text-transform:none; letter-spacing:0; opacity:0; visibility:hidden; transition:opacity var(--dur) var(--ease); z-index:40; }
 .info-tip-text::after { content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:5px solid transparent; border-top-color:var(--border-strong); }
 .info-tip:hover .info-tip-text, .info-tip:focus-visible .info-tip-text, .info-tip:focus-within .info-tip-text { opacity:1; visibility:visible; }

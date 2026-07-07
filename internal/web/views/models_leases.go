@@ -19,8 +19,13 @@ type LeaseRow struct {
 	// before the sanitize+dedupe pass rewrote Hostname. The reserve dialog prefills
 	// from it so an ephemeral "-0001" display tag never gets stored permanently.
 	RawHostname string
-	Class       string
-	ExpiresIn   string
+	// HostnameDerived is true when the appliance filled Hostname from the Green-GO
+	// device scan (the device announced none over DHCP), so the UI can mark it as
+	// inferred rather than device-reported. Set at the ggoscan overlay; a real
+	// client-announced hostname leaves it false.
+	HostnameDerived bool
+	Class           string
+	ExpiresIn       string
 	// ExpiresAt is the absolute lease-expiry epoch (seconds): >0 a real expiry the
 	// client counts down live (data-expires), 0 unknown, -1 infinite ("never").
 	// Absolute so a cached/rebroadcast fragment never shows a stale countdown.
