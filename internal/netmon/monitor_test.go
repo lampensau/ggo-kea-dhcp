@@ -317,3 +317,88 @@ func TestMonitorManager_RejectsWlan0Spec(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitor_ResetTickBaselineNoBlindGapAfterRestart is the #120 regression guard:
+// after a capture faults while blind, the fault-plus-backoff gap (no ticks, up to
+// maxBackoff) must NOT be billed as blind time on the first tick of the restarted
+// capture. serveOnce clears the per-capture tick baseline, so frameClockOffset does
+// not jump by the dead interval and frameNow is not spuriously rewound.
+func TestMonitor_ResetTickBaselineNoBlindGapAfterRestart(t *testing.T) {
+	clk := newFakeClock(base)
+	fs := NewFakeSniffer()
+	m := &Monitor{
+		spec:      Spec{Iface: "eth0"},
+		store:     NewSnapshotStore(),
+		clock:     clk.Now,
+		detectors: []*detectorSlot{},
+	}
+
+	// Healthy tick, then a blind tick: arms prevBlind/haveTick with no offset yet.
+	m.onTick(fs, true)
+	fs.SetStats(10, 10)
+	clk.Advance(time.Second)
+	m.onTick(fs, true)
+	if m.frameClockOffset != 0 {
+		t.Fatalf("offset after arming blind tick = %v, want 0", m.frameClockOffset)
+	}
+
+	// The capture faults and the restart loop backs off - no ticks for the whole gap.
+	clk.Advance(maxBackoff)
+
+	// serveOnce clears the baseline for the restarted (healthy) capture; the first
+	// tick must not accumulate the dead gap.
+	m.resetTickBaseline()
+	fs.SetStats(0, 0)
+	m.onTick(fs, true)
+	if m.frameClockOffset != 0 {
+		t.Fatalf("first tick after restart billed the dead gap as blind time: offset = %v, want 0", m.frameClockOffset)
+	}
+}
+
+// TestMonitor_RestartReportsGenuineLossPromptly is the behavioral half of #120: it
+// drives a real PTP detector across present -> blind -> fault -> restart and asserts
+// the INTENDED lost-timing, not just the frameClockOffset scalar. After a blind fault
+// the frame-clock baseline is cleared, so frameNow advances across the gap and a GM
+// that is genuinely gone is reported lost on the first post-restart tick - the fix's
+// whole point (the old code credited the gap and stalled this for a window). A GM that
+// is still present recovers on its next announce (the documented self-healing blip).
+func TestMonitor_RestartReportsGenuineLossPromptly(t *testing.T) {
+	clk := newFakeClock(base)
+	fs := NewFakeSniffer()
+	rs := &recordingSink{}
+	ptp := newPTPDetector("eth0", 15*time.Second)
+	m := &Monitor{
+		spec:      Spec{Iface: "eth0"},
+		store:     NewSnapshotStore(),
+		sink:      rs.sink,
+		clock:     clk.Now,
+		detectors: []*detectorSlot{{d: ptp, kind: "ptp", counterFed: false}},
+	}
+
+	// Present GM, then a blind tick right before the capture faults.
+	m.handleFrame(ptpAnnounce(0, 0x1, 128, 128, false))
+	m.onTick(fs, true)
+	fs.SetStats(10, 10)
+	clk.Advance(time.Second)
+	m.onTick(fs, true)
+
+	// Fault + backoff: no ticks for the whole gap, then the restart clears the baseline.
+	clk.Advance(30 * time.Second)
+	m.resetTickBaseline()
+	fs.SetStats(0, 0)
+
+	// The GM is genuinely gone (no re-announce). The first post-restart tick must
+	// report it lost promptly rather than crediting the 30s gap and stalling.
+	m.onTick(fs, true)
+	if got := rs.byAction("PTP grandmaster lost"); got != 1 {
+		t.Fatalf("genuine loss not reported promptly after restart: got %d 'lost' events, want 1", got)
+	}
+
+	// A device that comes back announces again and recovers - the blip self-heals.
+	clk.Advance(time.Second)
+	m.handleFrame(ptpAnnounce(0, 0x1, 128, 128, false))
+	m.onTick(fs, true)
+	if got := rs.byAction("PTP grandmaster seen"); got < 1 {
+		t.Fatalf("GM did not recover after re-announce: got %d 'seen' events, want >=1", got)
+	}
+}

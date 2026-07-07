@@ -195,6 +195,25 @@ type framesFreezer interface{ setFramesDropped(bool) }
 // blind time).
 func (m *Monitor) frameNow() time.Time { return m.clock().Add(-m.frameClockOffset) }
 
+// resetTickBaseline clears the frame-clock's per-capture tick baseline (see
+// serveOnce). Touched only on the monitor goroutine, like the fields it clears.
+//
+// TRADEOFF (deliberate, not a pure win): not crediting the fault+backoff gap means
+// frameNow jumps FORWARD by that gap (up to maxBackoff) on the first post-restart
+// tick, instead of staying frozen. A genuinely-absent device is then reported lost
+// promptly (the fix). The flip-side: a still-PRESENT short-window frame-fed detector
+// - PTP grandmaster most of all (absence threshold in seconds) - can fire a brief
+// false "lost" on that first tick, because its last sighting predates the blackout
+// and now reads gap-stale against the jumped clock. It self-heals within one announce
+// interval once the device re-announces. We accept that for this warn-only monitor
+// (netmon never mutates Kea): a self-healing blip right after an already-abnormal
+// fault is better than reporting a real loss up to maxBackoff late, and "we were
+// blind for the gap, reconfirm before trusting presence" is the honest posture.
+func (m *Monitor) resetTickBaseline() {
+	m.prevBlind = false
+	m.haveTick = false
+}
+
 func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, clock func() time.Time, tick, backoff time.Duration, budget int) *Monitor {
 	slots := make([]*detectorSlot, len(detectors))
 	for i, d := range detectors {
@@ -344,6 +363,12 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 	available := !isNop(sn)
 	cc, _ := sn.(capControl)
 	m.joiner = nil
+	// A restarted capture has no prior tick of its OWN to diff against. Clear the
+	// frame-clock's per-capture tick baseline so the first onTick doesn't bill the
+	// fault-plus-backoff gap (up to maxBackoff) as blind time and rewind frameNow,
+	// which would delay frame-fed "lost" firing for one window right after a fault.
+	// frameClockOffset (real accumulated blind time) is deliberately preserved.
+	m.resetTickBaseline()
 	// Join the cheap, fixed known groups (PTP + mDNS) whenever we have a real
 	// capture socket. These are benign receiver joins (no promiscuous, no querier,
 	// low rate), so PTP-over-UDP (319/320 -> 224.0.1.129-132) is observable for
