@@ -130,8 +130,8 @@ func encodeName(name string) []byte {
 // respond builds a response for req/q: the echoed question, then answers (already
 // wire-encoded RRs, typically one - minimal answers by design). aa marks
 // authoritative data; rcode carries NXDOMAIN/SERVFAIL/REFUSED. Oversized
-// responses are cut back to the question with the TC bit set (UDP-only stance:
-// the client retries over TCP against a real resolver, or accepts the loss).
+// responses are cut back to the question with the TC bit set on the UDP path;
+// the client then retries over TCP, which the box also serves.
 func respond(req []byte, q question, rcode byte, aa bool, answers ...[]byte) []byte {
 	resp := make([]byte, 0, maxUDPResponse)
 	resp = append(resp, req[0], req[1])              // transaction id

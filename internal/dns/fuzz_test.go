@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"bytes"
 	"reflect"
 	"testing"
 )
@@ -66,6 +67,30 @@ func FuzzHandle(f *testing.F) {
 		}
 		if len(req) >= 2 && (resp[0] != req[0] || resp[1] != req[1]) {
 			t.Fatalf("response txid %02x%02x != request %02x%02x", resp[0], resp[1], req[0], req[1])
+		}
+	})
+}
+
+// FuzzReadTCPMessage exercises the length-framed TCP reader on untrusted bytes -
+// a 2-byte length prefix an attacker controls, followed by fewer or more bytes
+// than promised. Invariants: never panic, and a successful read returns exactly
+// the declared body length, at least a DNS header long.
+func FuzzReadTCPMessage(f *testing.F) {
+	f.Add([]byte{0x00, 0x0c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}) // header-sized body
+	f.Add([]byte{0xff, 0xff})                                        // huge length, no body
+	f.Add([]byte{0x00})                                              // truncated prefix
+	f.Add([]byte(nil))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		msg, ok := readTCPMessage(bytes.NewReader(data))
+		if !ok {
+			return
+		}
+		if len(msg) < headerLen {
+			t.Fatalf("accepted a %d-byte body under the %d header floor", len(msg), headerLen)
+		}
+		if len(data) < 2+len(msg) {
+			t.Fatalf("returned %d bytes from only %d input bytes", len(msg), len(data))
 		}
 	})
 }

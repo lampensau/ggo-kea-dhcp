@@ -4,15 +4,17 @@
 // resolver. One component, never two servers racing for the socket. Outside
 // ACTIVE the listeners are simply stopped (no DNS during FACTORY/ONBOARDING).
 //
-// Transport stance, decided and deliberate: UDP only. Answers are minimal
-// single-record responses for a fleet of at most hundreds of names, so they
-// always fit the classic 512-byte payload; anything that somehow would not gets
-// the TC bit and no TCP listener to fall back to. No EDNS0 is negotiated for
-// the server's own answers either. Forwarded queries and replies are relayed
-// verbatim so a client's own EDNS0 still works against the upstream, except that
-// a reply over 512 bytes to a client that did not signal EDNS0 is truncated with
-// TC rather than reflected - together with a global forward-rate ceiling, that
-// keeps the LAN-only forwarder from being used as an amplifier.
+// Transport: UDP plus a TCP fallback (RFC 7766). The server's own answers are
+// minimal single-record responses that always fit the classic 512-byte payload,
+// but a forwarded upstream answer can exceed any UDP size (a large TXT or DNSSEC
+// reply), and such an answer is only reachable over TCP - so the box listens on
+// TCP/53 as well and forwards over TCP when a client retries there. Over UDP a
+// reply larger than 512 bytes to a client that did not signal EDNS0 is still
+// truncated with TC rather than reflected; TCP carries the full answer without
+// truncation. A completed TCP handshake cannot be source-spoofed, so the TCP
+// path is not a reflection vector; together with the global forward-rate ceiling
+// and a bounded pool of concurrent TCP connections, the LAN-only forwarder still
+// cannot be turned into an amplifier.
 //
 // Isolation matches internal/netmon: this package imports neither web nor kea;
 // the zone contents are pushed in by the owner (SetZone) and everything else is
@@ -20,6 +22,7 @@
 package dns
 
 import (
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -41,6 +44,16 @@ const (
 	// relay out its uplink under a reflection flood. A real show LAN stays well
 	// below it.
 	maxForwardsPerSec = 200
+	// tcpIdleTimeout bounds one TCP connection's read and write per RFC 7766 -
+	// also the slowloris defense: a client that opens a connection and dribbles
+	// (or never reads its answer) is dropped rather than holding state.
+	tcpIdleTimeout = 5 * time.Second
+	// maxTCPConns caps concurrent TCP connections across all listeners; beyond it
+	// a newly accepted connection is closed immediately rather than served. TCP
+	// answers are rare on a LAN (only replies over the UDP size), so this is
+	// generous. ponytail: global cap, make it per-listener only if one segment
+	// can ever starve another.
+	maxTCPConns = 32
 )
 
 // dohCanary is Firefox's use-application-dns.net probe: answering NXDOMAIN
@@ -56,6 +69,7 @@ type Server struct {
 
 	resolv     *resolvCache
 	forwardSem chan struct{}
+	tcpSem     chan struct{} // bounds concurrent TCP connections across all listeners
 	limiter    rateLimiter
 	fwdGate    forwardGate
 
@@ -74,6 +88,7 @@ func New(resolvPath string) *Server {
 	return &Server{
 		resolv:     newResolvCache(resolvPath),
 		forwardSem: make(chan struct{}, maxInflightForwards),
+		tcpSem:     make(chan struct{}, maxTCPConns),
 		limiter:    rateLimiter{counts: map[string]int{}},
 		port:       53,
 	}
@@ -144,8 +159,7 @@ func (s *Server) start(bindIPs []string) []string {
 		}
 		s.listeners = append(s.listeners, l)
 		s.bindSet[ip] = true
-		l.wg.Add(1) // before the goroutine, so a fast stop() cannot Wait() past it
-		go l.serve()
+		l.startServing()
 	}
 	return failed
 }
@@ -176,8 +190,7 @@ func (s *Server) RebindMissing() []string {
 		}
 		s.listeners = append(s.listeners, l)
 		s.bindSet[ip] = true
-		l.wg.Add(1) // before the goroutine, so a fast stop() cannot Wait() past it
-		go l.serve()
+		l.startServing()
 		healed = append(healed, ip)
 	}
 	return healed
@@ -216,9 +229,14 @@ func (s *Server) bindSetSnapshot() map[string]bool {
 type listener struct {
 	srv    *Server
 	conn   *net.UDPConn
+	tcpLn  *net.TCPListener // nil if the TCP bind failed (UDP still serves)
 	bindIP [4]byte
 	quit   chan struct{}
 	wg     sync.WaitGroup
+
+	mu      sync.Mutex
+	closing bool                  // set by stop(); track() refuses new conns once true
+	active  map[net.Conn]struct{} // open TCP conns, closed on stop for prompt shutdown
 }
 
 func newListener(srv *Server, bindIP string) (*listener, error) {
@@ -232,14 +250,66 @@ func newListener(srv *Server, bindIP string) (*listener, error) {
 	}
 	l := &listener{srv: srv, conn: conn, quit: make(chan struct{})}
 	copy(l.bindIP[:], ip4)
+	// TCP is the RFC 7766 fallback for answers over the UDP size, but a failed TCP
+	// bind must never take down the working UDP listener - so it is best-effort.
+	if tcpLn, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: ip4, Port: srv.port}); err != nil {
+		log.Printf("[dns] TCP listener on %s:53 not started (UDP only): %v", bindIP, err)
+	} else {
+		l.tcpLn = tcpLn
+	}
 	log.Printf("[dns] listening on %s:53", bindIP)
 	return l, nil
+}
+
+// startServing launches the read loops for a freshly bound listener. The wg is
+// incremented before each goroutine so a fast stop() cannot Wait() past it.
+func (l *listener) startServing() {
+	l.wg.Add(1)
+	go l.serve()
+	if l.tcpLn != nil {
+		l.wg.Add(1)
+		go l.serveTCP()
+	}
 }
 
 func (l *listener) stop() {
 	close(l.quit)
 	_ = l.conn.Close()
+	if l.tcpLn != nil {
+		_ = l.tcpLn.Close()
+	}
+	// Close any in-flight TCP conns so a connection blocked in a read deadline
+	// does not hold stop() for up to tcpIdleTimeout; closing set under the same
+	// lock track() takes closes the accept-vs-stop race.
+	l.mu.Lock()
+	l.closing = true
+	for c := range l.active {
+		_ = c.Close()
+	}
+	l.mu.Unlock()
 	l.wg.Wait()
+}
+
+// track registers an accepted TCP conn so stop() can close it. It returns false
+// if stop() has already begun, in which case the caller must not start a handler
+// (stop() would never join it).
+func (l *listener) track(c net.Conn) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closing {
+		return false
+	}
+	if l.active == nil {
+		l.active = make(map[net.Conn]struct{})
+	}
+	l.active[c] = struct{}{}
+	return true
+}
+
+func (l *listener) untrack(c net.Conn) {
+	l.mu.Lock()
+	delete(l.active, c)
+	l.mu.Unlock()
 }
 
 func (l *listener) serve() {
@@ -376,9 +446,10 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 			// The request carried no additional records (a cheap proxy for "no
 			// EDNS0", see arCount), so the client is bound to 512 bytes; relaying
 			// a large upstream answer verbatim would make the box an amplifier.
-			// Truncate to the question with TC set - the same UDP-only stance as
-			// our own answers. The global forward ceiling is the real defense;
-			// this just avoids reflecting an oversized reply to a classic client.
+			// Truncate to the question with TC set, matching the UDP path for our
+			// own answers; a client that needs the full answer retries over TCP.
+			// The global forward ceiling is the real defense; this just avoids
+			// reflecting an oversized reply to a classic UDP client.
 			resp = respond(req, q, rcodeNoError, false)
 			resp[2] |= 0x02 // TC
 		}
@@ -431,6 +502,168 @@ func forwardOne(req []byte, q question, upstream string) []byte {
 		return resp
 	}
 	return nil
+}
+
+// serveTCP accepts TCP connections and dispatches each to a bounded worker. The
+// shutdown and transient-error handling mirror the UDP serve loop.
+func (l *listener) serveTCP() {
+	defer l.wg.Done()
+	for {
+		conn, err := l.tcpLn.AcceptTCP()
+		if err != nil {
+			select {
+			case <-l.quit:
+				return
+			default:
+				log.Printf("[dns] tcp accept error on %s: %v", l.tcpLn.Addr(), err)
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+		}
+		select {
+		case l.srv.tcpSem <- struct{}{}:
+		default:
+			_ = conn.Close() // over the global TCP connection cap: shed
+			continue
+		}
+		if !l.track(conn) { // racing a stop(): do not start a handler stop() will not join
+			<-l.srv.tcpSem
+			_ = conn.Close()
+			continue
+		}
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			defer func() { <-l.srv.tcpSem }()
+			defer l.untrack(conn)
+			l.handleTCPConn(conn)
+		}()
+	}
+}
+
+// handleTCPConn serves length-framed queries on one connection until it goes idle
+// or the peer closes it (RFC 7766 connection reuse). Queries run through the same
+// handle() as UDP, so device zones / canary / PTR answer identically; a
+// forwardable query is relayed over TCP without the UDP truncation.
+func (l *listener) handleTCPConn(conn *net.TCPConn) {
+	defer conn.Close()
+	remote := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(tcpIdleTimeout)) // idle between queries
+		req, ok := readTCPMessage(conn)
+		if !ok {
+			return // EOF, idle deadline, or a malformed frame
+		}
+		if !l.srv.limiter.allow(remote, time.Now()) {
+			return // over the per-source rate: drop the connection
+		}
+		resp, forward := l.handle(req)
+		if forward != nil {
+			if resp = l.forwardTCP(forward); resp == nil {
+				if q, ok := parseQuestion(req); ok {
+					resp = respond(req, q, rcodeServFail, false)
+				}
+			}
+		}
+		if resp == nil {
+			return // dropped query (e.g. a response sent to us): nothing to say
+		}
+		// Re-arm the deadline for the write: forwardTCP can burn seconds on a slow
+		// or dead upstream, and a fetched answer must not fail the write because the
+		// read deadline already lapsed.
+		_ = conn.SetWriteDeadline(time.Now().Add(tcpIdleTimeout))
+		if !writeTCPMessage(conn, resp) {
+			return
+		}
+	}
+}
+
+// forwardTCP relays a forwardable query to each upstream over TCP and returns the
+// first verified reply, or nil when isolated / over a ceiling / all upstreams
+// failed. Unlike the UDP path it never truncates - TCP exists precisely to carry
+// the large answer. It reuses the same forward ceiling and worker pool as UDP so
+// TCP cannot sidestep the anti-amplification bounds.
+func (l *listener) forwardTCP(req []byte) []byte {
+	q, ok := parseQuestion(req)
+	if !ok {
+		return nil
+	}
+	if !l.srv.fwdGate.allow(time.Now()) {
+		return nil // over the global forward ceiling
+	}
+	select {
+	case l.srv.forwardSem <- struct{}{}:
+	default:
+		return nil // pool saturated: caller answers SERVFAIL
+	}
+	defer func() { <-l.srv.forwardSem }()
+	for _, up := range l.srv.resolv.upstreams(l.srv.bindSetSnapshot()) {
+		if resp := forwardOneTCP(req, q, net.JoinHostPort(up, "53")); resp != nil {
+			return resp
+		}
+	}
+	return nil
+}
+
+// forwardOneTCP performs one TCP exchange with an upstream: framed query, framed
+// reply, verified by transaction id AND question like the UDP path. The whole
+// exchange is bounded by forwardTimeout.
+func forwardOneTCP(req []byte, q question, upstream string) []byte {
+	conn, err := net.DialTimeout("tcp", upstream, forwardTimeout)
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(forwardTimeout))
+	if !writeTCPMessage(conn, req) {
+		return nil
+	}
+	resp, ok := readTCPMessage(conn)
+	if !ok {
+		return nil
+	}
+	if len(resp) < headerLen || resp[0] != req[0] || resp[1] != req[1] || resp[2]&0x80 == 0 {
+		return nil
+	}
+	rq, ok := parseQuestion(resp)
+	if !ok || rq.Name != q.Name || rq.Type != q.Type || rq.Class != q.Class {
+		return nil
+	}
+	return resp
+}
+
+// readTCPMessage reads one length-prefixed DNS message (RFC 7766 framing). The
+// 2-byte prefix bounds the body to <=65535 inherently; the caller's read deadline
+// bounds a peer that declares a length and then dribbles. ok=false on EOF,
+// deadline, a short read, or a length too small to be a DNS message.
+func readTCPMessage(r io.Reader) ([]byte, bool) {
+	var hdr [2]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return nil, false
+	}
+	n := int(hdr[0])<<8 | int(hdr[1])
+	if n < headerLen {
+		return nil, false
+	}
+	msg := make([]byte, n)
+	if _, err := io.ReadFull(r, msg); err != nil {
+		return nil, false
+	}
+	return msg, true
+}
+
+// writeTCPMessage writes msg with its 2-byte length prefix in a single write. A
+// message that cannot be framed (over 65535 bytes) is refused; our own answers
+// are tiny and a forwarded upstream answer is already a valid <=65535 message.
+func writeTCPMessage(w io.Writer, msg []byte) bool {
+	if len(msg) > 0xffff {
+		return false
+	}
+	framed := make([]byte, 2+len(msg))
+	framed[0], framed[1] = byte(len(msg)>>8), byte(len(msg))
+	copy(framed[2:], msg)
+	_, err := w.Write(framed)
+	return err == nil
 }
 
 // arCount reads the ARCOUNT header field. arCount==0 means the request carried no
