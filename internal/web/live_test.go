@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"testing"
 
 	"ggo-kea-dhcp/internal/kea"
@@ -196,5 +197,34 @@ func TestLiveHubUnsubscribe(t *testing.T) {
 	h.publish("noop")
 	if h.publishIfChanged("r", "x") != true {
 		t.Fatal("publishIfChanged should still report change with zero subscribers")
+	}
+}
+
+// TestStreamLiveDrainsSnapshotBeforeLivePush is the #119 regression guard: a
+// fresher live push that lands during the connect window (already buffered in ch)
+// must be written AFTER the staler connect snapshot for the same region, so the
+// client ends fresh. Before the two-phase drain the select loop could write the
+// snapshot last and leave leases-body stale with no recovery.
+func TestStreamLiveDrainsSnapshotBeforeLivePush(t *testing.T) {
+	const stale = `<tbody id="leases-body">STALE</tbody>`
+	const fresh = `<tbody id="leases-body">FRESH</tbody>`
+
+	snap := make(chan string, 8)
+	ch := make(chan string, 16)
+	// The live push arrived during the snapshot and is buffered; the snapshot then
+	// produces its staler view of the same region.
+	ch <- fresh
+	close(ch) // end the stream once the buffered push is drained
+	snap <- stale
+	close(snap)
+
+	var got []string
+	streamLive(context.Background(), snap, ch, func(f string) error {
+		got = append(got, f)
+		return nil
+	})
+
+	if len(got) != 2 || got[0] != stale || got[1] != fresh {
+		t.Fatalf("write order = %v; want snapshot (%q) then fresh live push (%q)", got, stale, fresh)
 	}
 }
