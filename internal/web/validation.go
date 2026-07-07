@@ -58,6 +58,23 @@ func validateUplink(ssid, password string) string {
 	return ""
 }
 
+// validateSoftAPSave checks a SoftAP SSID/passphrase entered on the Settings page
+// against the same 802.11/WPA2 bounds StartSoftAP enforces (internal/network/hostapd.go
+// validateSoftAP), so an over-long or control-char value is rejected up front instead
+// of silently breaking hostapd at the next drop to ONBOARDING. On the Settings form an
+// empty SSID means "leave unchanged" and an empty passphrase means "open network", so
+// each is validated only when provided. Returns a user-facing message on the first
+// violation, or "" when acceptable.
+func validateSoftAPSave(ssid, passphrase string) string {
+	if ssid != "" && (len(ssid) > 32 || hasControlChar(ssid)) {
+		return "SoftAP network name must be at most 32 characters with no control characters."
+	}
+	if passphrase != "" && (len(passphrase) < 8 || len(passphrase) > 63 || hasControlChar(passphrase)) {
+		return "SoftAP password must be 8-63 characters (WPA2) with no control characters, or empty for an open network."
+	}
+	return ""
+}
+
 // isPrintableASCII reports whether every byte of s is in the printable ASCII range
 // 0x20..0x7e (space through '~').
 func isPrintableASCII(s string) bool {

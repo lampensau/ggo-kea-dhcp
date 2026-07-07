@@ -62,3 +62,33 @@ func TestClassCodes(t *testing.T) {
 		t.Errorf("classCodes(GGO-UNKNOWN) = %q, want empty", got)
 	}
 }
+
+// TestValidateSoftAPSave is the #129(item2) guard: the Settings save mirrors the
+// WPA2/hostapd bounds, and - unlike the uplink - treats an empty SSID as "leave
+// unchanged" (valid), so it doesn't force a value the operator didn't touch.
+func TestValidateSoftAPSave(t *testing.T) {
+	cases := []struct {
+		name   string
+		ssid   string
+		pass   string
+		wantOK bool // true means "" (accepted)
+	}{
+		{"valid with password", "GGO-Recovery", "supersecret", true},
+		{"valid open network", "GGO-Recovery", "", true},
+		{"empty ssid means unchanged", "", "supersecret", true}, // differs from uplink: allowed
+		{"empty ssid and pass", "", "", true},
+		{"ssid too long", "this-ssid-is-definitely-over-32-chars", "secret12", false},
+		{"ssid control char", "bad\nssid", "", false},
+		{"password too short", "AP", "short", false},
+		{"password too long", "AP", string(make([]byte, 64)), false},
+		{"password control char", "AP", "secret\x00pass", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := validateSoftAPSave(c.ssid, c.pass)
+			if (msg == "") != c.wantOK {
+				t.Errorf("validateSoftAPSave(%q,%q) = %q, wantOK=%v", c.ssid, c.pass, msg, c.wantOK)
+			}
+		})
+	}
+}
