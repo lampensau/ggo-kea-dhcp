@@ -42,6 +42,15 @@ jobs:
       - name: Generate templ components
         run: templ generate
 
+      # Fail the release build closed on a known-vulnerable dependency. ci.yml runs
+      # this on the main-branch push, but a tag pushed by hand (not via `make
+      # release`) would otherwise publish a .deb without ever hitting that gate.
+      # Pinned to match ci.yml and the Makefile.
+      - name: Vulnerability scan (govulncheck, pinned)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+          govulncheck ./...
+
       - name: Cross-compile (Raspberry Pi arm64)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -ldflags="-s -w" -o ggo-kea-dhcp-arm64 .
 

@@ -117,8 +117,19 @@ SQL
 fi
 
 # 7. Initialize the Kea hosts schema if the DB is reachable and not yet set up.
+# The reachability probe passes the password via MYSQL_PWD instead of -p on argv:
+# /proc/<pid>/cmdline is world-readable on stock Debian, so a -p password is visible
+# to any local user via ps during install, while /proc/<pid>/environ is owner+root
+# only. This is the frequent path (it runs on every install/upgrade) and the app's
+# systemd unit already avoids argv passwords for the same reason.
+#
+# kea-admin cannot use MYSQL_PWD: it always builds its mysql invocation with an
+# explicit --password=<value>, which overrides the env var (an empty one then fails
+# auth). It keeps -p. That is only the first-install schema-init path (skipped once
+# the schema exists), and kea-admin execs mysql with --password on argv regardless,
+# so this residual leak is inherent to kea-admin, not something postinstall can close.
 if command -v kea-admin >/dev/null 2>&1 && [ -n "$KEA_DB_PASS" ]; then
-	if ! mariadb -u "$KEA_DB_USER" -p"$KEA_DB_PASS" "$KEA_DB_NAME" -e "SELECT 1 FROM hosts LIMIT 1" >/dev/null 2>&1; then
+	if ! MYSQL_PWD="$KEA_DB_PASS" mariadb -u "$KEA_DB_USER" "$KEA_DB_NAME" -e "SELECT 1 FROM hosts LIMIT 1" >/dev/null 2>&1; then
 		echo "ggo-kea-dhcp: initializing Kea MariaDB schema..."
 		kea-admin db-init mysql -u "$KEA_DB_USER" -p "$KEA_DB_PASS" -n "$KEA_DB_NAME" >/dev/null 2>&1 \
 			|| echo "ggo-kea-dhcp: WARNING - kea-admin db-init failed; run it manually." >&2
