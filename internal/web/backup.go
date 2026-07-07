@@ -286,6 +286,17 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			}
 		}
 		for _, p := range b.Profiles {
+			// Restore is the highest-risk topology-ingestion path: a hand-edited or
+			// cross-version bundle is exactly where a duplicate-VLAN/overlapping-CIDR
+			// profile comes from, and it is the one external-upload path beginSwitch's
+			// guard doesn't reach. Reject here too, before the INSERT - the whole
+			// restore is one transaction, so a bad topology just rolls back and the box
+			// is untouched. Validating every profile (not just the active one) never
+			// rejects a profile beginSwitch would accept; it just moves that identical
+			// rejection earlier, from switch-time to upload-time.
+			if err := validateScopeTopology(p.Scopes); err != nil {
+				return "", fmt.Errorf("restore: profile %q has an invalid network topology: %w", p.Name, err)
+			}
 			res, err := tx.Exec("INSERT INTO profiles (name, description, active) VALUES (?, ?, ?)", p.Name, p.Description, b2i(p.Active))
 			if err != nil {
 				return "", fmt.Errorf("restore profile %q: %w", p.Name, err)

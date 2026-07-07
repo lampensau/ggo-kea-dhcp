@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,56 @@ func validateProfileName(name string) error {
 	}
 	if reservedProfileName.MatchString(name) {
 		return fmt.Errorf(`Profile name may not contain the reserved ".stash-<number>" form.`)
+	}
+	return nil
+}
+
+// validateScopeTopology rejects a multi-scope profile whose interface topology is
+// self-contradictory in ways kea -t does not catch, so the box can't reach ACTIVE
+// and then silently misbehave. Two failure modes, both confirmed to pass RenderProfile
+// + TestConfig today:
+//
+//   - Duplicate VLAN ID: reconcileActive configures one eth0.<vid> per scope, so a
+//     second scope on the same VLAN just reconfigures that interface with its own
+//     gateway - one whole segment never serves, with no error surfaced. VlanID 0 is
+//     "untagged on eth0"; only one scope may hold it, so this also enforces the
+//     single-untagged rule (the wizard's parse-time check is now a UI-facing backstop).
+//   - Overlapping CIDRs: subnetIDForIP/subnetMatcherForScopes key a subnet by the
+//     FIRST scope whose CIDR contains an IP, so an address inside an overlap is filed
+//     under the wrong subnet-id and its reservation is permanently dead.
+//
+// Checked at both apply choke points (beginApply from the wizard form, beginSwitch
+// from a stored profile) so an import/restore that introduced a bad topology is caught
+// on its next apply, not just at wizard time.
+func validateScopeTopology(scopes []ScopeConfig) error {
+	seenVLAN := map[int]bool{}
+	prevNets := make([]*net.IPNet, 0, len(scopes))
+	for _, sc := range scopes {
+		// Range-check here too, not just at wizard parse time: beginSwitch loads scopes
+		// from a stored profile (import/restore) that never went through parseSetupScopes.
+		if !validVLANID(sc.VlanID) {
+			return fmt.Errorf("Scope VLAN ID %d is out of range (0-4094).", sc.VlanID)
+		}
+		if seenVLAN[sc.VlanID] {
+			if sc.VlanID == 0 {
+				return fmt.Errorf("Only one untagged network scope is allowed on eth0. All other scopes must specify a VLAN ID.")
+			}
+			return fmt.Errorf("VLAN %d is used by more than one scope. Give each scope a distinct VLAN ID.", sc.VlanID)
+		}
+		seenVLAN[sc.VlanID] = true
+
+		_, ipnet, err := net.ParseCIDR(sc.CIDR)
+		if err != nil {
+			return fmt.Errorf("Scope subnet %q is not a valid CIDR: %w", sc.CIDR, err)
+		}
+		// ponytail: O(n²) pairwise overlap. n is a handful of scopes (the wizard caps
+		// them), so a sort/interval-tree would be more code for no measurable gain.
+		for _, prev := range prevNets {
+			if prev.Contains(ipnet.IP) || ipnet.Contains(prev.IP) {
+				return fmt.Errorf("Scope subnets %s and %s overlap. Each scope needs a distinct subnet.", prev.String(), ipnet.String())
+			}
+		}
+		prevNets = append(prevNets, ipnet)
 	}
 	return nil
 }
@@ -61,6 +112,9 @@ type applyPlan struct {
 // apply guard cleared).
 func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink UplinkConfig) (applyPlan, error) {
 	if err := validateProfileName(profileName); err != nil {
+		return applyPlan{}, err
+	}
+	if err := validateScopeTopology(scopes); err != nil {
 		return applyPlan{}, err
 	}
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
