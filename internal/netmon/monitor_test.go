@@ -402,3 +402,19 @@ func TestMonitor_RestartReportsGenuineLossPromptly(t *testing.T) {
 		t.Fatalf("GM did not recover after re-announce: got %d 'seen' events, want >=1", got)
 	}
 }
+
+// TestMonitor_MarkPermanentlyDegradedAudits is the #128(1) guard: exhausting the fault
+// budget must emit a MONITOR_DEGRADED event through the sink (the audit-log bridge), so
+// the operator has a record that passive detection stopped on this interface.
+func TestMonitor_MarkPermanentlyDegradedAudits(t *testing.T) {
+	rs := &recordingSink{}
+	m := &Monitor{
+		spec:  Spec{Iface: "eth0"},
+		store: NewSnapshotStore(),
+		sink:  rs.sink,
+	}
+	m.markPermanentlyDegraded()
+	if got := rs.byAction("MONITOR_DEGRADED"); got != 1 {
+		t.Fatalf("markPermanentlyDegraded emitted %d MONITOR_DEGRADED events, want 1 (%+v)", got, rs.all())
+	}
+}

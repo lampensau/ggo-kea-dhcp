@@ -531,6 +531,13 @@ func (m *Monitor) markPermanentlyDegraded() {
 		Available: false,
 		Note:      "monitoring unavailable - repeated fault",
 	})
+	// Audit the loss of passive detection on this segment. The sink is the audit-log
+	// bridge (see server.go); without this row an operator has no record that
+	// rogue-DHCP / duplicate-IP / PTP / storm detection stopped here for the rest of
+	// the ACTIVE session - so a later incident on this segment has no explanation.
+	if m.sink != nil {
+		m.sink(Event{Action: "MONITOR_DEGRADED", Target: m.spec.Iface, Severity: SevError})
+	}
 	log.Printf("[netmon iface=%s] permanently degraded after repeated serve-level faults", m.spec.Iface)
 }
 

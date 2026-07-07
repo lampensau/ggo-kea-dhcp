@@ -162,3 +162,22 @@ func TestBackendHealthUplinkAlert(t *testing.T) {
 		t.Fatalf("after reconnect: expected no rows, got %+v", rows)
 	}
 }
+
+// TestBackendAlertShowsMariaDBReason is the #128(2) guard: the MariaDB-offline banner
+// appends the captured ping reason (e.g. an auth failure that never self-clears), so an
+// operator can tell wrong-password from host-down without digging the audit log.
+func TestBackendAlertShowsMariaDBReason(t *testing.T) {
+	h := newBackendHealth()
+	for i := 0; i < backendDownThreshold; i++ {
+		h.observeMariaDB(false, "Access denied for user 'ggo'@'localhost'")
+	}
+	var detail string
+	for _, r := range h.alertRows() {
+		if r.Title == "Reservation Database Offline" {
+			detail = r.Detail
+		}
+	}
+	if !strings.Contains(detail, "Access denied") {
+		t.Fatalf("MariaDB alert detail dropped the captured reason: %q", detail)
+	}
+}
