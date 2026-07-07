@@ -668,6 +668,14 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 // leases-body stale until the next mutation. patch writes one fragment; a non-nil
 // return (client gone) ends the stream. All writes stay on the caller's goroutine.
 func streamLive(ctx context.Context, snap, ch <-chan string, patch func(string) error) {
+	// Phase 1 deliberately does NOT read `ch`, so hub pushes buffer in its 16-slot
+	// channel while the snapshot is computed and drained. Under a slow backend (the
+	// reason the snapshot runs in a goroutine at all) that window can be seconds, so
+	// pushes accumulate - bounded by the count of distinct change-only regions
+	// (repeated mutations to one region collapse), which stays under the buffer. Do
+	// NOT "fix" this by shrinking the buffer: a full-channel push is dropped by the
+	// pre-existing slow-consumer contract, and a dropped concurrent leases push is
+	// re-covered anyway by the snapshot's own fresh read of the same region.
 	for snap != nil {
 		select {
 		case <-ctx.Done():
