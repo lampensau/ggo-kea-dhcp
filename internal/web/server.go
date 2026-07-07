@@ -176,6 +176,9 @@ type Server struct {
 	updateAPIBase string
 	updateRepo    string
 	updateDir     string
+	// lastUpdateLoadCheck is the unix-nano stamp of the last page-load-triggered
+	// update check (kickUpdateCheckOnLoad), for the in-memory attempt-throttle.
+	lastUpdateLoadCheck atomic.Int64
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle

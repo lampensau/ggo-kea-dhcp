@@ -185,6 +185,43 @@ func (s *Server) kickUpdateCheck() {
 	}()
 }
 
+// updateLoadFloor is the minimum spacing between page-load-triggered update checks.
+// Rapid navigation then makes the badge fresher without a request per click; the
+// 30-minute ticker stays the max-staleness fallback for an idle/left-open page.
+const updateLoadFloor = 5 * time.Minute
+
+// kickUpdateCheckOnLoad fires a throttled background check from a page-load signal
+// (the SSE connect on every authenticated navigation), so a fresh release surfaces
+// in the footer badge while the operator is clicking around rather than only on the
+// next 30-minute tick. It CAS-throttles on an in-memory last-attempt stamp so a burst
+// of navigations dispatches at most one check per updateLoadFloor. The throttle is
+// attempt-based (not keyed on the persisted stateUpdateLastCheck, which advances only
+// on a successful fetch and so would never rate-limit an offline box that keeps
+// failing). The dispatched check reuses updateCheckSafe -> checkForUpdate, inheriting
+// the ACTIVE gate, 403/429 backoff, shutdown-join, and live-badge publish. Returns
+// whether it dispatched (that a check ran, not that a newer release exists).
+func (s *Server) kickUpdateCheckOnLoad() bool {
+	prev := s.lastUpdateLoadCheck.Load()
+	now := time.Now().UnixNano()
+	if prev != 0 && time.Duration(now-prev) < updateLoadFloor {
+		return false
+	}
+	// CAS so two near-simultaneous connects don't both dispatch; the loser is throttled.
+	if !s.lastUpdateLoadCheck.CompareAndSwap(prev, now) {
+		return false
+	}
+	// addBackground, not a bare Add: this fires from the SSE handler, which the
+	// shutdown join does not otherwise cover, so it must not race stopBackground.
+	if !s.addBackground() {
+		return false
+	}
+	go func() {
+		defer s.bgWG.Done()
+		s.updateCheckSafe(false)
+	}()
+	return true
+}
+
 // updateCheckSafe wraps one check in a recover (the sampleOnceSafe pattern) so
 // a panic degrades that one check instead of killing the ticker goroutine.
 func (s *Server) updateCheckSafe(manual bool) {
