@@ -353,18 +353,14 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			}
 			pid64, _ := res.LastInsertId()
 			for _, sc := range p.Scopes {
-				ifaceMode := "physical"
-				if sc.VlanID > 0 {
-					ifaceMode = "trunk"
-				}
 				poolSpec, _ := sc.poolSpecJSON()
 				uplinkSpec, _ := sc.uplinkJSON()
 				planJSON, _ := sc.planJSON()
 				servicesSpec, _ := sc.servicesJSON()
 				if _, err := tx.Exec(`
-					INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					int(pid64), ifaceMode, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, servicesSpec, sc.Name); err != nil {
+					INSERT INTO scopes (profile_id, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					int(pid64), sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, servicesSpec, sc.Name); err != nil {
 					return "", fmt.Errorf("restore scope in profile %q: %w", p.Name, err)
 				}
 			}

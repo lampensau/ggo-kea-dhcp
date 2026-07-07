@@ -258,10 +258,6 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, uplink
 	plan.newProfileID = int(id64)
 
 	for _, sc := range scopes {
-		ifaceMode := "physical"
-		if sc.VlanID > 0 {
-			ifaceMode = "trunk"
-		}
 		poolSpec, perr := sc.poolSpecJSON()
 		uplinkSpec, uerr := sc.uplinkJSON()
 		planJSON, plerr := sc.planJSON()
@@ -271,9 +267,9 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, uplink
 			return fmt.Errorf("Failed to encode scope: %w", encErr)
 		}
 		if _, err := tx.Exec(`
-			INSERT INTO scopes (profile_id, iface_mode, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			plan.newProfileID, ifaceMode, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, servicesSpec, sc.Name); err != nil {
+			INSERT INTO scopes (profile_id, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			plan.newProfileID, sc.VlanID, sc.CIDR, sc.Preset, poolSpec, uplinkSpec, planJSON, servicesSpec, sc.Name); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("Failed to store scope: %w", err)
 		}
