@@ -50,7 +50,7 @@ func TestMergePortRowsPinnedOnly(t *testing.T) {
 	pinned := map[string]db.HostReservation{
 		key: {IPv4Address: kea.IPToUint32(net.ParseIP("1.2.3.4")), SubnetID: 7, Hostname: "panel"},
 	}
-	rows := mergePortRows(labels, pinned, nil, nil, 0)
+	rows := mergePortRows(labels, pinned, nil, nil, 0, nil)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
@@ -67,7 +67,7 @@ func TestMergePortRowsLeaseFillsPinned(t *testing.T) {
 	}
 	// 0x00 + hex of "ab/cd" (the flex-id form) so the lease maps onto the pinned port.
 	leases := []kea.ActiveLease{{ClientID: "0061622f6364", HWAddress: "aa:bb:cc:dd:ee:ff"}}
-	rows := mergePortRows(nil, pinned, leases, nil, 0)
+	rows := mergePortRows(nil, pinned, leases, nil, 0, nil)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
@@ -78,7 +78,7 @@ func TestMergePortRowsLeaseFillsPinned(t *testing.T) {
 
 func TestMergePortRowsUnpinnedLease(t *testing.T) {
 	leases := []kea.ActiveLease{{ClientID: "0061622f6364", HWAddress: "aa:bb", IPAddress: "9.9.9.9"}}
-	rows := mergePortRows(nil, nil, leases, nil, 0)
+	rows := mergePortRows(nil, nil, leases, nil, 0, nil)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
@@ -89,7 +89,7 @@ func TestMergePortRowsUnpinnedLease(t *testing.T) {
 }
 
 func TestMergePortRowsSkipsEmptyClientID(t *testing.T) {
-	rows := mergePortRows(nil, nil, []kea.ActiveLease{{ClientID: ""}}, nil, 0)
+	rows := mergePortRows(nil, nil, []kea.ActiveLease{{ClientID: ""}}, nil, 0, nil)
 	if len(rows) != 0 {
 		t.Errorf("empty client-id lease should be skipped, got %d rows", len(rows))
 	}
@@ -105,7 +105,7 @@ func TestMergePortRowsDedupesByMAC(t *testing.T) {
 		// Current: a different flex-id, fresher cltt, same MAC.
 		{ClientID: "0078", HWAddress: "aa:bb:cc:dd:ee:ff", IPAddress: "10.0.0.83", Cltt: 200},
 	}
-	rows := mergePortRows(nil, nil, leases, nil, 0)
+	rows := mergePortRows(nil, nil, leases, nil, 0, nil)
 	if len(rows) != 1 {
 		t.Fatalf("same-MAC stale lease should be deduped, got %d rows: %+v", len(rows), rows)
 	}
@@ -125,7 +125,7 @@ func TestMergePortRowsPrefersNewFormat(t *testing.T) {
 		// New-format flex-id "x" + 0x1f + "y" (delimited), older cltt, same device.
 		{ClientID: "00781f79", HWAddress: "aa:bb:cc:dd:ee:ff", IPAddress: "10.0.0.83", Cltt: 100},
 	}
-	rows := mergePortRows(nil, nil, leases, nil, 0)
+	rows := mergePortRows(nil, nil, leases, nil, 0, nil)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row (new-format preferred), got %d: %+v", len(rows), rows)
 	}
@@ -151,7 +151,7 @@ func TestMergePortRowsPinnedDeviceMovedAway(t *testing.T) {
 		// Fresher lease for the SAME MAC on a different port "x".
 		{ClientID: "0078", HWAddress: "aa:bb:cc:dd:ee:ff", IPAddress: "10.0.0.83", Cltt: 200},
 	}
-	rows := mergePortRows(labels, pinned, leases, nil, 0)
+	rows := mergePortRows(labels, pinned, leases, nil, 0, nil)
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows want 2 (empty pin + moved device): %+v", len(rows), rows)
 	}
@@ -184,7 +184,7 @@ func TestMergePortRowsLastSeenStale(t *testing.T) {
 	}
 	now := int64(1_000_000_000)
 	lastSeen := map[string]int64{"ab/cd": now - 30*24*60*60} // 30 days ago
-	rows := mergePortRows(nil, pinned, nil, lastSeen, now)
+	rows := mergePortRows(nil, pinned, nil, lastSeen, now, nil)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows want 1", len(rows))
 	}
@@ -284,5 +284,34 @@ func TestLegacyLabelAliasCleared(t *testing.T) {
 	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM port_labels").Scan(&n)
 	if n != 1 {
 		t.Errorf("port_labels rows = %d, want the legacy alias gone", n)
+	}
+}
+
+// TestMergePortRowsOverlaysGgoName is the #116 guard: a Green-GO port announces no
+// DHCP hostname, so its row's hostname is filled from the ggoscan name map (keyed by
+// live MAC) - the same overlay the Leases page applies - instead of rendering blank.
+// A device that DOES announce a name keeps it (overlay only fills empties).
+func TestMergePortRowsOverlaysGgoName(t *testing.T) {
+	const mac = "00:1f:80:20:4e:5e"
+	// Green-GO learnable port: Option-82 flex-id, no announced hostname.
+	ggo := []kea.ActiveLease{{ClientID: "0061622f6364", HWAddress: mac, IPAddress: "10.0.0.22"}}
+	// A non-Green-GO device on another port that announces its own hostname.
+	named := []kea.ActiveLease{{ClientID: "0078", HWAddress: "c8:ff:bf:0e:6f:e6", IPAddress: "10.0.0.187", Hostname: "workstation-6fe6"}}
+	ggoNames := map[string]string{
+		normalizeMAC(mac):                 "bpx-19678",
+		normalizeMAC("c8:ff:bf:0e:6f:e6"): "should-not-win",
+	}
+
+	rows := mergePortRows(nil, nil, append(ggo, named...), nil, 0, ggoNames)
+
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.IPAddress] = r.Hostname
+	}
+	if got["10.0.0.22"] != "bpx-19678" {
+		t.Errorf("Green-GO port hostname = %q, want scan name %q", got["10.0.0.22"], "bpx-19678")
+	}
+	if got["10.0.0.187"] != "workstation-6fe6" {
+		t.Errorf("announced hostname was overwritten: got %q, want %q", got["10.0.0.187"], "workstation-6fe6")
 	}
 }

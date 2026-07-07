@@ -88,7 +88,7 @@ func (s *Server) fetchPinningSplit(ctx context.Context, leases []kea.ActiveLease
 	// activeLeases (not the raw set) to match the /pinning page (pinning.go): an
 	// expired-not-yet-reclaimed lease must not surface a phantom learnable port on the
 	// dashboard/live card that /pinning doesn't show.
-	for _, p := range mergePortRows(labels, pinnedMap, activeLeases(leases), s.lastSeenSnapshot(), time.Now().Unix()) {
+	for _, p := range mergePortRows(labels, pinnedMap, activeLeases(leases), s.lastSeenSnapshot(), time.Now().Unix(), s.ggoNamesByMAC()) {
 		if p.Pinned {
 			pinned = append(pinned, p)
 		} else {
