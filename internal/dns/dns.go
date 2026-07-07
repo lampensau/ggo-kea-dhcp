@@ -410,7 +410,10 @@ func forwardOne(req []byte, q question, upstream string) []byte {
 	if _, err := conn.Write(req); err != nil {
 		return nil
 	}
-	buf := make([]byte, 4096)
+	// Full UDP-datagram sized: an upstream EDNS0 reply can exceed 4096 bytes, and a
+	// short buffer would kernel-truncate the read into a malformed relay. forwardAsync
+	// still applies the TC-set truncation for a non-EDNS0 (arCount==0) client.
+	buf := make([]byte, 65535)
 	for time.Now().Before(deadline) {
 		n, err := conn.Read(buf)
 		if err != nil {

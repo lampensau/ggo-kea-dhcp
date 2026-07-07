@@ -99,13 +99,14 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- SoftAP ---
-	if ssid := strings.TrimSpace(r.FormValue("softap_ssid")); ssid != "" {
-		updates["softap_ssid"] = ssid
-	}
+	softapSSID := strings.TrimSpace(r.FormValue("softap_ssid"))
 	softapPass := r.FormValue("softap_pass")
-	if softapPass != "" && len(softapPass) < 8 {
-		s.handleError(w, r, "SoftAP password must be at least 8 characters (WPA2), or empty for an open network", http.StatusBadRequest)
+	if msg := validateSoftAPSave(softapSSID, softapPass); msg != "" {
+		s.handleError(w, r, msg, http.StatusBadRequest)
 		return
+	}
+	if softapSSID != "" {
+		updates["softap_ssid"] = softapSSID
 	}
 	updates["softap_pass"] = softapPass // empty clears it back to an open network
 
