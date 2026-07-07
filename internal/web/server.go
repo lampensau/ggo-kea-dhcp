@@ -617,18 +617,10 @@ func (s *Server) stopBackground() {
 	close(s.done)
 	s.bgMu.Unlock()
 	s.bgWG.Wait()
-	if s.netmon != nil {
-		s.netmon.Stop()
-	}
-	if s.arp != nil {
-		s.arp.Stop()
-	}
-	if s.ggoscan != nil {
-		s.ggoscan.Stop()
-	}
-	if s.dns != nil {
-		s.dns.Stop()
-	}
+	// The ACTIVE monitors share the single stopActiveMonitors teardown, so a new one
+	// added there is torn down on shutdown too (rather than stranded in this copy).
+	// The onboarding probes are not part of that set - stop them here.
+	s.stopActiveMonitors()
 	if s.trunkProbe != nil {
 		s.trunkProbe.Stop()
 	}
