@@ -256,6 +256,27 @@ func selectedSections(r *http.Request) map[string]bool {
 	return sel
 }
 
+// coerceRestoredLifecycle maps a bundle's lifecycle string to a sane state to persist:
+//   - ACTIVE/CONFIGURING -> ACTIVE: a bundle carrying an active profile represents a
+//     configured box. CONFIGURING is a transient apply-in-flight state a backup can
+//     capture if clicked mid-apply; persisting it verbatim would leave the box serving
+//     but stuck on the "Configuring" badge (and with self-update disabled) until the
+//     next reboot's converge finalizes ACTIVE. Coerce it up front instead.
+//   - anything else ("", FACTORY, or an unknown/hand-edited string) -> ONBOARDING, the
+//     safe floor: the router and the reconciler both treat an unrecognized state as
+//     onboarding, so this keeps restore from persisting a state that serves the full UI
+//     while DHCP is torn down.
+func coerceRestoredLifecycle(s string) string {
+	switch s {
+	case db.StateActive, db.StateConfiguring:
+		return db.StateActive
+	case db.StateOnboarding:
+		return db.StateOnboarding
+	default:
+		return db.StateOnboarding
+	}
+}
+
 // restore overwrites the selected appliance sections from a bundle: the chosen SQLite
 // sections (users, profiles+scopes, port labels) are rewritten in one transaction, then
 // the MariaDB hosts table is replaced (best effort) when reservations are selected.
@@ -387,10 +408,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	// or admins-only restore.
 	lifecycle := currentLifecycle
 	if sel["profiles"] {
-		lifecycle = b.Lifecycle
-		if lifecycle == "" {
-			lifecycle = db.StateOnboarding
-		}
+		lifecycle = coerceRestoredLifecycle(b.Lifecycle)
 		if _, err := tx.Exec(
 			"INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 			db.LifecycleStateKey, lifecycle); err != nil {

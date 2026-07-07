@@ -70,9 +70,13 @@ func TestStateRedirectFor_Extra(t *testing.T) {
 		{db.StateActive, "/factory/restore", "/dashboard"},
 		{db.StateActive, "/factory/setup", "/dashboard"},
 		{db.StateConfiguring, "/factory/restore", "/dashboard"},
-		// An unexpected/empty state is permissive (no redirect from this pure fn).
-		{"WEIRD", "/dashboard", ""},
-		{"", "/dashboard", ""},
+		// An unrecognized/corrupt state string fails closed: it routes like onboarding
+		// (bounce non-whitelisted paths to /setup) rather than serving every route,
+		// matching the reconciler, which converges an unknown state to onboarding.
+		{"WEIRD", "/dashboard", "/setup"},
+		{"", "/dashboard", "/setup"},
+		// ...but the recovery paths stay reachable even from a corrupt state.
+		{"WEIRD", "/settings/restore", ""},
 	}
 	for _, c := range cases {
 		if got := stateRedirectFor(c.state, c.path); got != c.want {
