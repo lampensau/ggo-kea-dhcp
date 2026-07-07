@@ -5,12 +5,23 @@
 # compiles the already-generated *_templ.go. Always go through these targets
 # (or run `templ generate` yourself before building).
 
-TEMPL    ?= $(shell go env GOPATH)/bin/templ
-NFPM     ?= $(shell go env GOPATH)/bin/nfpm
-GOLANGCI ?= $(shell go env GOPATH)/bin/golangci-lint
-# Pinned to match ci.yml so `make check` mirrors CI's vuln gate exactly.
-GOVULNCHECK_VERSION ?= v1.5.0
+TEMPL       ?= $(shell go env GOPATH)/bin/templ
+NFPM        ?= $(shell go env GOPATH)/bin/nfpm
+GOLANGCI    ?= $(shell go env GOPATH)/bin/golangci-lint
 GOVULNCHECK ?= $(shell go env GOPATH)/bin/govulncheck
+
+# Build-tool versions, pinned to match CI (ci.yml / release.yml) and go.mod, so a
+# local `make check`/`deb`/`release` reproduces what CI builds. Every target that
+# needs a tool installs it ONLY if the pinned binary is absent (the `[ -x ]` guards
+# below), so a fresh checkout self-provisions and a warm one never reinstalls. CI
+# still force-installs the exact pin and is the authoritative version gate; a dev who
+# already has a different version keeps it locally. TEMPL_VERSION MUST equal go.mod's
+# github.com/a-h/templ, or `generate` rewrites *_templ.go and the check guard trips.
+TEMPL_VERSION       ?= v0.3.1020
+NFPM_VERSION        ?= v2.47.0
+GOLANGCI_VERSION    ?= v2.12.2
+GOVULNCHECK_VERSION ?= v1.5.0
+
 GOFLAGS_VENDOR := -mod=vendor
 
 # Version stamped into the .deb. Defaults to the single source of truth in
@@ -26,6 +37,7 @@ DEPLOY_USER ?= timo
 .PHONY: generate build vet test all check cover-gate cover-floors pi deb deploy release
 
 generate:
+	@[ -x "$(TEMPL)" ] || go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION)
 	$(TEMPL) generate
 
 build: generate
@@ -55,8 +67,9 @@ check: generate
 	$(MAKE) cover-gate
 	go build $(GOFLAGS_VENDOR) .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS_VENDOR) -o ggo-kea-dhcp-arm64 .
+	@[ -x "$(GOLANGCI)" ] || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 	$(GOLANGCI) run
-	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@[ -x "$(GOVULNCHECK)" ] || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$(GOVULNCHECK) ./...
 	@if command -v shellcheck >/dev/null; then \
 		shellcheck -S error install.sh packaging/scripts/*.sh; \
@@ -86,10 +99,11 @@ cover-floors:
 pi: generate
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GOFLAGS_VENDOR) -o ggo-kea-dhcp-arm64 .
 
-# Build the installable .deb into dist/ (cross-compiles first). Requires nfpm:
-#   go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-# Copy dist/*.deb next to install.sh onto the Pi; see BUILD_AND_DEPLOY.md.
+# Build the installable .deb into dist/ (cross-compiles first). Installs the pinned
+# nfpm if it is missing. Copy dist/*.deb next to install.sh onto the Pi; see
+# BUILD_AND_DEPLOY.md.
 deb: pi
+	@[ -x "$(NFPM)" ] || go install github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION)
 	mkdir -p dist
 	GGO_VERSION=$(GGO_VERSION) $(NFPM) package --packager deb --config packaging/nfpm.yaml --target dist/
 
