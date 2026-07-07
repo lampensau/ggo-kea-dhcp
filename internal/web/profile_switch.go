@@ -146,6 +146,11 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 	if err != nil || len(scopes) == 0 {
 		return switchPlan{}, fmt.Errorf("Profile %q has no scopes to apply.", name)
 	}
+	// Catch a bad topology (duplicate VLAN, overlapping CIDRs) that an import or
+	// backup-restore could have written into this stored profile - kea -t won't.
+	if err := validateScopeTopology(scopes); err != nil {
+		return switchPlan{}, fmt.Errorf("Profile %q: %w", name, err)
+	}
 
 	// Render + validate the candidate before anything irreversible.
 	boxUplink, _, _ := s.uplinkSettings()
