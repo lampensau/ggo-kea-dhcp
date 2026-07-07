@@ -335,4 +335,16 @@ func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
 	if got, _ := s.sqlite.GetState(stateUpdateVersion); got != "9.9.9" {
 		t.Fatalf("dispatched check did not persist the release: version=%q", got)
 	}
+
+	// Expiry direction (the other half of the throttle contract): once the floor has
+	// elapsed, a fresh navigation dispatches again. Backdate the last-attempt stamp
+	// well past the floor rather than sleeping.
+	s.lastUpdateLoadCheck.Store(time.Now().Add(-2 * updateLoadFloor).UnixNano())
+	if !s.kickUpdateCheckOnLoad() {
+		t.Fatal("a page-load check after the floor elapsed should dispatch again")
+	}
+	s.bgWG.Wait()
+	if got := api.hits.Load(); got != 2 {
+		t.Fatalf("post-expiry dispatch made %d total API requests, want 2", got)
+	}
 }
