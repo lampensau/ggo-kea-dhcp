@@ -259,9 +259,9 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 // network monitor, the ARP presence prober, the Green-GO scanner, and the port-53
 // DNS listeners (bound to the outgoing profile's scope addresses, so they must
 // drop before any re-IP; reconcileActive rebinds on the new addresses). The single
-// teardown used by every ACTIVE-exit path - finishApply, beginSwitch, and
-// reconcileOnboarding - so a lifecycle fix cannot land in one path and strand the
-// others. All stops are idempotent and nil-safe.
+// teardown used by every ACTIVE-exit path - finishApply, beginSwitch,
+// reconcileOnboarding, and process shutdown (stopBackground) - so a lifecycle fix
+// cannot land in one path and strand the others. All stops are idempotent and nil-safe.
 func (s *Server) stopActiveMonitors() {
 	if s.netmon != nil {
 		s.netmon.Stop()

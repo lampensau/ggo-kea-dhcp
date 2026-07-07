@@ -89,39 +89,14 @@ func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
 	return func(net.IP) (int, bool) { return 0, false }
 }
 
-// evictForReservation frees the addresses involved in a freshly-created reservation
-// so the reserved IP can take effect on the device's NEXT renewal (within minutes,
-// given the short active lease timers) instead of only when its current lease lapses.
-// It deletes (a) any lease currently held by the reserved client (matched by isOwner)
-// and (b) any lease occupying the reserved IP itself. Best-effort: lookups/deletes are
-// logged but never fail the reservation. This does NOT force an immediate switch - the
-// server cannot push a renew; the device adopts the reserved IP when it next re-DHCPs.
-func (s *Server) evictForReservation(ctx context.Context, reservedIP string, isOwner func(kea.ActiveLease) bool) {
-	if s.kea == nil {
-		return
-	}
-	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
-	if err != nil {
-		log.Printf("[Reservation] lease lookup for eviction failed: %v", err)
-		return
-	}
-	del := map[string]bool{}
-	for _, l := range leases {
-		if l.IPAddress == reservedIP || isOwner(l) {
-			del[l.IPAddress] = true
-		}
-	}
-	for ip := range del {
-		if err := s.kea.DeleteLease(ctx, ip); err != nil {
-			log.Printf("[Reservation] lease4-del %s failed: %v", ip, err)
-		}
-	}
-}
-
-// evictForReservations is the batch form for a bulk import: it dumps the lease set ONCE
-// and deletes every lease that collides with any imported reservation (holds a reserved
-// IP, or is owned by a reserved MAC), instead of one full GetLeases per row (an N-dump
-// import). Same eviction set as calling evictForReservation per owner.
+// evictForReservations frees the addresses involved in one or more freshly-created
+// reservations so each reserved IP can take effect on the device's NEXT renewal (within
+// minutes, given the short active lease timers) instead of only when its current lease
+// lapses. It dumps the lease set ONCE and deletes every lease that collides with any
+// reservation (holds a reserved IP, or is owned by a reserved MAC) - so a bulk import is
+// one GetLeases, not one per row. Best-effort: lookups/deletes are logged but never fail
+// the reservation. This does NOT force an immediate switch - the server cannot push a
+// renew; the device adopts the reserved IP when it next re-DHCPs.
 func (s *Server) evictForReservations(ctx context.Context, owners []importOwner) {
 	if s.kea == nil || len(owners) == 0 {
 		return
@@ -276,11 +251,10 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	// Free the device's current lease and anything on the reserved IP so the device
 	// adopts the reservation on its next renewal rather than clinging to its old lease.
-	wantMAC := normalizeMAC(hw.String())
 	// Post-commit best-effort cleanup: must NOT be tied to r.Context() - if the
 	// operator navigates away now, the reservation is already committed and the
 	// eviction (so the device adopts it quickly) still has to run to completion.
-	s.evictForReservation(context.Background(), ipStr, func(l kea.ActiveLease) bool { return normalizeMAC(l.HWAddress) == wantMAC })
+	s.evictForReservations(context.Background(), []importOwner{{ip: ipStr, mac: hw.String()}})
 	_ = s.sqlite.LogAudit(s.getActor(r), "RESERVATION_ADD", macStr+" -> "+ipStr, "", "", "SUCCESS")
 	// Propagate to other open pages now: the metrics-only live tick skips the
 	// MariaDB-backed lease/pinning regions, so a reservation that evicts no lease

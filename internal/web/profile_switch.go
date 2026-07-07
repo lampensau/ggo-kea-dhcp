@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"ggo-kea-dhcp/internal/db"
-	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 )
 
@@ -152,39 +151,13 @@ func (s *Server) beginSwitch(targetID int) (switchPlan, error) {
 		return switchPlan{}, fmt.Errorf("Profile %q: %w", name, err)
 	}
 
-	// Render + validate the candidate before anything irreversible.
+	// Render + validate + claim the guard + snapshot, guard held on success (shared
+	// with beginApply). The uplink toggle comes from the box-level setting, not a form.
 	boxUplink, _, _ := s.uplinkSettings()
 	renderScopes, gatewayIP := buildRenderScopes(scopes, boxUplink)
-	in := s.baseRenderInput()
-	in.Scopes = renderScopes
-	// Validate on "*": the target profile's VLAN interfaces aren't created until the
-	// reconcile below, so a per-interface kea -t here would fail "interface doesn't
-	// exist". writeAndReloadKea re-validates the real config once they're up.
-	in.IfaceWildcard = true
-	configStr, _, err := kea.RenderProfile(in)
+	snapPath, err := s.prepareReconcile(renderScopes, "pre-switch")
 	if err != nil {
-		return switchPlan{}, fmt.Errorf("Failed to generate configuration for %q: %w", name, err)
-	}
-	if err := kea.TestConfig(configStr); err != nil {
-		return switchPlan{}, fmt.Errorf("Configuration for %q failed validation: %w", name, err)
-	}
-
-	// A running self-update holds the shared guard too, but name it explicitly.
-	if s.updating.Load() {
-		return switchPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
-	}
-	// Claim the shared mutation guard BEFORE writing any persistent artifact, so a
-	// guard-loser can't orphan a snapshot file + config_snapshots row (beginApply
-	// orders validate-then-claim the same way). snapshotKeaConf then runs under the
-	// guard, never racing an in-flight apply that is mid-writing the conf.
-	if !s.beginReconcile() {
-		return switchPlan{}, fmt.Errorf("A profile apply is already in progress.")
-	}
-
-	snapPath, err := s.snapshotKeaConf("pre-switch")
-	if err != nil {
-		s.endReconcile()
-		return switchPlan{}, fmt.Errorf("Failed to snapshot current configuration: %w", err)
+		return switchPlan{}, err
 	}
 
 	plan := switchPlan{targetProfileID: targetID, profileName: name, snapPath: snapPath, gatewayIP: gatewayIP, allTagged: allScopesTagged(scopes)}

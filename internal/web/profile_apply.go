@@ -101,6 +101,46 @@ type applyPlan struct {
 	prevUplink map[string]string
 }
 
+// prepareReconcile runs the irreversible preamble shared by beginApply and beginSwitch:
+// render the candidate config from renderScopes, validate it (kea -t), refuse if a
+// self-update holds the guard, claim the shared mutation guard, and snapshot the live
+// config under snapLabel. On success it returns the snapshot path WITH THE GUARD HELD -
+// the caller owns endReconcile on any later failure. On failure it holds nothing.
+//
+// Ordering is load-bearing: validate BEFORE claiming the guard, so a doomed candidate
+// never locks the control plane and a busy guard never masks the real validation error
+// (TestBeginApplyValidatesBeforeClaimingGuard pins this). The guard is claimed before any
+// persistent artifact so every irreversible step is serialized by one apply/switch.
+func (s *Server) prepareReconcile(renderScopes []kea.ScopeInput, snapLabel string) (string, error) {
+	in := s.baseRenderInput()
+	in.Scopes = renderScopes
+	// Validate on "*": a scope's eth0.<vid> interface isn't created until the reconcile,
+	// so a per-interface kea -t here would wrongly fail "interface doesn't exist"; the
+	// reconcile re-validates the real per-interface config once the interfaces are up.
+	in.IfaceWildcard = true
+	configStr, _, err := kea.RenderProfile(in)
+	if err != nil {
+		return "", fmt.Errorf("Failed to generate the Kea configuration: %w", err)
+	}
+	if err := kea.TestConfig(configStr); err != nil {
+		return "", fmt.Errorf("The generated configuration failed validation (kea-dhcp4 -t): %w", err)
+	}
+	// A running self-update holds the same guard; name it explicitly rather than let the
+	// guard-busy message below lie about "another profile change".
+	if s.updating.Load() {
+		return "", fmt.Errorf("A software update is in progress - try again once it completes.")
+	}
+	if !s.beginReconcile() {
+		return "", fmt.Errorf("Another profile change is already in progress.")
+	}
+	snapPath, err := s.snapshotKeaConf(snapLabel)
+	if err != nil {
+		s.endReconcile()
+		return "", fmt.Errorf("Failed to snapshot the current configuration: %w", err)
+	}
+	return snapPath, nil
+}
+
 // beginApply is the synchronous half of a profile apply: it renders + validates
 // the candidate Kea config, snapshots the current one, persists the new
 // profile/scopes, and transitions the appliance to the persisted CONFIGURING
@@ -119,44 +159,16 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	}
 	renderScopes, gatewayIP := buildRenderScopes(scopes, uplink.Enabled)
 
-	in := s.baseRenderInput()
-	in.Scopes = renderScopes
-	// Validate listening on "*": a VLAN scope's eth0.<vid> interface isn't created
-	// until finishApply's reconcile, so a per-interface kea -t here would wrongly fail
-	// "interface doesn't exist". The reconcile re-validates the real per-interface
-	// config (writeAndReloadKea) once the interfaces are up.
-	in.IfaceWildcard = true
-	configStr, _, err := kea.RenderProfile(in)
+	// Render + validate + claim the guard + snapshot, guard held on success.
+	snapPath, err := s.prepareReconcile(renderScopes, "pre-apply")
 	if err != nil {
-		return applyPlan{}, fmt.Errorf("Failed to generate Kea configuration: %w", err)
+		return applyPlan{}, err
 	}
 
-	// Validate the candidate before anything irreversible touches disk/Kea.
-	if err := kea.TestConfig(configStr); err != nil {
-		return applyPlan{}, fmt.Errorf("Generated configuration failed validation (kea-dhcp4 -t): %w", err)
-	}
-
-	// A running self-update holds the shared guard too, but name it explicitly -
-	// "apply in progress" would be a lie while the box is mid-update. Checked
-	// HERE, after the up-to-30s render+kea -t, so an update that started while we
-	// were validating still gets its own message (beginSwitch orders the same way).
-	if s.updating.Load() {
-		return applyPlan{}, fmt.Errorf("A software update is in progress - try again once it completes.")
-	}
-	// Claim the shared mutation guard only now that the candidate validated, and
-	// BEFORE any persistent artifact (uplink capture, conf snapshot, profile rows),
-	// so every irreversible step below is serialized by one apply. Claiming after
-	// the validation means a doomed candidate never locks the control plane, and a
-	// busy guard doesn't mask the real validation feedback. Cleared by
-	// finishApply's defer, or endReconcile on an early error.
-	if !s.beginReconcile() {
-		return applyPlan{}, fmt.Errorf("A profile apply is already in progress.")
-	}
-
-	// Capture the current box-level uplink for finishApply's failure restore. A
-	// read error aborts the apply: proceeding would capture "" and a later
-	// rollback would then "restore" empty credentials over the real ones -
-	// nothing has been written yet, so aborting here leaves the box untouched.
+	// Capture the current box-level uplink for finishApply's failure restore, now that
+	// the guard is held. A read error aborts the apply: proceeding would capture "" and a
+	// later rollback would then "restore" empty credentials over the real ones - only the
+	// snapshot has been written so far, so aborting here leaves the box untouched.
 	prevUplink := make(map[string]string, len(uplinkStateKeys))
 	for _, k := range uplinkStateKeys {
 		v, err := s.sqlite.GetState(k)
@@ -165,13 +177,6 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 			return applyPlan{}, fmt.Errorf("Failed to read the current WiFi uplink for rollback: %w", err)
 		}
 		prevUplink[k] = v
-	}
-
-	// Snapshot the current live config so a failed apply can be rolled back.
-	snapPath, err := s.snapshotKeaConf("pre-apply")
-	if err != nil {
-		s.endReconcile()
-		return applyPlan{}, fmt.Errorf("Failed to snapshot current configuration: %w", err)
 	}
 
 	plan := applyPlan{snapPath: snapPath, gatewayIP: gatewayIP, prevUplink: prevUplink}
