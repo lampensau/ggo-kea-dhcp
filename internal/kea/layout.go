@@ -9,9 +9,8 @@ import (
 
 // layout.go is the generalized pool allocator for the per-pool scope model
 // (Fixed / Elastic-weighted / Reserve + explicit order) the wizard pool plan and
-// the flat/custom presets build on. It is additive: the legacy GenerateElasticPools
-// path is untouched, and TestLayoutPools_MatchesGoldenElastic proves that the
-// greengo configuration expressed as specs reproduces it byte-for-byte.
+// the flat/custom presets build on. TestLayoutPools_MatchesGoldenElastic pins the
+// greengo configuration (expressed as specs) to its exact expected ranges.
 
 // PoolKind classifies how a pool is sized in the layout.
 type PoolKind int
@@ -59,9 +58,7 @@ const (
 // SizeForClass returns the auto-sized Fixed pool size for a device/catch-all
 // class: the forecast count itself, floored to the class minimum (FloorForClass).
 // No headroom is added - sizing is WYSIWYG, so the number the operator sets (or a
-// preset's count) is the pool size. (The legacy GenerateElasticPools oracle still
-// multiplies by a per-class headroom - held test-locally now - and is retained only as
-// a historical test-only reference; it no longer mirrors this path.)
+// preset's count) is the pool size.
 func SizeForClass(class string, count int) int {
 	return max(count, FloorForClass(class))
 }

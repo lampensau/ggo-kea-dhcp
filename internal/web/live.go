@@ -81,20 +81,6 @@ func (h *liveHub) clientCount() int {
 	return len(h.subs)
 }
 
-// publish broadcasts a fragment to every subscriber unconditionally (no per-page
-// scoping). Used by tests; production paths go through publishIfChanged with a
-// region so the patch is scoped to the pages that actually contain it.
-func (h *liveHub) publish(fragment string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.subs {
-		select {
-		case ch <- fragment:
-		default:
-		}
-	}
-}
-
 // publishIfChanged broadcasts fragment only if it differs from the last fragment
 // sent for region. It reports whether a broadcast happened (used by tests and to
 // keep the ticker quiet). region is the hash key, not part of the payload - the

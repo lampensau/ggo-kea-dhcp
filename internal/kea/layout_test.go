@@ -19,7 +19,7 @@ func dhcpRanges(ps []PoolPlacement) []PoolConfig {
 // the legacy greengo elastic layout byte-for-byte when fed the equivalent specs:
 // a leading static Reserve (.2–.19), each device class Fixed at its count×headroom
 // size, the two catch-alls, and BPX as the single Elastic remainder - in order.
-// The expected ranges are identical to TestGenerateElasticPools_Golden.
+// These expected ranges are the canonical greengo elastic golden.
 func TestLayoutPools_MatchesGoldenElastic(t *testing.T) {
 	specs := []PoolSpec{
 		{Kind: PoolReserve, Size: 18}, // static reserve .2 - .19

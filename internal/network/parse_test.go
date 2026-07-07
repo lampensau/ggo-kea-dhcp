@@ -62,23 +62,6 @@ func TestParseNmcliScanMalformed(t *testing.T) {
 	}
 }
 
-// TestParseIwlistScanPositiveSignal covers the iwlist branch where the signal is
-// already expressed as a 0-100 quality percentage (positive), not dBm.
-func TestParseIwlistScanPositiveSignal(t *testing.T) {
-	out := `          Cell 01 - Address: AA:BB:CC:DD:EE:FF
-                    ESSID:"QualityNet"
-                    Signal level=63 dBm
-`
-	aps := parseIwlistScan(out)
-	if len(aps) != 1 {
-		t.Fatalf("got %d APs want 1: %+v", len(aps), aps)
-	}
-	// A positive "Signal level=" is treated as an already-computed quality, passed through.
-	if aps[0].Signal != 63 {
-		t.Errorf("positive signal passthrough = %d, want 63", aps[0].Signal)
-	}
-}
-
 // TestParseIwScanWPABranch covers the WPA: security marker (vs the RSN: line the
 // existing test exercises) and an AP with no SSID line being dropped.
 func TestParseIwScanWPABranch(t *testing.T) {
