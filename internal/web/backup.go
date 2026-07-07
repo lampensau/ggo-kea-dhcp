@@ -46,6 +46,11 @@ type Backup struct {
 	Users      []BackupUser      `json:"users"`
 	Profiles   []BackupProfile   `json:"profiles"`
 	PortLabels []BackupPortLabel `json:"port_labels"`
+	// Settings are the durable box-level app_state values (WiFi uplink + SoftAP
+	// credentials, global DHCP options, lease lifetime, onboarding IP) that live
+	// outside any profile row. Only non-empty keys are carried. Absent (nil) in
+	// pre-existing bundles, in which case restore leaves the live values alone.
+	Settings map[string]string `json:"settings,omitempty"`
 	// ReservationsIncluded is true when MariaDB was reachable at export, so the
 	// hosts table was captured (even if it had zero rows). It lets restore tell
 	// "no reservations because there were none" (overwrite the live table) from "no
@@ -88,6 +93,19 @@ type BackupHost struct {
 	Hostname       string `json:"hostname"`
 }
 
+// backupSettingKeys are the durable box-level app_state keys the bundle carries.
+// Deliberately NOT the reset.go wipe set: this omits the transient dhcp_standdown
+// (restore clears it), and adds lease_lifetime (a real box setting the wipe set
+// happens not to list). lifecycle and the update_*/db_recovered_* records are
+// handled elsewhere or intentionally left out.
+var backupSettingKeys = []string{
+	"onboarding_ip",
+	"softap_ssid", "softap_pass",
+	"uplink_dns", "global_dhcp_options",
+	"uplink_enabled", "uplink_ssid", "uplink_pass",
+	"lease_lifetime",
+}
+
 // buildBackup assembles the full backup bundle from SQLite + MariaDB.
 func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	b := &Backup{
@@ -97,6 +115,17 @@ func (s *Server) buildBackup(ctx context.Context) (*Backup, error) {
 	}
 	_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&b.AppSchema)
 	b.Lifecycle, _ = s.sqlite.GetState(db.LifecycleStateKey)
+
+	// Box-level settings (app_state keys outside any profile). Only non-empty keys
+	// are carried; an unset key is equivalent to its default and needs no restore.
+	for _, k := range backupSettingKeys {
+		if v, _ := s.sqlite.GetState(k); v != "" {
+			if b.Settings == nil {
+				b.Settings = map[string]string{}
+			}
+			b.Settings[k] = v
+		}
+	}
 
 	// Each table read runs in its own closure so `defer rows.Close()` releases the
 	// cursor before the next query: the sqlite pool is capped at ONE connection
@@ -318,6 +347,26 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			if _, err := tx.Exec("INSERT INTO port_labels (flex_id_hex, label, location, notes) VALUES (?, ?, ?, ?)",
 				l.FlexIDHex, l.Label, l.Location, l.Notes); err != nil {
 				return "", fmt.Errorf("restore port label: %w", err)
+			}
+		}
+	}
+
+	// Box-level settings ride with the profiles section (uplink is conceptually tied
+	// to the active profile). Upsert only, never clear: a key the bundle didn't carry
+	// is left at its current value rather than reverted - so an older bundle without a
+	// settings map (nil) is a no-op, and restore never wipes a box setting the backup
+	// simply didn't capture. dhcp_standdown was already deleted above and is not a key
+	// here, so it stays cleared.
+	if sel["profiles"] && b.Settings != nil {
+		for _, k := range backupSettingKeys {
+			v, ok := b.Settings[k]
+			if !ok {
+				continue
+			}
+			if _, err := tx.Exec(
+				"INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+				k, v); err != nil {
+				return "", fmt.Errorf("restore setting %q: %w", k, err)
 			}
 		}
 	}

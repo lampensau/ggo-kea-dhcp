@@ -50,6 +50,17 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		t.Fatalf("seed lifecycle: %v", err)
 	}
+	// Box-level settings that live in app_state outside any profile row.
+	if err := s.sqlite.SetStates(map[string]string{
+		"uplink_enabled":      "true",
+		"uplink_ssid":         "TourNet",
+		"uplink_pass":         "s3cret-passphrase",
+		"softap_ssid":         "GGO-Onboard",
+		"global_dhcp_options": `{"6":"10.0.0.1"}`,
+		"lease_lifetime":      "7200",
+	}); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
 
 	// Export.
 	b, err := s.buildBackup(t.Context())
@@ -68,6 +79,9 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if b.Lifecycle != db.StateActive {
 		t.Fatalf("backup lifecycle = %q, want ACTIVE", b.Lifecycle)
 	}
+	if b.Settings["uplink_ssid"] != "TourNet" || b.Settings["uplink_pass"] != "s3cret-passphrase" || b.Settings["lease_lifetime"] != "7200" {
+		t.Fatalf("backup settings wrong: %+v", b.Settings)
+	}
 
 	// Simulate the file round-trip (download -> upload).
 	raw, _ := json.Marshal(b)
@@ -82,6 +96,10 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateFactory); err != nil {
 		t.Fatalf("mutate lifecycle: %v", err)
+	}
+	// Wipe the box settings so the restore has something to bring back.
+	if _, err := s.sqlite.Exec("DELETE FROM app_state WHERE key IN ('uplink_ssid','uplink_pass','lease_lifetime')"); err != nil {
+		t.Fatalf("wipe settings: %v", err)
 	}
 
 	// Restore.
@@ -117,6 +135,15 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	}
 	if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive {
 		t.Errorf("restored lifecycle = %q, want ACTIVE", st)
+	}
+	if v, _ := s.sqlite.GetState("uplink_ssid"); v != "TourNet" {
+		t.Errorf("restored uplink_ssid = %q, want TourNet", v)
+	}
+	if v, _ := s.sqlite.GetState("uplink_pass"); v != "s3cret-passphrase" {
+		t.Errorf("restored uplink_pass = %q, want the passphrase", v)
+	}
+	if v, _ := s.sqlite.GetState("lease_lifetime"); v != "7200" {
+		t.Errorf("restored lease_lifetime = %q, want 7200", v)
 	}
 }
 
