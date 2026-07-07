@@ -308,3 +308,31 @@ func TestUpdateRepoEnvOverride(t *testing.T) {
 		t.Errorf("fetch path = %q, want the overridden repo path", gotPath)
 	}
 }
+
+// TestKickUpdateCheckOnLoadThrottles is the #115 guard: the page-load check dispatches
+// once, then a burst of immediate follow-ups is throttled, so navigation refreshes the
+// badge without a request per click. The one dispatched check reaches the API exactly
+// once; the throttled calls make no request.
+func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
+	api := &releaseAPI{tag: "v9.9.9", body: "notes", digest: "sha256:ab12"}
+	s, _ := newUpdateTestServer(t, api)
+	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+
+	if !s.kickUpdateCheckOnLoad() {
+		t.Fatal("first page-load check should dispatch")
+	}
+	for i := 0; i < 5; i++ {
+		if s.kickUpdateCheckOnLoad() {
+			t.Fatalf("page-load check %d within the floor should be throttled", i+2)
+		}
+	}
+
+	// Join the one dispatched background check, then assert it hit the API exactly once.
+	s.bgWG.Wait()
+	if got := api.hits.Load(); got != 1 {
+		t.Fatalf("throttled load checks made %d API requests, want exactly 1", got)
+	}
+	if got, _ := s.sqlite.GetState(stateUpdateVersion); got != "9.9.9" {
+		t.Fatalf("dispatched check did not persist the release: version=%q", got)
+	}
+}

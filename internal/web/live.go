@@ -619,6 +619,12 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 	ch := s.live.subscribe(page)
 	defer s.live.unsubscribe(ch)
 
+	// A page navigation reconnects this stream, so it doubles as the "operator is
+	// active" signal for a throttled update check - the badge then refreshes while
+	// they click around instead of only on the 30-minute ticker. Self-throttled and
+	// ACTIVE+backoff-gated, so this is cheap on a burst of navigations.
+	s.kickUpdateCheckOnLoad()
+
 	ctx := r.Context()
 
 	// One-shot snapshot on connect so a freshly-(re)connected client syncs immediately,
