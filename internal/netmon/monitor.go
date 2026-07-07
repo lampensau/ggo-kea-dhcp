@@ -197,6 +197,18 @@ func (m *Monitor) frameNow() time.Time { return m.clock().Add(-m.frameClockOffse
 
 // resetTickBaseline clears the frame-clock's per-capture tick baseline (see
 // serveOnce). Touched only on the monitor goroutine, like the fields it clears.
+//
+// TRADEOFF (deliberate, not a pure win): not crediting the fault+backoff gap means
+// frameNow jumps FORWARD by that gap (up to maxBackoff) on the first post-restart
+// tick, instead of staying frozen. A genuinely-absent device is then reported lost
+// promptly (the fix). The flip-side: a still-PRESENT short-window frame-fed detector
+// - PTP grandmaster most of all (absence threshold in seconds) - can fire a brief
+// false "lost" on that first tick, because its last sighting predates the blackout
+// and now reads gap-stale against the jumped clock. It self-heals within one announce
+// interval once the device re-announces. We accept that for this warn-only monitor
+// (netmon never mutates Kea): a self-healing blip right after an already-abnormal
+// fault is better than reporting a real loss up to maxBackoff late, and "we were
+// blind for the gap, reconfirm before trusting presence" is the honest posture.
 func (m *Monitor) resetTickBaseline() {
 	m.prevBlind = false
 	m.haveTick = false
