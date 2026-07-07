@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -95,24 +96,54 @@ func (c *Config) initKeaSecret() error {
 	// Ensure directory exists
 	dir := filepath.Dir(c.KeaSecretPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		slog.Warn("kea secret dir not writable - falling back to local dev paths (Kea configs will be written there too)",
-			"dir", dir, "err", err)
-		return c.fallbackToLocalDir(token)
+		return c.fallbackOrFail(token, "kea secret dir "+dir, err)
 	}
 
 	// Write token to file
 	if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
-		slog.Warn("kea secret not writable - falling back to local dev paths (Kea configs will be written there too)",
-			"path", c.KeaSecretPath, "err", err)
-		return c.fallbackToLocalDir(token)
+		return c.fallbackOrFail(token, "kea secret file "+c.KeaSecretPath, err)
 	}
 
 	return nil
 }
 
+// keaInstalled reports whether the kea-dhcp4 binary is present - the signal that
+// this is a real appliance, not a dev sandbox. A package var so tests can force
+// either mode. ponytail: the PATH+sbin list is duplicated from kea.keaBinaryPath /
+// network.ToolPresent, but config is a foundational package that must not import
+// those (import cycle + coupling); a local 8-line check is the lesser evil.
+var keaInstalled = func() bool {
+	if _, err := exec.LookPath("kea-dhcp4"); err == nil {
+		return true
+	}
+	for _, p := range []string{"/usr/sbin/kea-dhcp4", "/usr/local/sbin/kea-dhcp4", "/sbin/kea-dhcp4"} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// fallbackOrFail decides what a non-writable Kea secret/conf path means. In a dev
+// sandbox (no kea-dhcp4 installed) it silently redirects to ./test-kea-gui so the
+// app still runs. On a real appliance (kea-dhcp4 present) a non-writable /etc/kea
+// is a genuine fault: silently repointing KeaConfDir would send every rendered
+// kea-dhcp4.conf to a directory Kea never reads (reconciles "succeed", DHCP serves
+// stale config forever), so it FAILS LOUD instead - Load()'s error aborts boot and
+// systemd restarts, surfacing a transient race or a real permission problem.
+func (c *Config) fallbackOrFail(token, what string, cause error) error {
+	if keaInstalled() {
+		return fmt.Errorf("%s is not writable and kea-dhcp4 is installed (not a dev sandbox) - refusing to silently redirect Kea config to ./test-kea-gui; fix permissions on %s: %w",
+			what, filepath.Dir(c.KeaSecretPath), cause)
+	}
+	slog.Warn("kea secret path not writable and kea-dhcp4 absent - dev fallback to local paths (Kea configs will be written there too)",
+		"what", what, "err", cause)
+	return c.fallbackToLocalDir(token)
+}
+
 // fallbackToLocalDir repoints the Kea secret + conf paths at a writable local
-// directory (the dev / read-only-fs case) and writes the secret there. Both the
-// dir-create and write failure paths in initKeaSecret converge here.
+// directory and writes the secret there. Only reached from fallbackOrFail when
+// kea-dhcp4 is absent (a dev sandbox), never on a real appliance.
 func (c *Config) fallbackToLocalDir(token string) error {
 	const localDir = "./test-kea-gui"
 	c.KeaSecretPath = filepath.Join(localDir, "gui-secret")
