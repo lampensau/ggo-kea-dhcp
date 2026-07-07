@@ -310,15 +310,9 @@ func dbmToQuality(dbm int) int {
 	return max(0, min(100, 2*(dbm+100)))
 }
 
-// wifiScanParser shares the AP-accumulation state machine (currentAP lifecycle +
-// SSID dedup) across the per-tool scan formats; callers supply only the
-// format-specific "is this a new AP?" predicate and the field extractor.
-type wifiScanParser struct {
-	isNewAP func(line string) bool
-	apply   func(ap *WifiAP, line string)
-}
-
-func (p wifiScanParser) parse(out string) []WifiAP {
+// parseIwScan parses the output of `iw dev wlan0 scan`, accumulating one WifiAP per
+// BSS block and de-duplicating by SSID.
+func parseIwScan(out string) []WifiAP {
 	var aps []WifiAP
 	var cur *WifiAP
 	seen := make(map[string]bool)
@@ -330,7 +324,7 @@ func (p wifiScanParser) parse(out string) []WifiAP {
 	}
 	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
-		if p.isNewAP(line) {
+		if strings.HasPrefix(line, "BSS ") {
 			flush()
 			cur = &WifiAP{Security: "Open"}
 			continue
@@ -338,59 +332,22 @@ func (p wifiScanParser) parse(out string) []WifiAP {
 		if cur == nil {
 			continue
 		}
-		p.apply(cur, line)
+		switch {
+		case strings.HasPrefix(line, "SSID:"):
+			cur.SSID = strings.TrimSpace(strings.TrimPrefix(line, "SSID:"))
+		case strings.HasPrefix(line, "signal:"):
+			if parts := strings.Fields(line); len(parts) >= 2 {
+				var dbm float64
+				if _, err := fmt.Sscanf(parts[1], "%f", &dbm); err == nil {
+					cur.Signal = dbmToQuality(int(dbm))
+				}
+			}
+		case strings.Contains(line, "RSN:"), strings.Contains(line, "WPA:"), strings.Contains(line, "WPA2:"):
+			cur.Security = "WPA2/WPA3"
+		}
 	}
 	flush()
 	return aps
-}
-
-// parseIwScan parses the output of `iw dev wlan0 scan`.
-func parseIwScan(out string) []WifiAP {
-	return wifiScanParser{
-		isNewAP: func(l string) bool { return strings.HasPrefix(l, "BSS ") },
-		apply: func(ap *WifiAP, l string) {
-			switch {
-			case strings.HasPrefix(l, "SSID:"):
-				ap.SSID = strings.TrimSpace(strings.TrimPrefix(l, "SSID:"))
-			case strings.HasPrefix(l, "signal:"):
-				if parts := strings.Fields(l); len(parts) >= 2 {
-					var dbm float64
-					if _, err := fmt.Sscanf(parts[1], "%f", &dbm); err == nil {
-						ap.Signal = dbmToQuality(int(dbm))
-					}
-				}
-			case strings.Contains(l, "RSN:"), strings.Contains(l, "WPA:"), strings.Contains(l, "WPA2:"):
-				ap.Security = "WPA2/WPA3"
-			}
-		},
-	}.parse(out)
-}
-
-// parseIwlistScan parses the output of `iwlist wlan0 scan`.
-func parseIwlistScan(out string) []WifiAP {
-	return wifiScanParser{
-		isNewAP: func(l string) bool { return strings.Contains(l, "Cell ") },
-		apply: func(ap *WifiAP, l string) {
-			switch {
-			case strings.HasPrefix(l, "ESSID:"):
-				ap.SSID = strings.Trim(strings.TrimPrefix(l, "ESSID:"), "\"")
-			case strings.Contains(l, "Signal level="):
-				parts := strings.Split(l, "Signal level=")
-				if len(parts) >= 2 {
-					var dbm int
-					if _, err := fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &dbm); err == nil {
-						if dbm < 0 {
-							ap.Signal = dbmToQuality(dbm)
-						} else {
-							ap.Signal = dbm // already a quality percentage
-						}
-					}
-				}
-			case strings.Contains(l, "WPA2"), strings.Contains(l, "WPA3"), strings.Contains(l, "IEEE 802.11i"):
-				ap.Security = "WPA2/WPA3"
-			}
-		},
-	}.parse(out)
 }
 
 // splitNmcliTerse splits one line of nmcli --terse output on field-separator colons,
@@ -440,7 +397,7 @@ func parseNmcliScan(out string) []WifiAP {
 	return aps
 }
 
-// ScanWifi queries available wireless networks via iw, iwlist, or nmcli in turn.
+// ScanWifi queries available wireless networks via iw, then nmcli, in turn.
 func (m *Manager) ScanWifi() ([]WifiAP, error) {
 	// If wlan0 doesn't physically exist, return mock data for development.
 	if _, err := os.Stat("/sys/class/net/wlan0"); err != nil {
@@ -465,16 +422,6 @@ func (m *Manager) ScanWifi() ([]WifiAP, error) {
 	} else {
 		lastErr = err
 		log.Printf("WiFi scanning via iw failed: %v", err)
-	}
-
-	if out, err := m.cmd.Run("iwlist", "wlan0", "scan"); err == nil {
-		if aps := parseIwlistScan(out); len(aps) > 0 {
-			sortBySignal(aps)
-			return aps, nil
-		}
-	} else {
-		lastErr = err
-		log.Printf("WiFi scanning via iwlist failed: %v", err)
 	}
 
 	_, _ = m.cmd.Run("nmcli", "device", "wifi", "rescan")

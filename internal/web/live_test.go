@@ -94,7 +94,7 @@ func TestLiveHubPublishReachesSubscriber(t *testing.T) {
 		t.Fatalf("clientCount = %d, want 1", got)
 	}
 
-	h.publish(`<span id="state-badge">ACTIVE</span>`)
+	h.publishIfChanged("state-badge", `<span id="state-badge">ACTIVE</span>`)
 	got, ok := recvOne(ch)
 	if !ok {
 		t.Fatal("subscriber received no fragment")
@@ -193,8 +193,8 @@ func TestLiveHubUnsubscribe(t *testing.T) {
 	if _, open := <-ch; open {
 		t.Fatal("channel should be closed after unsubscribe")
 	}
-	// Publishing with no subscribers must not panic.
-	h.publish("noop")
+	// Broadcasting with no subscribers must not panic, and the change gate still
+	// reports the change.
 	if h.publishIfChanged("r", "x") != true {
 		t.Fatal("publishIfChanged should still report change with zero subscribers")
 	}

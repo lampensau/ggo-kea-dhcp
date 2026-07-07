@@ -116,31 +116,6 @@ BSS 11:22:33:44:55:66(on wlan0)
 	}
 }
 
-func TestParseIwlistScan(t *testing.T) {
-	out := `          Cell 01 - Address: AA:BB:CC:DD:EE:FF
-                    ESSID:"TestNet"
-                    Signal level=-60 dBm
-                    IE: IEEE 802.11i/WPA2 Version 1
-          Cell 02 - Address: 11:22:33:44:55:66
-                    ESSID:"OpenNet"
-                    Signal level=-75 dBm
-`
-	aps := parseIwlistScan(out)
-	if len(aps) != 2 {
-		t.Fatalf("got %d APs want 2: %+v", len(aps), aps)
-	}
-	byName := map[string]WifiAP{}
-	for _, ap := range aps {
-		byName[ap.SSID] = ap
-	}
-	if got := byName["TestNet"]; got.Signal != 80 || got.Security != "WPA2/WPA3" {
-		t.Errorf("TestNet parsed wrong: %+v", got)
-	}
-	if got := byName["OpenNet"]; got.Signal != 50 || got.Security != "Open" {
-		t.Errorf("OpenNet parsed wrong: %+v", got)
-	}
-}
-
 func TestParseNmcliScan(t *testing.T) {
 	out := "TestNet:72:WPA2\nOpenNet:55:\nTestNet:30:WPA2\n" // duplicate TestNet ignored
 	aps := parseNmcliScan(out)
