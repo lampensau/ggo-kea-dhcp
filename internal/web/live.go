@@ -627,7 +627,7 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 	// control socket, dashboardFragments hits MariaDB + renders - so it runs in a
 	// goroutine and is funneled through `snap`: a wedged backend then delays only this
 	// client's first sync, not the SSE accept itself. All sse writes stay on THIS
-	// goroutine (the select loop); the goroutine only computes, never writes sse.
+	// goroutine (streamLive); the goroutine only computes, never writes sse.
 	snap := make(chan string, 8)
 	go func() {
 		// close stays outside the recover wrapper: even a panicked snapshot must
@@ -655,24 +655,43 @@ func (s *Server) handleSSELive(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	for {
+	streamLive(ctx, snap, ch, func(fragment string) error { return sse.PatchElements(fragment) })
+}
+
+// streamLive writes the one-shot connect snapshot to the client, THEN forwards
+// live hub fragments. It drains `snap` to completion before reading `ch` at all:
+// subscribe already ran, so any hub push arriving during the snapshot buffers in
+// `ch` and is written AFTER the snapshot fragments. Since the hub is always at
+// least as fresh as the snapshot (publishDashboard forces maxAge 0; the snapshot
+// reads the <=3s lease cache), a fresher live push for a region can never be
+// reverted by a late snapshot write for that same region - the race that left
+// leases-body stale until the next mutation. patch writes one fragment; a non-nil
+// return (client gone) ends the stream. All writes stay on the caller's goroutine.
+func streamLive(ctx context.Context, snap, ch <-chan string, patch func(string) error) {
+	for snap != nil {
 		select {
 		case <-ctx.Done():
 			return
 		case fragment, ok := <-snap:
 			if !ok {
-				snap = nil // snapshot drained; a nil channel never selects again
+				snap = nil // snapshot drained; move on to live pushes
 				continue
 			}
-			if err := sse.PatchElements(fragment); err != nil {
+			if err := patch(fragment); err != nil {
 				return
 			}
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
 		case fragment, ok := <-ch:
 			if !ok {
 				return
 			}
 			// Default outer-morph patches by the fragment's element id.
-			if err := sse.PatchElements(fragment); err != nil {
+			if err := patch(fragment); err != nil {
 				return // client gone; unsubscribe via defer
 			}
 		}
