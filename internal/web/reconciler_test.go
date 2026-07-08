@@ -61,11 +61,13 @@ func newTestServer(t testing.TB) (*Server, *network.RecordingCommander) {
 			KeaAPIURL:     "http://127.0.0.1:1/",
 			BindAddr:      "127.0.0.1:8080",
 		},
-		sqlite: sqlite,
-		kea:    kea.NewClient("http://127.0.0.1:1/", "gui", "x"),
-		dns:    dns.New(""),
-		net:    network.NewManagerWithCommander(rec),
-		bg:     newBgRunner(),
+		sqlite:   sqlite,
+		kea:      kea.NewClient("http://127.0.0.1:1/", "gui", "x"),
+		dns:      dns.New(""),
+		net:      network.NewManagerWithCommander(rec),
+		bg:       newBgRunner(),
+		lastSeen: newLastSeenTracker(),
+		ggoFw:    newFwCensus(),
 	}
 	return s, rec
 }

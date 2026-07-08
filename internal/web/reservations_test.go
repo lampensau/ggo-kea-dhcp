@@ -17,10 +17,10 @@ func TestMarkLeaseLastSeen_ShadowSuppressed(t *testing.T) {
 	const pinnedMAC = "00:1f:80:22:02:f0"
 	const goneMAC = "00:1f:80:22:02:aa"
 	now := time.Now().Unix()
-	s.lastSeen = map[string]int64{
+	s.lastSeen.prime(map[string]int64{
 		normalizeMAC(pinnedMAC): now - 5,           // device renewing now -> "just now"
 		normalizeMAC(goneMAC):   now - 40*24*60*60, // 40 days ago -> aged + stale
-	}
+	})
 
 	rows := []views.LeaseRow{
 		{IPAddress: "10.0.0.99", HWAddress: pinnedMAC, Presence: "online"},   // the real pinned lease

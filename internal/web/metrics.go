@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 )
@@ -231,50 +230,25 @@ func (s *Server) sampleMetrics() {
 	s.maybeRebuildDNSZone(ctx, leases)
 }
 
-// lastSeenAdvance is the minimum cltt advance (seconds) before a last_seen row is
-// re-persisted. cltt only moves on a renewal (infrequent), so this collapses the
-// steady state to ~zero SQLite writes between renewals - the in-memory map still
-// tracks every sample for display.
-const lastSeenAdvance = 60
-
 // recordLastSeen updates the last-seen tracker from the currently-active leases: each
 // lease's cltt for its MAC, and (when its client-id decodes to a switch port) for the
-// flex-id key. The in-memory map always takes the freshest value; SQLite is written
-// only for identities whose cltt advanced past what was last persisted.
+// flex-id key. The tracker takes the freshest value; SQLite is written only for
+// identities whose cltt advanced past what was last persisted.
 func (s *Server) recordLastSeen(leases []kea.ActiveLease) {
-	// The map work is scoped so the lock is released via defer even if anything in
-	// here panics: this runs under the sampler's panic recovery (sampleOnceSafe),
-	// and a lock left held would wedge every later tick and page render (all of
-	// which take lastSeenMu), turning a recoverable panic into a UI-wide deadlock.
-	// The SQLite write stays outside the lock.
-	pending := func() map[string]db.LastSeen {
-		pending := make(map[string]db.LastSeen)
-		s.lastSeenMu.Lock()
-		defer s.lastSeenMu.Unlock()
-		record := func(identity, kind string, cltt int64) {
-			if cltt > s.lastSeen[identity] {
-				s.lastSeen[identity] = cltt
-			}
-			if cltt-s.lastSeenWritten[identity] >= lastSeenAdvance {
-				s.lastSeenWritten[identity] = cltt
-				pending[identity] = db.LastSeen{Identity: identity, Kind: kind, LastSeen: cltt}
-			}
+	var obs []lastSeenObs
+	for _, l := range leases {
+		if l.Cltt <= 0 {
+			continue
 		}
-		for _, l := range leases {
-			if l.Cltt <= 0 {
-				continue
-			}
-			if mac := normalizeMAC(l.HWAddress); mac != "" {
-				record(mac, "lease", l.Cltt)
-			}
-			if id, ok := decodePortIdentity(l.ClientID); ok {
-				record(id.Key, "port", l.Cltt)
-			}
+		if mac := normalizeMAC(l.HWAddress); mac != "" {
+			obs = append(obs, lastSeenObs{identity: mac, kind: "lease", cltt: l.Cltt})
 		}
-		return pending
-	}()
-
-	if err := s.sqlite.UpsertLastSeen(pending); err != nil {
+		if id, ok := decodePortIdentity(l.ClientID); ok {
+			obs = append(obs, lastSeenObs{identity: id.Key, kind: "port", cltt: l.Cltt})
+		}
+	}
+	// The tracker holds its lock only for the map work; the SQLite write stays outside.
+	if err := s.sqlite.UpsertLastSeen(s.lastSeen.record(obs)); err != nil {
 		log.Printf("[last-seen] upsert failed: %v", err)
 	}
 }

@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"log"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,23 +81,19 @@ type Server struct {
 	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
 	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
 	ggoscan deviceScanner
-	// ggoFwMu guards ggoFwScopes: the greengo-preset scopes the scanner targets
-	// (iface + subnet), refreshed on every startGgoScan. Used to attribute
-	// firmware-mismatch findings to the owning scope's Network Health sub-card.
-	// Never cleared on Stop - outside ACTIVE netmon is down too, so there are no
-	// interface cards to attach to and a stale mapping is inert.
 	// reservationMu serializes the reservation conflict-check + insert (single add and
 	// bulk import) so two concurrent writes can't both pass the check for the same IP
 	// and both insert - the hosts unique key does not include ipv4_address, so the DB
 	// would not catch it. Single-process, so an in-process mutex is sufficient.
 	reservationMu sync.Mutex
 
-	ggoFwMu     sync.Mutex
-	ggoFwScopes []fwScope
-	// ggoFwLastSig is the last audited firmware-mismatch census ("" = uniform), so
-	// attachFirmware audits transitions once, not on every render (see
-	// auditFirmwareTransition).
-	ggoFwLastSig string
+	// ggoFw owns the Green-GO firmware-mismatch audit state: the greengo-preset scopes
+	// the scanner targets (iface + subnet, refreshed on every startGgoScan, used to
+	// attribute findings to the owning scope's Network Health sub-card) and the last
+	// audited mismatch census. Scopes are never cleared on Stop - outside ACTIVE netmon
+	// is down too, so there are no interface cards to attach to and a stale mapping is
+	// inert.
+	ggoFw *fwCensus
 	// leaseIPs is a single TTL-memoized provider of the active-lease IPs, shared by the
 	// ARP prober and the Green-GO scanner so their ~10s cycles collapse to ONE Kea
 	// GetLeases round-trip per cycle instead of one each.
@@ -127,13 +122,8 @@ type Server struct {
 	sysHealth *sysHealthStore
 	// lastSeen tracks when each identity (normalized MAC for leases, flex-id key for
 	// switch ports) was last observed active, so a pinned-but-offline port / offline
-	// reservation can show "last active 3d ago". It is the freshest in-memory view
-	// (updated every metrics sample from lease cltt); lastSeenWritten mirrors what has
-	// been persisted to SQLite so the sampler only writes on a meaningful advance
-	// (the Pi's SD card is write-sensitive). Both are primed from SQLite at startup.
-	lastSeenMu      sync.RWMutex
-	lastSeen        map[string]int64
-	lastSeenWritten map[string]int64
+	// reservation can show "last active 3d ago". Primed from SQLite at startup.
+	lastSeen *lastSeenTracker
 	// lastLeases caches the most recent successful Kea lease fetch so the degraded
 	// (Kea-down) live path can keep rendering the periodic regions from known data
 	// instead of freezing every region for the whole outage.
@@ -287,15 +277,12 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
 	s.bg = newBgRunner()
-	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
+	s.ggoFw = newFwCensus()
+	// Prime the last-seen tracker from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
-	s.lastSeen = map[string]int64{}
-	s.lastSeenWritten = map[string]int64{}
+	s.lastSeen = newLastSeenTracker()
 	if ls, err := sqlite.LoadLastSeen(); err == nil {
-		for k, v := range ls {
-			s.lastSeen[k] = v
-			s.lastSeenWritten[k] = v
-		}
+		s.lastSeen.prime(ls)
 	} else {
 		log.Printf("[last-seen] prime from SQLite failed: %v", err)
 	}
@@ -305,9 +292,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 // lastSeenSnapshot returns a copy of the freshest last-seen map (identity -> epoch)
 // for the page builders, so a render never holds the lock or races the sampler.
 func (s *Server) lastSeenSnapshot() map[string]int64 {
-	s.lastSeenMu.RLock()
-	defer s.lastSeenMu.RUnlock()
-	return maps.Clone(s.lastSeen)
+	return s.lastSeen.snapshot()
 }
 
 // auditResult maps a netmon severity to the audit_log Result string.
