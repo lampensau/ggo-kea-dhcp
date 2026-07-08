@@ -2,8 +2,9 @@ package views
 
 // THROWAWAY preview harness (see zz_preview_test.go). Renders the self-update
 // UI states - footer badge, Settings card variants, release-notes dialog - to
-// a static HTML file for screenshotting without running the appliance. DELETE
-// static/_preview_*.html before any `make pi`. Gated: normal `go test` skips it.
+// a static HTML file for screenshotting without running the appliance. Output
+// (static/_preview_*.html) is excluded by `//go:embed static`, so it can't ship.
+// Gated: normal `go test` skips it.
 
 import (
 	"context"
