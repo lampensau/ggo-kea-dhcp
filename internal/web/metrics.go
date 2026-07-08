@@ -206,8 +206,9 @@ func (s *Server) sampleMetrics() {
 	// Record Kea reachability (the HTTP transport reached the socket) regardless of
 	// whether the lease query itself errored, and warn on a transition. This is the
 	// runtime "DHCP Server Offline" signal.
-	if changed, healthy := s.health.observeKea(s.kea.Reachable(), s.kea.LastError()); changed {
-		s.onBackendChange("KEA", healthy, s.kea.LastError())
+	reachable, lastErr := s.kea.Health() // one consistent snapshot, not two torn loads
+	if changed, healthy := s.health.observeKea(reachable, lastErr); changed {
+		s.onBackendChange("KEA", healthy, lastErr)
 	}
 	if err != nil {
 		return // Kea down: skip only the lease-derived series.

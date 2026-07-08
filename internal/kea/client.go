@@ -22,14 +22,19 @@ type Client struct {
 	// tracks real lease-serving latency for the dashboard's "lease processing"
 	// tile. Atomic: read off the metrics sampler goroutine, written on the call path.
 	lastRTT atomic.Int64
-	// reachable records whether the most recent SendCommand transport call reached
-	// Kea (the HTTP Do succeeded), regardless of whether the command itself
-	// errored - a non-200 or a command result != 0 still means Kea answered. The
-	// runtime backend-health monitor reads this to warn when Kea is down.
-	reachable atomic.Bool
-	// lastErr is the transport error string from the most recent unreachable call
-	// (""=reachable). atomic.Value holds a string.
-	lastErr atomic.Value
+	// health is the reachability of the most recent SendCommand transport call
+	// (whether the HTTP Do reached Kea, regardless of whether the command itself
+	// errored - a non-200 or result != 0 still means Kea answered) paired with the
+	// transport error from that call. A single immutable snapshot behind one pointer
+	// so the backend-health monitor can never pair a stale reachable flag with a
+	// fresh error string (or vice versa); nil before the first call.
+	health atomic.Pointer[keaHealth]
+}
+
+// keaHealth is an immutable reachable+error snapshot published atomically together.
+type keaHealth struct {
+	reachable bool
+	err       string
 }
 
 // NewClient creates a new Kea API client.
@@ -93,13 +98,11 @@ func (c *Client) SendCommand(ctx context.Context, command string, args any) (*Re
 	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.reachable.Store(false)
-		c.lastErr.Store(err.Error())
+		c.health.Store(&keaHealth{reachable: false, err: err.Error()})
 		return nil, fmt.Errorf("http request to kea failed: %w", err)
 	}
 	// Kea answered (even a non-200/result!=0 means the socket is up).
-	c.reachable.Store(true)
-	c.lastErr.Store("")
+	c.health.Store(&keaHealth{reachable: true})
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -138,19 +141,25 @@ func (c *Client) SendCommand(ctx context.Context, command string, args any) (*Re
 	return &res, nil
 }
 
+// Health returns the reachable flag and transport error of the most recent
+// control-socket call as one consistent snapshot: {false, ""} before the first
+// call. Callers that need both must use this rather than Reachable()+LastError()
+// separately, which can tear across the two loads.
+func (c *Client) Health() (reachable bool, lastErr string) {
+	if h := c.health.Load(); h != nil {
+		return h.reachable, h.err
+	}
+	return false, ""
+}
+
 // Reachable reports whether the most recent control-socket call reached Kea. It
 // is false before the first call and after any transport failure. Drives the
 // runtime "DHCP Server Offline" warning.
-func (c *Client) Reachable() bool { return c.reachable.Load() }
+func (c *Client) Reachable() bool { r, _ := c.Health(); return r }
 
 // LastError returns the transport error from the most recent unreachable call,
 // or "" when Kea was last reachable.
-func (c *Client) LastError() string {
-	if v, ok := c.lastErr.Load().(string); ok {
-		return v
-	}
-	return ""
-}
+func (c *Client) LastError() string { _, e := c.Health(); return e }
 
 // Ping reports whether Kea's control socket is reachable and answering. It issues
 // version-get (a cheap, always-available command); a nil return means Kea
