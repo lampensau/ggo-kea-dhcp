@@ -82,6 +82,7 @@ func Run(cfg *config.Config) Result {
 	r = append(r, checkMariaDB(cfg))
 	r = append(r, checkCaps()...)
 	r = append(r, checkPort53())
+	r = append(r, checkPort53TCP())
 	r = append(r, checkClock())
 	return r
 }
@@ -273,21 +274,35 @@ func checkPort53() Check {
 	if err == nil {
 		_ = conn.Close()
 	}
-	return port53Status(err)
+	return port53Status("UDP", err)
 }
 
-// port53Status is the pure decision over the loopback bind outcome: a permission
-// error is the missing-capability story, any other error means a wildcard binder
-// (systemd-resolved, dnsmasq) is squatting the port.
-func port53Status(err error) Check {
-	const name = "UDP port 53 (local DNS)"
+// checkPort53TCP probes TCP port 53, the RFC 7766 fallback the DNS server serves
+// alongside UDP for answers over the UDP size. It binds best-effort per listener,
+// so a TCP-only squatter (or a missing capability) can leave the box serving UDP
+// while silently unable to return oversize answers; this surfaces that gap on
+// Diagnostics instead of a single startup log line. Same loopback-proxy logic as
+// the UDP probe.
+func checkPort53TCP() Check {
+	ln, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 53})
+	if err == nil {
+		_ = ln.Close()
+	}
+	return port53Status("TCP", err)
+}
+
+// port53Status is the pure decision over a loopback bind outcome: a permission
+// error is the missing-capability story, any other error means a binder
+// (systemd-resolved, dnsmasq, a squatter) is holding the port.
+func port53Status(proto string, err error) Check {
+	name := proto + " port 53 (local DNS)"
 	if err == nil {
 		return Check{name, OK, "available"}
 	}
 	if errors.Is(err, os.ErrPermission) {
 		return Check{name, Warn, "bind denied - CAP_NET_BIND_SERVICE missing (granted via systemd AmbientCapabilities)"}
 	}
-	return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind: %v", err)}
+	return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind %s/53: %v", proto, err)}
 }
 
 // checkClock reports the reliability of the time source, which lease expiry

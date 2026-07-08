@@ -173,3 +173,55 @@ func freePort(t *testing.T) int {
 	ln.Close()
 	return port
 }
+
+// TestRebindMissingHealsUDPOnlyTCPHalf pins #163: a listener that came up UDP-only
+// (its best-effort TCP bind lost to a squatter) must have its TCP half re-bound by
+// RebindMissing once :53/tcp frees, not stay UDP-only for the process lifetime.
+func TestRebindMissingHealsUDPOnlyTCPHalf(t *testing.T) {
+	srv := New("")
+	srv.SetZone(testZone())
+	port := freePort(t)
+	srv.port = port
+
+	// Squat TCP/port so StartZone's TCP bind fails while UDP still binds.
+	squat, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed := srv.StartZone([]string{"127.0.0.1"}); len(failed) != 0 {
+		t.Fatalf("UDP listener should still bind under a TCP-only squatter: %v", failed)
+	}
+	defer srv.Stop()
+	if srv.listeners[0].tcpLn != nil {
+		t.Fatal("precondition: TCP bind should have failed under the squatter")
+	}
+
+	// TCP still squatted: nothing to heal.
+	if healed := srv.RebindMissing(); len(healed) != 0 {
+		t.Fatalf("RebindMissing healed %v while TCP was still squatted", healed)
+	}
+
+	// Free the port; RebindMissing must now late-bind the TCP half.
+	_ = squat.Close()
+	if healed := srv.RebindMissing(); len(healed) != 1 || healed[0] != "127.0.0.1" {
+		t.Fatalf("RebindMissing = %v, want [127.0.0.1] once TCP is free", healed)
+	}
+	if srv.listeners[0].tcpLn == nil {
+		t.Fatal("TCP half not bound after heal")
+	}
+
+	// The healed TCP half actually serves a framed query.
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if !writeTCPMessage(conn, buildQuery(0x1234, "bpx-19."+SuffixInv, typeA)) {
+		t.Fatal("write to healed TCP listener failed")
+	}
+	resp, ok := readTCPMessage(conn)
+	if !ok || rcodeOf(resp) != rcodeNoError || ancountOf(resp) != 1 {
+		t.Fatalf("healed TCP listener did not answer: ok=%v", ok)
+	}
+}
