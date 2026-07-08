@@ -17,7 +17,11 @@ import (
 // icon) uses a parrot-head glyph by Lorc, game-icons.net, CC BY 3.0, recolored to
 // brand green - attribution is retained in the SVG's leading comment.
 //
-//go:embed static/*
+// A bare-directory embed (not `static/*`): Go excludes `_`- and `.`-prefixed files
+// from a directory tree, so the throwaway `static/_preview_*.html` a preview harness
+// leaves behind can never ship inside the binary, while every real asset still embeds.
+//
+//go:embed static
 var staticFS embed.FS
 
 // assetVersion is a short content hash of the embedded UI assets. It is appended

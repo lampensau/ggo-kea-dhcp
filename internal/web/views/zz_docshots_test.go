@@ -5,8 +5,8 @@ package views
 // a touring rig with VLANs, calibrated against the live Pi's real data shapes
 // (MikroTik Option-82 remote/circuit IDs, 00:1f:80 device MACs, ~13m leases).
 // Gated so a normal `go test` skips it; the rendered static/_preview_doc_*.html
-// files are throwaway and must not be committed or embedded (delete before
-// `make pi`, like every _preview_*.html).
+// files are throwaway and must not be committed. `//go:embed static` excludes
+// `_`-prefixed files, so they cannot ship even if left behind.
 
 import (
 	"context"

@@ -2,8 +2,9 @@ package views
 
 // THROWAWAY preview harness (see static-render-ui-preview memory). Renders the
 // PoolPlan component to a static HTML file so it can be screenshotted without
-// running the appliance. DELETE this file + static/_preview_*.html before any
-// `make pi` (static/* is //go:embed-ed). Gated so a normal `go test` skips it.
+// running the appliance. Output goes to static/_preview_*.html, which `//go:embed
+// static` excludes (`_`-prefixed files), so it can never ship in the binary; clean
+// it up anyway. Gated so a normal `go test` skips it.
 
 import (
 	"context"
