@@ -9,8 +9,11 @@ import (
 	"time"
 )
 
-// Installed reports whether the kea-dhcp4 binary is present (PATH + sbin).
-func Installed() bool { return keaInstalled() }
+// Installed reports whether the kea-dhcp4 binary is present (PATH + sbin). It is a var,
+// not a plain func, so a test can force the "Kea is installed" answer and exercise
+// install-gated branches (e.g. the reconciler's socket-unreachable restart recovery)
+// on a box that has no kea-dhcp4 binary.
+var Installed = func() bool { return keaInstalled() }
 
 // HooksDir returns the detected Kea hooks library directory.
 func HooksDir() string { return detectHooksDir() }
