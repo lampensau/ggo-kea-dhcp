@@ -53,6 +53,9 @@ jobs:
       - name: go test
         run: go test -mod=vendor -race -coverprofile=coverage.txt -covermode=atomic ./...
 
+      - name: netmon poison lane
+        run: go test -mod=vendor -tags netmondebug -race ./internal/netmon/...
+
       - name: Enforce test coverage threshold
         run: make cover-gate
 
