@@ -1,6 +1,9 @@
 package web
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 // fwCensus owns the Green-GO firmware-mismatch audit state. scopes is the set of
 // greengo-preset scopes the scanner targets (set when the scan spec list is
@@ -23,11 +26,13 @@ func (c *fwCensus) setScopes(scopes []fwScope) {
 	c.mu.Unlock()
 }
 
-// snapshotScopes returns the current target scopes.
+// snapshotScopes returns a copy of the current target scopes, so a caller can range
+// over them without holding the lock and a later setScopes can't shift the slice
+// under it (fwScope.net is read-only, so a shallow clone is enough).
 func (c *fwCensus) snapshotScopes() []fwScope {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.scopes
+	return slices.Clone(c.scopes)
 }
 
 // transition compare-and-sets the audited census signature, returning the prior
