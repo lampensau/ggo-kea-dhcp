@@ -138,7 +138,7 @@ func TestMiddlewareBoundsRequestBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createSession: %v", err)
 	}
-	_, csrf, ok := s.sessionUser(sid)
+	_, csrf, _, ok := s.sessionUser(sid)
 	if !ok || csrf == "" {
 		t.Fatal("sessionUser should return the fresh session with a csrf token")
 	}
