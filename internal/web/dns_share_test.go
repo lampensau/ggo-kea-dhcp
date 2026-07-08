@@ -38,7 +38,7 @@ func TestBroadcastFetchesReservationsOnce(t *testing.T) {
 	}
 
 	// Sampler path: rebuildDNSZone fetches independently (no shared map on that path).
-	// dnsZoneSig is still zero here (the broadcast's rebuild does not touch it), so the
+	// zone.sig is still zero here (the broadcast's rebuild does not touch it), so the
 	// nonzero lease signature forces a rebuild rather than the idle-gate skip.
 	fetches.Store(0)
 	s.maybeRebuildDNSZone(t.Context(), leases)
@@ -49,8 +49,8 @@ func TestBroadcastFetchesReservationsOnce(t *testing.T) {
 
 // TestDNSZoneGenerationGuard proves last-writer-by-generation: a rebuild dispatched
 // earlier (a slow detached primeDNSZone carrying a lower generation) cannot clobber a
-// zone a later-dispatched rebuild already installed. dnsZoneAppliedGen is written only
-// alongside SetZone under dnsZoneMu, so its value reports which rebuild's SetZone won.
+// zone a later-dispatched rebuild already installed. zone.appliedGen is written only
+// alongside SetZone under the gate's mutex, so its value reports which rebuild's SetZone won.
 func TestDNSZoneGenerationGuard(t *testing.T) {
 	s, _ := newTestServer(t) // s.dns is a real (non-listening) dns.Server
 	res := map[string]db.HostReservation{}
@@ -59,29 +59,29 @@ func TestDNSZoneGenerationGuard(t *testing.T) {
 	if !s.rebuildDNSZoneWith(leases, res, 10) {
 		t.Fatal("first rebuild (gen 10) should report applied")
 	}
-	if s.dnsZoneAppliedGen != 10 {
-		t.Fatalf("applied generation = %d, want 10", s.dnsZoneAppliedGen)
+	if s.zone.appliedGen != 10 {
+		t.Fatalf("applied generation = %d, want 10", s.zone.appliedGen)
 	}
 	// A lower generation (stale detached prime landing late) must be refused, and it
 	// must report NOT applied so a signature-tracking caller does not latch it.
 	if s.rebuildDNSZoneWith(leases, res, 5) {
 		t.Error("stale generation 5 reported applied over 10")
 	}
-	if s.dnsZoneAppliedGen != 10 {
-		t.Errorf("stale generation 5 was applied over 10 (now %d)", s.dnsZoneAppliedGen)
+	if s.zone.appliedGen != 10 {
+		t.Errorf("stale generation 5 was applied over 10 (now %d)", s.zone.appliedGen)
 	}
 	// A higher generation wins and reports applied.
 	if !s.rebuildDNSZoneWith(leases, res, 12) {
 		t.Error("higher generation 12 should report applied")
 	}
-	if s.dnsZoneAppliedGen != 12 {
-		t.Errorf("applied generation = %d, want 12", s.dnsZoneAppliedGen)
+	if s.zone.appliedGen != 12 {
+		t.Errorf("applied generation = %d, want 12", s.zone.appliedGen)
 	}
 	// Generation 0 (unversioned callers/tests) always applies.
 	if !s.rebuildDNSZoneWith(leases, res, 0) {
 		t.Error("gen 0 should always report applied")
 	}
-	if s.dnsZoneAppliedGen != 0 {
-		t.Errorf("gen 0 must always apply, applied generation = %d", s.dnsZoneAppliedGen)
+	if s.zone.appliedGen != 0 {
+		t.Errorf("gen 0 must always apply, applied generation = %d", s.zone.appliedGen)
 	}
 }
