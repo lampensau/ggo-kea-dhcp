@@ -198,10 +198,7 @@ func (s *Server) factoryWipeDB() error {
 	// Drop the in-memory last-seen tracker too (after the commit, so a failed wipe
 	// keeps memory and table consistent), so it doesn't repopulate the wiped table
 	// from stale memory on the next sample.
-	s.lastSeenMu.Lock()
-	s.lastSeen = map[string]int64{}
-	s.lastSeenWritten = map[string]int64{}
-	s.lastSeenMu.Unlock()
+	s.lastSeen.reset()
 	// The snapshot FILES belong to the rows the wipe just deleted; without this
 	// they survive every factory reset and accumulate forever (the prior job's
 	// rendered configs also linger for the next owner to read). Best-effort,

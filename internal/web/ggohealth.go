@@ -64,9 +64,7 @@ func (s *Server) buildGgoSpecs(scopes []ScopeConfig) []ggoscan.Spec {
 		specs = append(specs, ggoscan.Spec{Broadcast: bcast, LeaseIPs: leaseIPs})
 		fw = append(fw, fwScope{iface: iface, net: ipnet})
 	}
-	s.ggoFwMu.Lock()
-	s.ggoFwScopes = fw
-	s.ggoFwMu.Unlock()
+	s.ggoFw.setScopes(fw)
 	return specs
 }
 
@@ -315,9 +313,7 @@ func (s *Server) attachFirmware(h *views.NetHealthView, snap ggoscan.Snapshot) {
 	if len(h.Interfaces) == 0 {
 		return // nothing to attach to (non-ACTIVE / netmon down) - skip the grouping work
 	}
-	s.ggoFwMu.Lock()
-	scopes := s.ggoFwScopes
-	s.ggoFwMu.Unlock()
+	scopes := s.ggoFw.snapshotScopes()
 	findings := firmwareFindings(snap.Devices, scopes)
 	s.auditFirmwareTransition(findings)
 	for _, f := range findings {
@@ -343,20 +339,16 @@ func (s *Server) attachFirmware(h *views.NetHealthView, snap ggoscan.Snapshot) {
 // the pill counted a warning the log never mentioned. Keyed on the row title (the
 // release census), so a genuine census change (a device upgraded) re-audits while
 // the every-render calls stay silent. attachFirmware runs from concurrent render
-// paths; the signature compare-and-set is serialized under ggoFwMu.
+// paths; the signature compare-and-set is serialized inside fwCensus.transition.
 func (s *Server) auditFirmwareTransition(findings []fwFinding) {
 	sig := ""
 	if len(findings) > 0 {
 		sig = findings[0].row.Title
 	}
-	s.ggoFwMu.Lock()
-	prev := s.ggoFwLastSig
-	if sig == prev {
-		s.ggoFwMu.Unlock()
+	prev, changed := s.ggoFw.transition(sig)
+	if !changed {
 		return
 	}
-	s.ggoFwLastSig = sig
-	s.ggoFwMu.Unlock()
 	if sig != "" {
 		// After carries the per-device roster (name · IP · version, tip-capped) so the
 		// audit entry names the involved clients, not just the release census.
