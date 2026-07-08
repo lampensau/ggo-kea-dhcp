@@ -253,17 +253,18 @@ func (s *Server) releaseUpdateGuards() {
 // and free the guards. A silent timeout is audited so a wedged updater isn't
 // an invisible stuck state.
 func (s *Server) watchUpdateResult(scope string) {
-	// Join the shutdown wait like the other background loops (server.go's done-field
+	// Join the shutdown wait like the other background loops (bg.go's bgRunner
 	// comment lists this watcher among them). deferAfterResponse spawns us in a bare
-	// goroutine that stopBackground's Wait does not cover, so without this the loop
+	// goroutine that the shutdown join does not cover, so without this the loop
 	// could be mid-processUpdateResult - a DB write - when sqlite.Close runs, losing
 	// a failed/needs_system outcome. A refused registration means shutdown is under
 	// way: skip and let the boot-path reconcileUpdateResult fold the result instead.
 	// Mirrors kickUpdateCheck.
-	if !s.addBackground() {
+	done, ok := s.bg.add()
+	if !ok {
 		return
 	}
-	defer s.bgWG.Done()
+	defer done()
 	wait := updateResultWaitApp
 	if scope == "system" {
 		wait = updateResultWaitSystem
@@ -272,7 +273,7 @@ func (s *Server) watchUpdateResult(scope string) {
 	for time.Now().Before(deadline) {
 		select {
 		case <-time.After(updateResultPollInterval):
-		case <-s.done:
+		case <-s.bg.doneCh():
 			return // shutting down (usually the update restarting us) - no audit, no DB writes
 		}
 		if res := s.readUpdateResult(); res != nil {
@@ -438,18 +439,19 @@ func (s *Server) reconcileUpdateResult() {
 // branch (the .deb postinstall restarts the service mid-oneshot, so the boot reconcile
 // can beat the result write). Without this, that late file is orphaned in the staging
 // dir until the next restart. Polls on a short cadence and stops the instant it removes
-// the file; joined to the shutdown wait and bailing on s.done, mirroring watchUpdateResult.
+// the file; joined to the shutdown wait and bailing on bg.doneCh, mirroring watchUpdateResult.
 func (s *Server) sweepLateUpdateResult() {
-	if !s.addBackground() {
+	done, ok := s.bg.add()
+	if !ok {
 		return
 	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		deadline := time.Now().Add(updateResultWaitApp)
 		for time.Now().Before(deadline) {
 			select {
 			case <-time.After(updateResultPollInterval):
-			case <-s.done:
+			case <-s.bg.doneCh():
 				return
 			}
 			if _, err := os.Stat(filepath.Join(s.updateDir, updateResultFile)); err == nil {

@@ -184,37 +184,12 @@ func (s *Server) Start() error {
 	}
 }
 
-// addBackground registers one goroutine with the shutdown join, refusing once
-// shutdown has begun. Callers reachable from goroutines the join does not cover
-// (kickUpdateCheck, fired by reconciles) must use this instead of a bare
-// bgWG.Add - see bgMu.
-func (s *Server) addBackground() bool {
-	s.bgMu.Lock()
-	defer s.bgMu.Unlock()
-	if s.bgStopping {
-		return false
-	}
-	s.bgWG.Add(1)
-	return true
-}
-
 // stopBackground halts every background service and ticker loop before Start
 // returns, so main's deferred sqlite.Close never races goroutines still issuing
-// queries. Closing done ends the loops at their next select, and the Wait joins
-// them - a loop already mid-body finishes it first (each body is bounded: opCtx
-// on the Kea/DB calls, the Commander timeout on shell-outs), so the join is
-// bounded too, well inside systemd's stop timeout. The service Stops are
-// idempotent, matching the reconciler's own teardown paths.
+// queries. bg.stop ends and joins the loops (see bgRunner); the service Stops
+// below are idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
-	s.bgMu.Lock()
-	if s.bgStopping {
-		s.bgMu.Unlock()
-		return // idempotent: a second caller must not close(done) again
-	}
-	s.bgStopping = true
-	close(s.done)
-	s.bgMu.Unlock()
-	s.bgWG.Wait()
+	s.bg.stop()
 	// The ACTIVE monitors share the single stopActiveMonitors teardown, so a new one
 	// added there is torn down on shutdown too (rather than stranded in this copy).
 	// The onboarding probes are not part of that set - stop them here.

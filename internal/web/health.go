@@ -182,16 +182,19 @@ func (s *Server) backendAlertRows() []views.AlertRow {
 // itself is automatic (database/sql pooling + ConnMaxLifetime); this probe is what
 // flips the UI/audit state back to healthy once MariaDB returns - no restart needed.
 func (s *Server) startBackendHealthProbe() {
-	s.bgWG.Add(1)
+	done, ok := s.bg.add()
+	if !ok {
+		return
+	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		runRecovered("mariadb-probe", s.probeMariaDB) // establish baseline promptly
 		t := time.NewTicker(backendProbeInterval)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-			case <-s.done:
+			case <-s.bg.doneCh():
 				return
 			}
 			runRecovered("mariadb-probe", s.probeMariaDB)
@@ -269,11 +272,12 @@ func (s *Server) remapOnMariaDBRecovery() {
 	if !ok || len(scopes) == 0 {
 		return
 	}
-	if !s.addBackground() {
+	done, ok := s.bg.add()
+	if !ok {
 		return
 	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("[remap] MariaDB-recovery remap recovered from panic: %v", r)
