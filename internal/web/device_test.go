@@ -170,8 +170,8 @@ func rebootServerWithDevice(t *testing.T, ip, mac, name string) (*Server, *fakeS
 	t.Helper()
 	s, _ := newTestServer(t)
 	sc := &fakeScanner{devices: []ggoscan.Device{{MAC: mac, Name: name, IP: ip, Firmware: "BPX 5.2.2.25270"}}}
-	s.ggoscan = sc
-	s.arp = &fakeProber{
+	s.mon.ggoscan = sc
+	s.mon.arp = &fakeProber{
 		reachable: map[string]bool{ip: true},
 		macAt:     map[string]string{ip: mac},
 	}

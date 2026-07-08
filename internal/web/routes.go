@@ -194,11 +194,11 @@ func (s *Server) stopBackground() {
 	// added there is torn down on shutdown too (rather than stranded in this copy).
 	// The onboarding probes are not part of that set - stop them here.
 	s.stopActiveMonitors()
-	if s.trunkProbe != nil {
-		s.trunkProbe.Stop()
+	if s.mon.trunkProbe != nil {
+		s.mon.trunkProbe.Stop()
 	}
-	if s.rogueProbe != nil {
-		s.rogueProbe.Stop()
+	if s.mon.rogueProbe != nil {
+		s.mon.rogueProbe.Stop()
 	}
 }
 

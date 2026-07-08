@@ -25,7 +25,7 @@ func TestPeriodicVsFullFragments(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.metrics = newMetricsStore()
 	fakeNetmon(s)
-	defer s.netmon.Stop()
+	defer s.mon.netmon.Stop()
 	_ = seedActiveProfile(t, s)
 
 	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
@@ -66,7 +66,7 @@ func TestConnectFragmentsPageScope(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.metrics = newMetricsStore()
 	fakeNetmon(s)
-	defer s.netmon.Stop()
+	defer s.mon.netmon.Stop()
 	_ = seedActiveProfile(t, s)
 
 	leases := []kea.ActiveLease{{IPAddress: "10.0.0.50", HWAddress: "00:1f:80:20:00:01"}}
@@ -102,7 +102,7 @@ func TestTickDashboardKeaOutage(t *testing.T) {
 	s.live = newLiveHub()
 	s.metrics = newMetricsStore()
 	fakeNetmon(s)
-	defer s.netmon.Stop()
+	defer s.mon.netmon.Stop()
 	_ = seedActiveProfile(t, s)
 
 	ch := s.live.subscribe("") // unknown page: receive every region
@@ -160,7 +160,7 @@ func TestCollectNetSnapshotMatchesHelpers(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.metrics = newMetricsStore()
 	fakeNetmon(s)
-	defer s.netmon.Stop()
+	defer s.mon.netmon.Stop()
 
 	ns := s.collectNetSnapshot()
 	sig := s.buildNetSignals()

@@ -44,8 +44,8 @@ func (s *Server) reservationConflict(ctx context.Context, subnetID int, ip uint3
 			return ipStr + " is already " + what + " - remove that first or choose another address.", true
 		}
 	}
-	if s.arp != nil && ownMAC != "" {
-		if mac, alive := s.arp.ProbeHost(ipStr); alive && normalizeMAC(mac) != normalizeMAC(ownMAC) {
+	if s.mon.arp != nil && ownMAC != "" {
+		if mac, alive := s.mon.arp.ProbeHost(ipStr); alive && normalizeMAC(mac) != normalizeMAC(ownMAC) {
 			return ipStr + " is currently in use on the network by " + mac + " - release that device or choose another address.", true
 		}
 	}

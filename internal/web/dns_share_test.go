@@ -19,7 +19,7 @@ func TestBroadcastFetchesReservationsOnce(t *testing.T) {
 	s.metrics = newMetricsStore()
 	s.live = newLiveHub()
 	fakeNetmon(s)
-	defer s.netmon.Stop()
+	defer s.mon.netmon.Stop()
 	_ = seedActiveProfile(t, s)
 
 	var fetches atomic.Int64

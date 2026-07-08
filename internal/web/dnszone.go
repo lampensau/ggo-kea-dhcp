@@ -60,8 +60,8 @@ func (g *zoneGate) latchSig(sig uint64) { g.sig.Store(sig) }
 // fragments instead of querying MariaDB twice per broadcast.
 func (s *Server) collectDNSHostsWith(leases []kea.ActiveLease, res map[string]db.HostReservation) map[string]string {
 	var devs []ggoscan.Device
-	if s.ggoscan != nil {
-		devs = s.ggoscan.Snapshot().Devices
+	if s.mon.ggoscan != nil {
+		devs = s.mon.ggoscan.Snapshot().Devices
 	}
 	return buildDNSHosts(devs, leases, res)
 }
@@ -199,10 +199,10 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 // Scan addresses are the device's real lease/static IP (stable per device), so folding
 // them in triggers a rebuild only on a genuine re-IP, not on churn.
 func (s *Server) ggoScanIdentityByMAC() map[string]string {
-	if s.ggoscan == nil {
+	if s.mon.ggoscan == nil {
 		return nil
 	}
-	return scanIdentityByMAC(s.ggoscan.Snapshot().Devices)
+	return scanIdentityByMAC(s.mon.ggoscan.Snapshot().Devices)
 }
 
 // scanIdentityByMAC is the pure body of ggoScanIdentityByMAC: name+address per

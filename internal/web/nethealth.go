@@ -38,10 +38,10 @@ func atoiDefault(s string, def int) int {
 // address reachable now?", so a device at its pinned IP shows online while an unused
 // reservation IP for the same MAC does not - no per-MAC ambiguity to special-case.
 func (s *Server) presenceByIP() (reachable map[string]bool, available bool) {
-	if s.arp == nil {
+	if s.mon.arp == nil {
 		return map[string]bool{}, false
 	}
-	snap := s.arp.Snapshot()
+	snap := s.mon.arp.Snapshot()
 	if snap.ReachableIPs == nil {
 		snap.ReachableIPs = map[string]bool{}
 	}
@@ -75,11 +75,11 @@ func (s *Server) markLeasePresenceWith(reachable map[string]bool, available bool
 // the page/search paths that don't run a full collectNetSnapshot. Nil when netmon is
 // absent (dev sandbox) - the lease table simply shows no awaiting rows.
 func (s *Server) awaitingPoolHosts() []netmon.PoolHost {
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return nil
 	}
 	var out []netmon.PoolHost
-	for _, snap := range s.netmon.SnapshotAll() {
+	for _, snap := range s.mon.netmon.SnapshotAll() {
 		out = append(out, snap.UnleasedPoolHosts...)
 	}
 	return out
@@ -99,10 +99,10 @@ func normalizeMAC(mac string) string {
 // SetInterfaceStatic'd - so interfaceIPv4s reads the freshly-applied addresses
 // rather than racing bring-up; every other reconcile path stops it.
 func (s *Server) startNetmon(scopes []ScopeConfig) {
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return
 	}
-	s.netmon.Start(s.buildNetmonSpecs(scopes))
+	s.mon.netmon.Start(s.buildNetmonSpecs(scopes))
 }
 
 // startArpProber (re)starts the active device-presence prober for the served interfaces.
@@ -110,10 +110,10 @@ func (s *Server) startNetmon(scopes []ScopeConfig) {
 // won't open is skipped, never fatal), and is called from reconcileActive after the
 // interfaces are up so interfaceIPv4s reads the freshly-applied addresses.
 func (s *Server) startArpProber(scopes []ScopeConfig) {
-	if s.arp == nil {
+	if s.mon.arp == nil {
 		return
 	}
-	s.arp.Start(s.buildArpSpecs(scopes))
+	s.mon.arp.Start(s.buildArpSpecs(scopes))
 }
 
 // buildArpSpecs derives one ARP-probe spec per served interface: the appliance's own
@@ -443,14 +443,14 @@ type netSnapshotData struct {
 // liveness from the same pass.
 func (s *Server) buildNetSignals() netSignals {
 	var sig netSignals
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return sig
 	}
-	for _, snap := range s.netmon.SnapshotAll() {
+	for _, snap := range s.mon.netmon.SnapshotAll() {
 		s.addInterfaceSnapshot(&sig, snap)
 	}
-	if s.ggoscan != nil {
-		s.attachFirmware(&sig.Health, s.ggoscan.Snapshot())
+	if s.mon.ggoscan != nil {
+		s.attachFirmware(&sig.Health, s.mon.ggoscan.Snapshot())
 	}
 	return sig
 }
@@ -493,14 +493,14 @@ func (s *Server) buildStatusPill(state string) views.StatusPillView {
 // dashboard build pays a single read of each rather than re-reading per consumer.
 func (s *Server) collectNetSnapshot() netSnapshotData {
 	ns := netSnapshotData{Live: map[string]bool{}}
-	if s.netmon != nil {
-		for _, snap := range s.netmon.SnapshotAll() {
+	if s.mon.netmon != nil {
+		for _, snap := range s.mon.netmon.SnapshotAll() {
 			s.addInterfaceSnapshot(&ns.Signals, snap)
 			ns.Awaiting = append(ns.Awaiting, snap.UnleasedPoolHosts...)
 		}
 	}
-	if s.ggoscan != nil {
-		snap := s.ggoscan.Snapshot() // one scanner snapshot for both firmware rows + names
+	if s.mon.ggoscan != nil {
+		snap := s.mon.ggoscan.Snapshot() // one scanner snapshot for both firmware rows + names
 		s.attachFirmware(&ns.Signals.Health, snap)
 		ns.GgoNames = namesFromDevices(snap.Devices)
 	}

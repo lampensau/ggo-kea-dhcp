@@ -45,11 +45,11 @@ type rogueSighting struct {
 // error severity, across every served interface. Empty when netmon is absent
 // (dev sandbox) or nothing rogue is visible.
 func (s *Server) activeRogues() []rogueSighting {
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return nil
 	}
 	var out []rogueSighting
-	for _, snap := range s.netmon.SnapshotAll() {
+	for _, snap := range s.mon.netmon.SnapshotAll() {
 		for _, d := range snap.Detectors {
 			if d.Kind == "rogue_dhcp" && d.Severity == netmon.SevError {
 				count := 1

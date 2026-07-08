@@ -59,21 +59,10 @@ type Server struct {
 	// live is the in-process SSE broadcaster pushing state changes to connected
 	// operators (lifecycle badge, tiles, lease/learnable lists) without polling.
 	live *liveHub
-	// netmon is the passive network-health monitor. It runs only while ACTIVE
-	// (started/stopped by the reconciler), is a read-only observer that never
-	// touches Kea, and feeds the dashboard's Network Health card + edge-triggered
-	// audit rows. Best-effort: its Start never aborts the reconcile.
-	netmon *netmon.MonitorManager
-	// arp is the active device-presence prober: it ARPs each active lease IP and
-	// reports which answered recently - the single source for the online/offline dot
-	// on the leases/dashboard views. Runs only while ACTIVE, started/stopped beside
-	// netmon. (netmon stays passive; this is the active counterpart that reliably
-	// reaches quiet devices a passive capture never sees.)
-	arp presenceProber
-	// ggoscan is the active Green-GO device scanner (6464 device-scan): a firmware/model
-	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
-	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
-	ggoscan deviceScanner
+	// mon owns the background network observers (passive monitor, ARP prober,
+	// Green-GO scanner, and the onboarding trunk/rogue probes). The reconciler
+	// drives their lifecycle; the web layer reads their snapshots. See monitorSet.
+	mon *monitorSet
 	// reservationMu serializes the reservation conflict-check + insert (single add and
 	// bulk import) so two concurrent writes can't both pass the check for the same IP
 	// and both insert - the hosts unique key does not include ipv4_address, so the DB
@@ -96,15 +85,6 @@ type Server struct {
 	// lease fetcher outside the mutation handlers, which stay direct because
 	// they act on the state they read.
 	leaseSrc *leaseCache
-	// trunkProbe passively sniffs eth0 during onboarding to tell the setup wizard whether
-	// the switch port is trunking tagged VLANs (the full monitor runs only in ACTIVE).
-	// Started/stopped by the reconciler beside the onboarding bring-up.
-	trunkProbe *netmon.TrunkProbe
-	// rogueProbe passively watches eth0 during onboarding for a foreign DHCP server
-	// already answering (an OFFER/ACK carrying another server-id), feeding the wizard's
-	// shield badge. Same lifecycle as trunkProbe. Interface-typed so wizard tests can
-	// fake a detection without a capture socket.
-	rogueProbe rogueProber
 	// metrics holds the dashboard's live trend series (lease count, pool
 	// utilization, Kea RTT, uplink), filled by an always-on sampler independent of
 	// the client-gated live ticker so a cold-opened dashboard has sparkline history.
@@ -216,19 +196,23 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		net:     network.NewManager(),
 		live:    newLiveHub(),
 	}
-	// netmon emits one audit row per confirmed transition (never per tick) via
-	// LogAudit, and reads its thresholds via GetState. The closures are the only
-	// coupling - netmon imports neither web nor db. The audit Result is derived
-	// from the event Severity so a rogue-DHCP (error) and a benign notice (warn)
-	// read distinctly in the audit log rather than both as free-text "warning".
-	s.netmon = netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
-		_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
-	})
-	// The active ARP presence prober (started/stopped beside netmon by the reconciler).
-	s.arp = arpscan.NewProber()
-	// The active Green-GO device scanner (6464); started under a Green-GO preset, stopped
-	// beside netmon/arp on every ACTIVE exit.
-	s.ggoscan = ggoscan.NewScanner()
+	// mon owns the background observers. netmon emits one audit row per confirmed
+	// transition (never per tick) via LogAudit and reads its thresholds via
+	// GetState - the closures are the only coupling (netmon imports neither web nor
+	// db). The audit Result is derived from the event Severity so a rogue-DHCP
+	// (error) and a benign notice (warn) read distinctly in the audit log rather
+	// than both as free-text "warning". The ARP prober + Green-GO scanner are the
+	// ACTIVE-only counterparts; the trunk + rogue-DHCP probes are onboarding-only
+	// (started in reconcileOnboarding, stopped on entering ACTIVE).
+	s.mon = &monitorSet{
+		netmon: netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
+			_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
+		}),
+		arp:        arpscan.NewProber(),
+		ggoscan:    ggoscan.NewScanner(),
+		trunkProbe: netmon.NewTrunkProbe(),
+		rogueProbe: netmon.NewRogueProbe(),
+	}
 	// The shared lease provider (leasecache.go); every read-through consumer
 	// below funnels into this one fetcher.
 	s.leaseSrc = newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
@@ -250,10 +234,6 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		}
 		return out, true
 	}, leaseCacheTTL, time.Now)
-	// The onboarding trunk + rogue-DHCP probes (started in reconcileOnboarding,
-	// stopped on entering ACTIVE).
-	s.trunkProbe = netmon.NewTrunkProbe()
-	s.rogueProbe = netmon.NewRogueProbe()
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
 	s.updateHTTP = newUpdateHTTPClient()

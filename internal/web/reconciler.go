@@ -263,15 +263,7 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 // reconcileOnboarding, and process shutdown (stopBackground) - so a lifecycle fix
 // cannot land in one path and strand the others. All stops are idempotent and nil-safe.
 func (s *Server) stopActiveMonitors() {
-	if s.netmon != nil {
-		s.netmon.Stop()
-	}
-	if s.arp != nil {
-		s.arp.Stop()
-	}
-	if s.ggoscan != nil {
-		s.ggoscan.Stop()
-	}
+	s.mon.stopActive()
 	if s.dns != nil {
 		s.dns.Stop()
 	}
@@ -310,15 +302,15 @@ func (s *Server) reconcileOnboarding(mode ReconcileMode) error {
 	s.stopActiveMonitors()
 	// Onboarding-only: passively sniff eth0 for tagged VLANs so the wizard's link badge can
 	// tell the operator the switch port is a trunk. Best-effort (no CAP_NET_RAW -> inert).
-	if s.trunkProbe != nil {
-		s.trunkProbe.Start("eth0")
+	if s.mon.trunkProbe != nil {
+		s.mon.trunkProbe.Start("eth0")
 	}
 	// Onboarding-only: watch eth0 for a DHCP server already answering, so the wizard's
 	// shield badge names it before the operator applies. Best-effort like the trunk probe.
 	// The box serves its own onboarding pool on eth0; Start reads eth0's MAC and suppresses
 	// the box's own OFFERs by source MAC, so the probe never flags the appliance itself.
-	if s.rogueProbe != nil {
-		s.rogueProbe.Start("eth0")
+	if s.mon.rogueProbe != nil {
+		s.mon.rogueProbe.Start("eth0")
 	}
 
 	// Onboarding never routes - make sure no NAT state leaks in from a prior gig.
@@ -370,12 +362,7 @@ func (s *Server) reconcileActive(mode ReconcileMode, profileID int) error {
 	// Leaving onboarding: the trunk and rogue-DHCP probes are onboarding-only hints, and
 	// ACTIVE has the full passive monitor for VLAN reality and rogue servers. (The trunk
 	// probe's last-seen VLANs are snapshotted at apply.)
-	if s.trunkProbe != nil {
-		s.trunkProbe.Stop()
-	}
-	if s.rogueProbe != nil {
-		s.rogueProbe.Stop()
-	}
+	s.mon.stopOnboarding()
 
 	scopes, err := s.loadScopeConfigs(profileID)
 	if err != nil {

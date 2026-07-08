@@ -165,7 +165,7 @@ func (f *fakeRogueProbe) Server() (string, string, bool) {
 // reports the honest Unverified rather than a false all-clear; a live quiet probe
 // yields Active; and a foreign DHCP answer flips to Detected naming the server's IP.
 func TestShieldStatus(t *testing.T) {
-	s := &Server{}
+	s := &Server{mon: &monitorSet{}}
 
 	if st, d := s.shieldStatus("Suspended"); st != "Suspended" || d != "" {
 		t.Errorf("no carrier: got %q/%q, want Suspended with no detail", st, d)
@@ -175,17 +175,17 @@ func TestShieldStatus(t *testing.T) {
 	}
 
 	// A probe present but not watching (stopped in ACTIVE, or blind) is Unverified.
-	s.rogueProbe = &fakeRogueProbe{watching: false}
+	s.mon.rogueProbe = &fakeRogueProbe{watching: false}
 	if st, d := s.shieldStatus("Active"); st != "Unverified" || d != "" {
 		t.Errorf("blind/stopped probe: got %q/%q, want Unverified", st, d)
 	}
 
-	s.rogueProbe = &fakeRogueProbe{watching: true}
+	s.mon.rogueProbe = &fakeRogueProbe{watching: true}
 	if st, d := s.shieldStatus("Active"); st != "Active" || d != "" {
 		t.Errorf("quiet live probe: got %q/%q, want Active", st, d)
 	}
 
-	s.rogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true, watching: true}
+	s.mon.rogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true, watching: true}
 	if st, d := s.shieldStatus("Active"); st != "Detected" || d != "10.0.0.250" {
 		t.Errorf("foreign OFFER: got %q/%q, want Detected/10.0.0.250", st, d)
 	}
