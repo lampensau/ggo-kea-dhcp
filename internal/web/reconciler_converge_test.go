@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"ggo-kea-dhcp/internal/db"
@@ -98,20 +99,19 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 	kea.Installed = func() bool { return true }
 	t.Cleanup(func() { kea.Installed = origInstalled })
 
-	// Fake Kea: config-reload is transport-failed by hijacking the connection and
-	// closing it with no response, so the client's request errors and marks the socket
-	// unreachable (the branch's !Reachable() condition). Every other command - including
-	// the version-get that Ping (waitKeaReachable) sends after the restart - answers
-	// result:0, so the re-probe succeeds without waiting out a retry delay.
-	var restarted, reprobed bool
+	// Fake Kea: config-reload is transport-failed by hijacking the connection and closing
+	// it with no response, so the client's request errors and marks the socket unreachable
+	// (the branch's !Reachable() condition). Only one config-reload ever arrives - recovery
+	// re-probes with version-get, not a second reload - so the failure is unconditional; no
+	// need to read shared state (which would race the reconciler's RecordingCommander write
+	// from this handler goroutine). version-get answers result:0 so the post-restart re-probe
+	// succeeds without waiting out a retry delay. reprobed is atomic: written here, read on
+	// the test goroutine.
+	var reprobed atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		b := string(body)
-		if strings.Contains(b, "config-reload") && !restarted {
-			// The restart is faked (RecordingCommander), so the same server keeps
-			// serving; gate the transport failure on the recorded restart so the
-			// post-restart re-probe lands on a healthy socket.
-			restarted = rec.Mentions("isc-kea-dhcp4-server")
+		if strings.Contains(b, "config-reload") {
 			if hj, ok := w.(http.Hijacker); ok {
 				conn, _, _ := hj.Hijack()
 				_ = conn.Close()
@@ -119,7 +119,7 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 			}
 		}
 		if strings.Contains(b, "version-get") {
-			reprobed = true
+			reprobed.Store(true)
 		}
 		_, _ = io.WriteString(w, `[{"result":0,"arguments":{}}]`)
 	}))
@@ -146,7 +146,7 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 	if !rec.Mentions("isc-kea-dhcp4-server") {
 		t.Errorf("expected a restart of isc-kea-dhcp4-server on the recovery path; calls=%v", rec.Calls)
 	}
-	if !reprobed {
+	if !reprobed.Load() {
 		t.Error("expected a version-get re-probe after the restart")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -121,13 +122,20 @@ func ToolPresent(name string) bool { return toolPresent(name) }
 // returns canned output (keyed by command name) or a canned error. It lets tests
 // in any package drive the network layer without touching the host.
 type RecordingCommander struct {
+	// mu guards Calls: a test double is routinely driven from more than one goroutine
+	// (e.g. a fake Kea httptest handler inspecting Calls while the reconciler under test
+	// records a Run from another goroutine), so every access goes through the lock. Read
+	// Calls directly only after all driving goroutines have quiesced.
+	mu      sync.Mutex
 	Calls   [][]string        // every Run invocation, as [name, args...]
 	Outputs map[string]string // optional stdout per command name
 	Err     error             // if set, every Run returns it
 }
 
 func (r *RecordingCommander) Run(name string, args ...string) (string, error) {
+	r.mu.Lock()
 	r.Calls = append(r.Calls, append([]string{name}, args...))
+	r.mu.Unlock()
 	if r.Err != nil {
 		return "", r.Err
 	}
@@ -139,6 +147,8 @@ func (r *RecordingCommander) Run(name string, args ...string) (string, error) {
 
 // Ran reports whether a command with the given name was invoked.
 func (r *RecordingCommander) Ran(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, c := range r.Calls {
 		if len(c) > 0 && c[0] == name {
 			return true
@@ -151,6 +161,8 @@ func (r *RecordingCommander) Ran(name string) bool {
 // (matched against the space-joined argv). Where Ran matches a command name,
 // Mentions finds an argument - or a set of them - anywhere in a call.
 func (r *RecordingCommander) Mentions(subs ...string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, call := range r.Calls {
 		joined := strings.Join(call, " ")
 		all := true
