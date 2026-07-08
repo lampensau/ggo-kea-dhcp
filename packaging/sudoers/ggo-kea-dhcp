@@ -1,13 +1,17 @@
-# Passwordless sudo for the ggo-kea-dhcp service user, scoped to exactly the privileged
-# tools the control plane shells out to (network reconfiguration + Kea config
-# validation). Installed to /etc/sudoers.d/ggo-kea-dhcp (mode 0440) by the ggo-kea-dhcp
-# package and validated with `visudo -c` in the postinstall script.
+# Passwordless sudo for the ggo-kea-dhcp service user, covering the privileged tools the
+# control plane shells out to (network reconfiguration + Kea config validation). Installed
+# to /etc/sudoers.d/ggo-kea-dhcp (mode 0440) by the ggo-kea-dhcp package and validated with
+# `visudo -c` in the postinstall script.
 #
-# The app invokes these by bare name (`sudo nmcli ...`); sudo resolves them via
-# secure_path to the absolute paths below. Paths are the Debian Trixie (arm64)
-# locations.
+# The app invokes these by bare name (`sudo nmcli ...`); sudo resolves them via secure_path
+# to the absolute paths below. Paths are the Debian Trixie (arm64) locations.
 #
-# Two tiers, to keep the blast radius of a web-UI compromise as small as practical:
+# SECURITY BOUNDARY: these rules do NOT contain a web-UI compromise. A compromised app
+# process already reaches code execution as the Kea service - it can point a Kea config's
+# `hooks-libraries` at any .so (Kea dlopens it) and load it via `sudo kea-dhcp4`, or just
+# rewrite the app-owned /etc/kea/kea-dhcp4.conf and `sudo systemctl restart` the service.
+# So the real boundary is the web layer's integrity (auth, CSRF, input handling); the tiers
+# below only close casual escalation and keep the privileged surface auditable.
 #
 # 1. Unrestricted arguments - nmcli/nft/hostapd/iw/iwlist/kea-dhcp4. Their argument
 #    shapes vary per profile (interface names, CIDRs, SSIDs, rulesets), so scoping
