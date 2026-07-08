@@ -13,7 +13,6 @@ import (
 // multi-statement work into the closing database.
 func TestStopBackgroundJoinsLoops(t *testing.T) {
 	s, _ := newTestServer(t)
-	s.done = make(chan struct{})
 	s.live = newLiveHub()
 	s.health = newBackendHealth()
 	s.metrics = newMetricsStore()
@@ -30,7 +29,7 @@ func TestStopBackgroundJoinsLoops(t *testing.T) {
 	s.stopBackground()
 
 	select {
-	case <-s.done:
+	case <-s.bg.doneCh():
 	default:
 		t.Fatal("stopBackground did not close the done channel")
 	}

@@ -167,22 +167,12 @@ type Server struct {
 	// loginThrottle slows brute-force sign-in attempts with a per-source-IP
 	// escalating backoff (throttle-only, never a hard lockout).
 	loginThrottle *loginThrottle
-	// done is closed on shutdown to end the background loops (live ticker,
+	// bg owns the shutdown-join discipline for the background loops (live ticker,
 	// metrics sampler, MariaDB probe, update check + kicked checks + result
-	// watcher, clock watch) before main's deferred sqlite.Close runs - otherwise
-	// they keep querying a closing database on every service restart and
-	// self-update. bgWG counts those goroutines so stopBackground can JOIN them:
-	// signalling alone leaves a loop already past its select free to issue
-	// multi-statement work into the closing database.
-	done chan struct{}
-	bgWG sync.WaitGroup
-	// bgMu + bgStopping order bgWG.Add against stopBackground's Wait: a
-	// registration racing shutdown (kickUpdateCheck fires from reconcile
-	// goroutines the join does not cover) must either land before the Wait or
-	// be refused - Add concurrent with a zero-counter Wait is the documented
-	// WaitGroup misuse. bgStopping also makes stopBackground idempotent.
-	bgMu       sync.Mutex
-	bgStopping bool
+	// watcher, clock watch): every one registers via bg.add and selects on
+	// bg.doneCh, and stopBackground joins them through bg.stop before main's
+	// deferred sqlite.Close runs. See bgRunner in bg.go.
+	bg *bgRunner
 	// lastMaint is when the storage-maintenance pass (snapshot/audit/session
 	// pruning) last ran. Touched only by the metrics sampler goroutine.
 	lastMaint time.Time
@@ -296,7 +286,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.loginThrottle = newLoginThrottle()
 	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
-	s.done = make(chan struct{})
+	s.bg = newBgRunner()
 	// Prime the last-seen maps from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = map[string]int64{}

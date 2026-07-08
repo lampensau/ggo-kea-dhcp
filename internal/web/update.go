@@ -150,15 +150,18 @@ type releaseManifest struct {
 // startBackendHealthProbe). No immediate check on start: the boot-time uplink
 // connect kicks one via kickUpdateCheck when there is an uplink at all.
 func (s *Server) startUpdateCheckLoop() {
-	s.bgWG.Add(1)
+	done, ok := s.bg.add()
+	if !ok {
+		return
+	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		t := time.NewTicker(updateCheckInterval)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-			case <-s.done:
+			case <-s.bg.doneCh():
 				return
 			}
 			s.updateCheckSafe(false)
@@ -169,16 +172,17 @@ func (s *Server) startUpdateCheckLoop() {
 // kickUpdateCheck schedules one near-immediate check; called from the uplink
 // connect success path (the only moment the box knowably just gained internet).
 func (s *Server) kickUpdateCheck() {
-	// addBackground, not a bare Add: this fires from reconcile goroutines the
-	// shutdown join does not cover, so it must not race stopBackground's Wait.
-	if !s.addBackground() {
+	// This fires from reconcile goroutines the shutdown join does not cover, so it
+	// must act on bg.add's ok - Add racing stop's Wait is the WaitGroup misuse.
+	done, ok := s.bg.add()
+	if !ok {
 		return
 	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		select {
 		case <-time.After(updateKickDelay):
-		case <-s.done:
+		case <-s.bg.doneCh():
 			return // shutting down: the check would race sqlite.Close
 		}
 		s.updateCheckSafe(false)
@@ -210,13 +214,14 @@ func (s *Server) kickUpdateCheckOnLoad() bool {
 	if !s.lastUpdateLoadCheck.CompareAndSwap(prev, now) {
 		return false
 	}
-	// addBackground, not a bare Add: this fires from the SSE handler, which the
-	// shutdown join does not otherwise cover, so it must not race stopBackground.
-	if !s.addBackground() {
+	// This fires from the SSE handler, which the shutdown join does not otherwise
+	// cover, so it must act on bg.add's ok rather than race stop's Wait.
+	done, ok := s.bg.add()
+	if !ok {
 		return false
 	}
 	go func() {
-		defer s.bgWG.Done()
+		defer done()
 		s.updateCheckSafe(false)
 	}()
 	return true

@@ -15,22 +15,19 @@ import (
 	"ggo-kea-dhcp/internal/db"
 )
 
-// watchUpdateResult must join the shutdown wait (addBackground), so a shutdown
+// watchUpdateResult must join the shutdown wait (bg.add), so a shutdown
 // already under way makes it skip rather than fold a result into the closing DB.
 // Without the gate it enters its poll loop (updateResultPollInterval) and would
 // process the staged result - the test catches both the missing skip (2s timeout
 // vs the 10s poll) and the folded state.
 func TestWatchUpdateResultSkipsDuringShutdown(t *testing.T) {
 	s, _ := newUpdateTestServer(t, nil)
-	s.done = make(chan struct{})
 
 	res := `{"version":"9.9.9","status":"needs_system","detail":"deps changed"}`
 	if err := os.WriteFile(filepath.Join(s.updateDir, updateResultFile), []byte(res), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s.bgMu.Lock()
-	s.bgStopping = true // shutdown in progress: addBackground must refuse
-	s.bgMu.Unlock()
+	s.bg.stop() // shutdown in progress: bg.add must now refuse
 
 	done := make(chan struct{})
 	go func() { s.watchUpdateResult("app"); close(done) }()
@@ -328,7 +325,7 @@ func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
 	}
 
 	// Join the one dispatched background check, then assert it hit the API exactly once.
-	s.bgWG.Wait()
+	s.bg.wg.Wait()
 	if got := api.hits.Load(); got != 1 {
 		t.Fatalf("throttled load checks made %d API requests, want exactly 1", got)
 	}
@@ -343,7 +340,7 @@ func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
 	if !s.kickUpdateCheckOnLoad() {
 		t.Fatal("a page-load check after the floor elapsed should dispatch again")
 	}
-	s.bgWG.Wait()
+	s.bg.wg.Wait()
 	if got := api.hits.Load(); got != 2 {
 		t.Fatalf("post-expiry dispatch made %d total API requests, want 2", got)
 	}
