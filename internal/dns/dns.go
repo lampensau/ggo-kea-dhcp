@@ -457,13 +457,36 @@ func (l *listener) forwardAsync(req []byte, remote *net.UDPAddr) {
 	}()
 }
 
-// forward relays the query verbatim to each upstream in turn and returns the
-// first verified reply, or nil when isolated / every upstream failed. Each
-// attempt uses a fresh socket - a fresh kernel-chosen random source port per
-// query - and only accepts a reply whose transaction id AND question match.
+// forward relays the query verbatim to the upstreams and returns the first
+// verified reply, or nil when isolated / every upstream failed. Each attempt
+// uses a fresh socket - a fresh kernel-chosen random source port per query - and
+// only accepts a reply whose transaction id AND question match.
 func (s *Server) forward(req []byte, q question) []byte {
-	for _, up := range s.resolv.upstreams(s.bindSetSnapshot()) {
-		if resp := forwardOne(req, q, net.JoinHostPort(up, "53")); resp != nil {
+	return raceUpstreams(s.resolv.upstreams(s.bindSetSnapshot()), func(up string) []byte {
+		return forwardOne(req, q, net.JoinHostPort(up, "53"))
+	})
+}
+
+// raceUpstreams probes every upstream concurrently and returns the first non-nil
+// (verified) reply, or nil when there are none / all fail. Parallel rather than
+// serial so a dead upstream adds no latency: the total budget is one upstream
+// timeout, not the sum over a serially-tried list. This costs one query per
+// upstream (typically 2-3 from resolv.conf) instead of stopping at the first
+// success - acceptable for a LAN forwarder already bounded by the global forward
+// ceiling. The losing goroutines drain into the buffered channel and exit.
+func raceUpstreams(ups []string, probe func(upstream string) []byte) []byte {
+	if len(ups) == 0 {
+		return nil
+	}
+	if len(ups) == 1 {
+		return probe(ups[0])
+	}
+	results := make(chan []byte, len(ups))
+	for _, up := range ups {
+		go func(up string) { results <- probe(up) }(up)
+	}
+	for range ups {
+		if resp := <-results; resp != nil {
 			return resp
 		}
 	}
@@ -597,12 +620,9 @@ func (l *listener) forwardTCP(req []byte) []byte {
 		return nil // pool saturated: caller answers SERVFAIL
 	}
 	defer func() { <-l.srv.forwardSem }()
-	for _, up := range l.srv.resolv.upstreams(l.srv.bindSetSnapshot()) {
-		if resp := forwardOneTCP(req, q, net.JoinHostPort(up, "53")); resp != nil {
-			return resp
-		}
-	}
-	return nil
+	return raceUpstreams(l.srv.resolv.upstreams(l.srv.bindSetSnapshot()), func(up string) []byte {
+		return forwardOneTCP(req, q, net.JoinHostPort(up, "53"))
+	})
 }
 
 // forwardOneTCP performs one TCP exchange with an upstream: framed query, framed

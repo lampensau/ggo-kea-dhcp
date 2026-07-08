@@ -198,6 +198,55 @@ func TestForwardVerifiedAgainstFakeUpstream(t *testing.T) {
 	}
 }
 
+// TestForwardParallelIgnoresDeadFirstUpstream pins #162: a dead upstream listed
+// first must not stall the forward. The first resolver is a bound-but-silent
+// socket (packets sit unread -> forwardOne would block the full forwardTimeout);
+// the second answers. With serial forwarding this returns only after ~3s; the
+// parallel fan-out must return the live answer well inside that budget.
+func TestForwardParallelIgnoresDeadFirstUpstream(t *testing.T) {
+	dead, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dead.Close() // never read from: a black hole, not a refusal
+
+	live, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	go func() {
+		buf := make([]byte, 1500)
+		n, remote, err := live.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		reply := make([]byte, n)
+		copy(reply, buf[:n])
+		reply[2] |= 0x80 // set QR: it is a response
+		_, _ = live.WriteToUDP(reply, remote)
+	}()
+
+	// Probe raceUpstreams with explicit host:port so the ephemeral test listeners
+	// are reachable (resolv.conf carries no port and would force :53).
+	ups := []string{dead.LocalAddr().String(), live.LocalAddr().String()}
+	query := buildQuery(0x2162, "example.com", typeA)
+	q, _ := parseQuestion(query)
+
+	start := time.Now()
+	resp := raceUpstreams(ups, func(up string) []byte {
+		return forwardOne(query, q, up)
+	})
+	elapsed := time.Since(start)
+
+	if resp == nil {
+		t.Fatal("no reply returned; the live upstream should have answered")
+	}
+	if elapsed > forwardTimeout/2 {
+		t.Fatalf("forward took %v (>= half of forwardTimeout %v): a dead first upstream still stalls the path", elapsed, forwardTimeout)
+	}
+}
+
 func TestForwardGateCapsGloballyAndResets(t *testing.T) {
 	var g forwardGate
 	now := time.Unix(1000, 0)
@@ -321,6 +370,22 @@ func TestResolvConfParsingAndSelfExclusion(t *testing.T) {
 	got := rc.upstreams(map[string]bool{"10.0.0.1": true})
 	if len(got) != 1 || got[0] != "1.1.1.1" {
 		t.Fatalf("upstreams = %v, want [1.1.1.1] (self excluded, junk skipped)", got)
+	}
+}
+
+func TestResolvConfCapsAtMaxNameservers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resolv.conf")
+	body := "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 9.9.9.9\nnameserver 8.8.4.4\nnameserver 1.0.0.1\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := parseResolvConf(path)
+	if len(got) != maxNameservers {
+		t.Fatalf("parsed %d nameservers %v, want the first %d (glibc MAXNS)", len(got), got, maxNameservers)
+	}
+	if got[0] != "1.1.1.1" || got[2] != "9.9.9.9" {
+		t.Fatalf("kept %v, want the first three in file order", got)
 	}
 }
 
