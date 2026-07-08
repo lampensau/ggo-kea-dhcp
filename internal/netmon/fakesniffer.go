@@ -297,6 +297,22 @@ func lldpFrame(sysName, portID string, nativeVLAN int) Frame {
 	return Frame{Iface: "eth0", TS: base, Data: buildEth(dst, macTestSwitch, etherTypeLLDP, tlv)}
 }
 
+// cdpFrame builds a Cisco Discovery Protocol frame addressed to the CDP group MAC,
+// carrying a Device-ID and a Port-ID TLV. CDP is an 802.3 frame - the ethertype slot
+// holds the payload length - so parseCDP skips a fixed 802.2 LLC/SNAP + CDP header
+// before the TLVs (cdpTLVStart = 26). Mirrors lldpFrame for the CDP path's tests.
+func cdpFrame(deviceID, portID string) Frame {
+	tlv := func(typ uint16, val string) []byte {
+		n := len(val) + 4 // CDP TLV length includes its own 4-byte header
+		return append([]byte{byte(typ >> 8), byte(typ), byte(n >> 8), byte(n)}, val...)
+	}
+	body := append(tlv(0x0001, deviceID), tlv(0x0003, portID)...)
+	// 802.2 LLC (AA AA 03) + SNAP (OUI 00 00 0c, protocol 20 00) + CDP header
+	// (version 1, ttl, 2-byte checksum) = the 12 bytes before the TLV stream.
+	payload := append([]byte{0xaa, 0xaa, 0x03, 0x00, 0x00, 0x0c, 0x20, 0x00, 0x01, 0xb4, 0x00, 0x00}, body...)
+	return Frame{Iface: "eth0", TS: base, Data: buildEth(macCDP, macTestSwitch, uint16(len(payload)), payload)}
+}
+
 // dhcpFrame builds a server→client DHCP frame (UDP sport 67 dport 68) from
 // serverID with the given DHCP message type (2 OFFER, 5 ACK, 4 DECLINE…). The
 // source MAC is macTestSwitch; use dhcpFrameFrom to set it (rogue self-suppression

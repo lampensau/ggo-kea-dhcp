@@ -113,10 +113,11 @@ func (s *Scanner) Start(specs []Spec) {
 		log.Printf("[ggoscan] scanning disabled (%v)", err)
 		return
 	}
+	quit := make(chan struct{})
 	s.mu.Lock()
 	s.conn = conn
 	s.specs = specs
-	s.quit = make(chan struct{})
+	s.quit = quit
 	s.available = true
 	s.seen = map[string]bool{}
 	s.mu.Unlock()
@@ -125,7 +126,7 @@ func (s *Scanner) Start(specs []Spec) {
 	// network's devices color the new profile's census and firmware findings.
 	s.inv.clear()
 	s.wg.Add(2)
-	go s.sendLoop()
+	go s.sendLoop(quit)
 	go s.recvLoop()
 }
 
@@ -181,7 +182,7 @@ func (s *Scanner) Snapshot() Snapshot {
 	return Snapshot{Devices: s.inv.snapshot(time.Now()), Available: avail}
 }
 
-func (s *Scanner) sendLoop() {
+func (s *Scanner) sendLoop(quit chan struct{}) {
 	defer s.wg.Done()
 	s.sweep()
 	s.pollLeases()
@@ -189,10 +190,10 @@ func (s *Scanner) sendLoop() {
 	pollT := time.NewTicker(pollInterval)
 	defer sweepT.Stop()
 	defer pollT.Stop()
-	// Capture quit once: it is set at Start and only niled by Stop (which closes
-	// the captured channel first). Re-reading it per iteration would select on a
-	// nil channel after Stop, never observe the close, and hang wg.Wait() forever.
-	quit := s.quit
+	// quit is captured at Start (under the lock) and passed in, so this goroutine never
+	// reads s.quit concurrently with Stop's write to it. Stop closes this exact channel
+	// before wg.Wait(), so the select observes the close and returns (a re-read of s.quit
+	// could see nil after Stop and block on a nil channel forever).
 	for {
 		select {
 		case <-quit:
@@ -221,6 +222,10 @@ func (s *Scanner) sweep() {
 // pollLeases unicasts the scan request at any lease IP not yet scanned this run, so a
 // newly leased device is identified within one poll interval. Prunes the seen set to
 // the current lease IPs so a released-then-reused IP is re-scanned.
+//
+// Runs only on the sendLoop goroutine: the lock guards fetching the seen map header,
+// but its entries are read/written lock-free below, safe only because this one
+// goroutine ever touches them.
 func (s *Scanner) pollLeases() {
 	s.mu.Lock()
 	conn, specs, seen := s.conn, s.specs, s.seen
