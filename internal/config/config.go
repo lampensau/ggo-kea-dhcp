@@ -75,11 +75,11 @@ func Load() (*Config, error) {
 }
 
 // initKeaSecret ensures the Kea basic auth secret file exists and is populated
-// with a random token. Side effect: if the configured secret directory is not
-// writable (read-only fs, missing permissions - i.e. a dev machine), it redirects
-// BOTH c.KeaSecretPath and c.KeaConfDir to the local ./test-kea-gui fallback, so
-// rendered Kea configs follow the secret. On a production box that redirect is a
-// misconfiguration - it is logged loudly so journald shows why /etc/kea stays stale.
+// with a random token. If the configured secret directory is not writable, the
+// response depends on whether kea-dhcp4 is installed (see fallbackOrFail): a dev
+// sandbox redirects BOTH c.KeaSecretPath and c.KeaConfDir to ./test-kea-gui so the
+// app still runs; a real appliance returns an error instead of silently sending
+// rendered configs to a directory Kea never reads.
 func (c *Config) initKeaSecret() error {
 	// If the file already exists, we use the existing secret
 	if _, err := os.Stat(c.KeaSecretPath); err == nil {
