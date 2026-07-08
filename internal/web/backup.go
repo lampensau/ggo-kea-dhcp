@@ -433,11 +433,16 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	// fully restore. lifecycle is still returned non-empty, so the caller knows the
 	// SQLite restore itself succeeded and can still reconcile.
 	if sel["reservations"] && s.mariadb != nil && (b.ReservationsIncluded || len(b.Reservations) > 0) {
-		if err := s.mariadb.DeleteAllReservations(context.Background()); err != nil {
+		// Bound these two writes like the rest of the backup/restore path (buildBackup
+		// reads MariaDB under a deadline too): a half-down MariaDB must not hang the
+		// restore request goroutine on the driver read timeout alone.
+		ctx, cancel := opCtx()
+		defer cancel()
+		if err := s.mariadb.DeleteAllReservations(ctx); err != nil {
 			log.Printf("[restore] clearing MariaDB hosts failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
-		if err := s.mariadb.InsertReservations(context.Background(), restoreHosts(b.Reservations)); err != nil {
+		if err := s.mariadb.InsertReservations(ctx, restoreHosts(b.Reservations)); err != nil {
 			log.Printf("[restore] inserting reservations failed: %v", err)
 			return lifecycle, fmt.Errorf("the reservation table did not fully restore: %w", err)
 		}
