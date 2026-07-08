@@ -31,7 +31,11 @@ set -eu
 # and the digest check).
 export LC_ALL=C LANG=C
 
-STAGE=/var/lib/ggo-kea-dhcp/update
+# STAGE defaults to the service's StateDirectory. GGO_UPDATE_STAGE overrides it for a
+# validation harness that drives this script without root (same root-set trust as the
+# REPO/API overrides below - the unit's EnvironmentFile is root-owned, so a compromised
+# app user cannot set it). The staged-path escape guard below keys on this $STAGE.
+STAGE="${GGO_UPDATE_STAGE:-/var/lib/ggo-kea-dhcp/update}"
 RESULT="$STAGE/result.json"
 MANIFEST="$STAGE/manifest.json"
 APT_LOG="$STAGE/apt.log"
