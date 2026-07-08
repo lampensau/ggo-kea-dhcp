@@ -179,14 +179,14 @@ func TestCapsStatus(t *testing.T) {
 }
 
 func TestPort53Status(t *testing.T) {
-	if got := port53Status(nil); got.Status != OK {
+	if got := port53Status("UDP", nil); got.Status != OK {
 		t.Errorf("bind ok = %v, want OK", got.Status)
 	}
-	perm := port53Status(&net.OpError{Op: "listen", Err: os.ErrPermission})
+	perm := port53Status("UDP", &net.OpError{Op: "listen", Err: os.ErrPermission})
 	if perm.Status != Warn || !strings.Contains(perm.Detail, "CAP_NET_BIND_SERVICE") {
 		t.Errorf("permission = %v %q, want the capability story", perm.Status, perm.Detail)
 	}
-	taken := port53Status(errors.New("address already in use"))
+	taken := port53Status("UDP", errors.New("address already in use"))
 	if taken.Status != Warn || !strings.Contains(taken.Detail, "taken") {
 		t.Errorf("in use = %v %q, want the port-taken story", taken.Status, taken.Detail)
 	}
@@ -244,10 +244,10 @@ func TestRunShape(t *testing.T) {
 		KeaAPIURL:     "http://127.0.0.1:1/",
 		MariaDBDSN:    "u:p@tcp(127.0.0.1:1)/kea",
 	})
-	// Exact count: 4 Kea + 6 tools + MariaDB + 2 caps + port 53 + clock. A loose
-	// floor would let a third of the probe set vanish unnoticed.
-	if len(r) != 15 {
-		t.Fatalf("Run returned %d checks, want the full probe set of 15", len(r))
+	// Exact count: 4 Kea + 6 tools + MariaDB + 2 caps + port 53 UDP + port 53 TCP +
+	// clock. A loose floor would let a third of the probe set vanish unnoticed.
+	if len(r) != 16 {
+		t.Fatalf("Run returned %d checks, want the full probe set of 16", len(r))
 	}
 	for i, c := range r {
 		if c.Name == "" || c.Detail == "" {

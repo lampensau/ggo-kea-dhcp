@@ -181,19 +181,43 @@ func (s *Server) RebindMissing() []string {
 	}
 	var healed []string
 	for _, ip := range s.desired {
-		if s.bindSet[ip] {
+		if !s.bindSet[ip] {
+			l, err := newListener(s, ip)
+			if err != nil {
+				continue // still absent / still failing: leave it for the next tick
+			}
+			s.listeners = append(s.listeners, l)
+			s.bindSet[ip] = true
+			l.startServing()
+			healed = append(healed, ip)
 			continue
 		}
-		l, err := newListener(s, ip)
-		if err != nil {
-			continue // still absent / still failing: leave it for the next tick
+		// Present, but its best-effort TCP half may have failed at bind time (a
+		// TCP-only squatter on :53) while UDP came up - which counts as "present"
+		// in bindSet. Retry just the TCP bind so the RFC 7766 fallback for oversize
+		// answers recovers once :53/tcp frees, instead of staying UDP-only for the
+		// process lifetime.
+		if l := s.listenerFor(ip); l != nil && l.bindTCPIfMissing() {
+			healed = append(healed, ip)
 		}
-		s.listeners = append(s.listeners, l)
-		s.bindSet[ip] = true
-		l.startServing()
-		healed = append(healed, ip)
 	}
 	return healed
+}
+
+// listenerFor returns the live listener bound to ip, or nil. Caller holds s.mu.
+func (s *Server) listenerFor(ip string) *listener {
+	ip4 := net.ParseIP(ip).To4()
+	if ip4 == nil {
+		return nil
+	}
+	var b [4]byte
+	copy(b[:], ip4)
+	for _, l := range s.listeners {
+		if l.bindIP == b {
+			return l
+		}
+	}
+	return nil
 }
 
 // Stop tears down all listeners. Idempotent.
@@ -270,6 +294,25 @@ func (l *listener) startServing() {
 		l.wg.Add(1)
 		go l.serveTCP()
 	}
+}
+
+// bindTCPIfMissing late-binds the best-effort TCP half of a listener that came up
+// UDP-only, and starts its serve loop. Returns true if it newly bound. Called by
+// RebindMissing under s.mu; the write to tcpLn is serialized with Stop()'s
+// listener-set handoff (also under s.mu) so it never races stop()'s tcpLn read.
+func (l *listener) bindTCPIfMissing() bool {
+	if l.tcpLn != nil {
+		return false
+	}
+	tcpLn, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: l.bindIP[:], Port: l.srv.port})
+	if err != nil {
+		return false // still squatted / still failing: leave it for the next tick
+	}
+	l.tcpLn = tcpLn
+	l.wg.Add(1)
+	go l.serveTCP()
+	log.Printf("[dns] TCP listener on %s:53 bound on retry", net.IP(l.bindIP[:]))
+	return true
 }
 
 func (l *listener) stop() {
