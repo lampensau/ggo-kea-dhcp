@@ -2,7 +2,6 @@ package web
 
 import (
 	"fmt"
-	"runtime"
 	"testing"
 
 	"ggo-kea-dhcp/internal/kea"
@@ -90,31 +89,30 @@ func seedSamplerTrunk(tb testing.TB, s *Server) []kea.ActiveLease {
 	return leases
 }
 
-// TestSamplePoolUtilAllocBytes pins the per-sample allocation cost of the
-// always-on 12s sampler on a realistic trunk (5 scopes x 300 leases). Each
-// lease's IP and class must be digested once per build (parseLeases), not once
-// per scope per lease: the per-scope subnet filter used to net.ParseIP every
-// lease against every scope and copy whole ActiveLease structs into its
-// filtered slice - ~141 KB and ~230 us per sample vs ~88 KB and ~165 us
-// parsed-once (amd64 dev box). The 110 KB budget sits between the two regimes
-// with ~25% margin each way, so a reintroduced per-scope re-parse fails this
-// test while normal churn does not.
-func TestSamplePoolUtilAllocBytes(t *testing.T) {
+// TestSamplePoolUtilAllocCount pins the per-sample allocation cost of the always-on
+// 12s sampler on a realistic trunk (5 scopes x 300 leases). Each lease's IP and class
+// must be digested once per build (parseLeases), not once per scope per lease: the
+// per-scope subnet filter used to net.ParseIP every lease against every scope and copy
+// whole ActiveLease structs into its filtered slice, which roughly doubles allocations.
+// The gate counts allocations, not bytes: allocation count is deterministic and
+// architecture-independent (measured 961/run on both amd64 and arm64), where byte
+// totals drift with Go releases and GC tuning. A reintroduced per-scope re-parse is
+// ~1989/run, so the 1400 budget sits between the two regimes and fails the regression
+// while normal churn does not.
+//
+// AllocsPerRun counts allocations on the calling goroutine only, so this gate assumes
+// samplePoolUtil stays synchronous (it is: sqlite query -> parseLeases -> per-scope
+// poolDataForScope, all inline). If it ever offloads work to background workers, their
+// allocations would not be counted and the gate would silently go blind to them.
+func TestSamplePoolUtilAllocCount(t *testing.T) {
 	s, _ := newTestServer(t)
 	leases := seedSamplerTrunk(t, s)
-
 	s.samplePoolUtil(leases) // warm caches (sqlite prepared statements etc.)
-	const runs = 20
-	var m0, m1 runtime.MemStats
-	runtime.ReadMemStats(&m0)
-	for i := 0; i < runs; i++ {
-		s.samplePoolUtil(leases)
-	}
-	runtime.ReadMemStats(&m1)
-	perRun := (m1.TotalAlloc - m0.TotalAlloc) / runs
-	const budget = 110_000
-	if perRun > budget {
-		t.Fatalf("samplePoolUtil allocated %d B for 5 scopes x 300 leases, budget %d (leases must be parsed once per build, not per scope)", perRun, budget)
+
+	allocs := testing.AllocsPerRun(50, func() { s.samplePoolUtil(leases) })
+	const budget = 1400
+	if allocs > budget {
+		t.Fatalf("samplePoolUtil made %.0f allocs/run for 5 scopes x 300 leases, budget %d (leases must be parsed once per build, not per scope)", allocs, budget)
 	}
 }
 
