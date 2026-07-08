@@ -53,8 +53,15 @@ func (r *resolvCache) upstreams(exclude map[string]bool) []string {
 	return out
 }
 
-// parseResolvConf extracts the nameserver lines from a resolv.conf file. A
-// missing or unreadable file is simply "no upstream".
+// maxNameservers caps the upstreams read from resolv.conf, matching glibc's
+// MAXNS: the stub resolver ignores any nameserver past the third, so the rest of
+// the box never consults them - and neither should our forwarder, whose parallel
+// fan-out would otherwise fire a goroutine+socket at each. NetworkManager never
+// writes more than this.
+const maxNameservers = 3
+
+// parseResolvConf extracts up to maxNameservers nameserver lines from a
+// resolv.conf file. A missing or unreadable file is simply "no upstream".
 func parseResolvConf(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -68,6 +75,9 @@ func parseResolvConf(path string) []string {
 		}
 		if ip := net.ParseIP(fields[1]); ip != nil {
 			out = append(out, fields[1])
+			if len(out) == maxNameservers {
+				break
+			}
 		}
 	}
 	return out

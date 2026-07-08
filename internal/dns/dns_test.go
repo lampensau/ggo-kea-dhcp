@@ -373,6 +373,22 @@ func TestResolvConfParsingAndSelfExclusion(t *testing.T) {
 	}
 }
 
+func TestResolvConfCapsAtMaxNameservers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resolv.conf")
+	body := "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 9.9.9.9\nnameserver 8.8.4.4\nnameserver 1.0.0.1\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := parseResolvConf(path)
+	if len(got) != maxNameservers {
+		t.Fatalf("parsed %d nameservers %v, want the first %d (glibc MAXNS)", len(got), got, maxNameservers)
+	}
+	if got[0] != "1.1.1.1" || got[2] != "9.9.9.9" {
+		t.Fatalf("kept %v, want the first three in file order", got)
+	}
+}
+
 func TestRateLimiterWindows(t *testing.T) {
 	rl := rateLimiter{counts: map[string]int{}}
 	base := time.Unix(1000, 0)
