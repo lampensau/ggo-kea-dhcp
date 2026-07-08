@@ -81,3 +81,72 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 		t.Errorf("expected the served interface to be set to 10.0.0.1/24; calls=%v", rec.Calls)
 	}
 }
+
+// TestReconcileActiveRestartRecovery covers writeAndReloadKea's socket-unreachable
+// recovery branch: when config-reload fails at the transport level (Kea running without
+// the :8004 control socket, which a reload can never fix), the reconciler restarts the
+// service so it re-reads the on-disk config, then re-probes. This is the rarely-hit
+// failure path the happy-path test can't reach. The branch is gated by kea.Installed(),
+// which is false on a box with no kea-dhcp4 binary (all CI), so we seam it true; the
+// fake Kea transport-fails the reload (hijack + close) to flip Reachable() false, then
+// answers version-get so the post-restart re-probe succeeds, and RestartService is
+// recorded through the fake commander.
+func TestReconcileActiveRestartRecovery(t *testing.T) {
+	s, rec := newTestServer(t)
+
+	origInstalled := kea.Installed
+	kea.Installed = func() bool { return true }
+	t.Cleanup(func() { kea.Installed = origInstalled })
+
+	// Fake Kea: config-reload is transport-failed by hijacking the connection and
+	// closing it with no response, so the client's request errors and marks the socket
+	// unreachable (the branch's !Reachable() condition). Every other command - including
+	// the version-get that Ping (waitKeaReachable) sends after the restart - answers
+	// result:0, so the re-probe succeeds without waiting out a retry delay.
+	var restarted, reprobed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		b := string(body)
+		if strings.Contains(b, "config-reload") && !restarted {
+			// The restart is faked (RecordingCommander), so the same server keeps
+			// serving; gate the transport failure on the recorded restart so the
+			// post-restart re-probe lands on a healthy socket.
+			restarted = rec.Mentions("isc-kea-dhcp4-server")
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, _ := hj.Hijack()
+				_ = conn.Close()
+				return
+			}
+		}
+		if strings.Contains(b, "version-get") {
+			reprobed = true
+		}
+		_, _ = io.WriteString(w, `[{"result":0,"arguments":{}}]`)
+	}))
+	t.Cleanup(srv.Close)
+	s.kea = kea.NewClient(srv.URL, "gui", "x")
+
+	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
+	if err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+	pid, _ := res.LastInsertId()
+	if _, err := s.sqlite.Exec(
+		"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?,?,?,?)",
+		pid, 0, "10.0.0.0/24", "greengo"); err != nil {
+		t.Fatalf("seed scope: %v", err)
+	}
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("seed lifecycle: %v", err)
+	}
+
+	if err := s.reconcileActive(ModeApply, int(pid)); err != nil {
+		t.Fatalf("reconcileActive should recover via restart, got error: %v", err)
+	}
+	if !rec.Mentions("isc-kea-dhcp4-server") {
+		t.Errorf("expected a restart of isc-kea-dhcp4-server on the recovery path; calls=%v", rec.Calls)
+	}
+	if !reprobed {
+		t.Error("expected a version-get re-probe after the restart")
+	}
+}
