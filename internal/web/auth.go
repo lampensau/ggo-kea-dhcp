@@ -40,17 +40,27 @@ const sessionCookieName = "ggo_session"
 // sessionUser resolves a session id to its owning user, returning the username
 // and CSRF token for a live (unexpired) session. ok is false for an unknown or
 // expired session.
-func (s *Server) sessionUser(sessionID string) (username, csrf string, ok bool) {
+func (s *Server) sessionUser(sessionID string) (username, csrf string, expiresAt time.Time, ok bool) {
+	var expiresStr string
 	err := s.sqlite.QueryRow(
 		// Live = within the sliding 1h idle window (expires_at) AND under the 12h
 		// absolute cap from login (created_at). The cap kills even an actively-used
-		// session, bounding a stolen-cookie window.
-		"SELECT username, COALESCE(csrf_token, '') FROM sessions WHERE session_id = ? AND expires_at > datetime('now') AND created_at > datetime('now', '-12 hours')",
-		sessionID).Scan(&username, &csrf)
+		// session, bounding a stolen-cookie window. expires_at also comes back so the
+		// caller can decide in-process whether the idle window needs sliding, without a
+		// separate read.
+		"SELECT username, COALESCE(csrf_token, ''), expires_at FROM sessions WHERE session_id = ? AND expires_at > datetime('now') AND created_at > datetime('now', '-12 hours')",
+		sessionID).Scan(&username, &csrf, &expiresStr)
 	if err != nil || username == "" {
-		return "", "", false
+		return "", "", time.Time{}, false
 	}
-	return username, csrf, true
+	// expires_at is a DATETIME column; the modernc driver hands it back as RFC3339
+	// ("2006-01-02T15:04:05Z"). Fall back to the bare SQLite text form just in case. A
+	// parse failure leaves the zero time, which makes the caller's slide check fire -
+	// safe, it just reverts to the old always-attempt-the-write behavior.
+	if expiresAt, err = time.Parse(time.RFC3339, expiresStr); err != nil {
+		expiresAt, _ = time.Parse("2006-01-02 15:04:05", expiresStr)
+	}
+	return username, csrf, expiresAt, true
 }
 
 // sessionInfo resolves the request's session cookie to its owning user. It is
@@ -60,7 +70,8 @@ func (s *Server) sessionInfo(r *http.Request) (username, csrf string, ok bool) {
 	if err != nil || cookie.Value == "" {
 		return "", "", false
 	}
-	return s.sessionUser(cookie.Value)
+	u, csrf, _, ok := s.sessionUser(cookie.Value)
+	return u, csrf, ok
 }
 
 // postAuthRedirect is the landing path after authentication: the setup wizard

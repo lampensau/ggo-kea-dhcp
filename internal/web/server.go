@@ -947,19 +947,26 @@ func (s *Server) lifecycleMiddleware(next http.Handler) http.Handler {
 		var authenticated bool
 		var csrfToken string
 		if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
-			if _, csrf, ok := s.sessionUser(cookie.Value); ok {
+			if _, csrf, expiresAt, ok := s.sessionUser(cookie.Value); ok {
 				authenticated = true
 				csrfToken = csrf
 
 				// Slide the 1h idle window forward, but at most ~once / 10 min (the 1h
 				// TTL minus a 50-min floor) to avoid a DB write on every authenticated
-				// request (the SSE live stream + Datastar actions). When it actually
-				// slides, re-issue the cookie so the browser's 1h MaxAge tracks the
-				// server window (the 12h absolute cap lives in created_at, enforced in
-				// sessionUser). Past the cap, sessionUser already failed auth above.
-				if res, err := s.sqlite.Exec("UPDATE sessions SET expires_at = datetime('now', '+1 hour') WHERE session_id = ? AND expires_at < datetime('now', '+50 minutes')", cookie.Value); err == nil {
-					if n, _ := res.RowsAffected(); n > 0 {
-						setSessionCookie(w, r, cookie.Value)
+				// request (the SSE live stream + Datastar actions). The read above already
+				// returned expires_at, so gate the write in-process: ~5/6 of requests are
+				// outside the slide zone and skip the 0-row UPDATE on the pinned single
+				// connection entirely. The SQL WHERE stays the authoritative guard, so a
+				// boundary/clock-skew miss only costs a one-request-late slide, never a
+				// wrong window. When it actually slides, re-issue the cookie so the
+				// browser's 1h MaxAge tracks the server window (the 12h absolute cap lives
+				// in created_at, enforced in sessionUser). Past the cap, sessionUser
+				// already failed auth above.
+				if time.Until(expiresAt) < 50*time.Minute {
+					if res, err := s.sqlite.Exec("UPDATE sessions SET expires_at = datetime('now', '+1 hour') WHERE session_id = ? AND expires_at < datetime('now', '+50 minutes')", cookie.Value); err == nil {
+						if n, _ := res.RowsAffected(); n > 0 {
+							setSessionCookie(w, r, cookie.Value)
+						}
 					}
 				}
 			}
