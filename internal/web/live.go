@@ -513,7 +513,7 @@ func (s *Server) publishDashboardWithLeases(ctx context.Context, leases []kea.Ac
 	// shared snapshot is byte-identical - it only removes the second round-trip (and
 	// the two now see one consistent set rather than two reads a moment apart).
 	res := s.fetchHWReservationMap(ctx)
-	s.rebuildDNSZoneWith(leases, res, s.dnsZoneSeq.Add(1))
+	s.rebuildDNSZoneWith(leases, res, s.zone.nextGen())
 	s.publishFragments(s.dashboardFragmentsWith(ctx, leases, res))
 }
 

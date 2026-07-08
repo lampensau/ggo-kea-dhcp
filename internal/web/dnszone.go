@@ -4,12 +4,55 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"ggo-kea-dhcp/internal/db"
 	"ggo-kea-dhcp/internal/dns"
 	"ggo-kea-dhcp/internal/ggoscan"
 	"ggo-kea-dhcp/internal/kea"
 )
+
+// zoneGate owns the local-DNS zone-install discipline: the sampler's idle-rebuild
+// dedup signature and the last-writer-by-generation serialization that keeps a slow
+// detached primeDNSZone from clobbering a fresher zone the sampler or an event-driven
+// publish already installed.
+type zoneGate struct {
+	// sig gates the metrics sampler's zone rebuild so an idle box does not
+	// re-query reservations every 12s (event-driven rebuilds ride publishDashboard).
+	sig atomic.Uint64
+	// seq dispenses a monotonic generation to each zone-rebuild dispatch; mu
+	// serializes the {generation check + SetZone} so a rebuild that dispatched
+	// earlier (a slow detached primeDNSZone) cannot land its staler zone on top of
+	// one dispatched later. appliedGen is the last generation that won, guarded by mu.
+	seq        atomic.Uint64
+	mu         sync.Mutex
+	appliedGen uint64
+}
+
+// nextGen stamps a zone-rebuild dispatch with the next monotonic generation.
+func (g *zoneGate) nextGen() uint64 { return g.seq.Add(1) }
+
+// tryApply runs install (the SetZone) as last-writer-by-generation: gen 0
+// (unversioned callers/tests) always applies; otherwise a gen below the last applied
+// is refused so a stale detached rebuild cannot clobber a fresher zone. Reports whether
+// install ran, so a signature-tracking caller latches its sig only on a win.
+func (g *zoneGate) tryApply(gen uint64, install func()) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gen != 0 && gen < g.appliedGen {
+		return false
+	}
+	g.appliedGen = gen
+	install()
+	return true
+}
+
+// sigChanged reports whether the rebuild signature differs from the last latched one.
+func (g *zoneGate) sigChanged(sig uint64) bool { return g.sig.Load() != sig }
+
+// latchSig records sig as current after a rebuild installed the zone.
+func (g *zoneGate) latchSig(sig uint64) { g.sig.Store(sig) }
 
 // collectDNSHostsWith gathers the zone builder's three inputs (with the reservation
 // map supplied by the caller) and delegates to the pure buildDNSHosts, so a single
@@ -119,21 +162,12 @@ func (s *Server) rebuildDNSZoneWith(leases []kea.ActiveLease, res map[string]db.
 	if s.dns == nil {
 		return false
 	}
-	// Build the zone outside the lock (pure CPU; res is already fetched), then apply
-	// under dnsZoneMu as last-writer-by-generation: a rebuild that dispatched later
-	// wins, so a slow detached primeDNSZone cannot clobber a fresher zone the sampler
-	// or an event-driven publish already installed. gen 0 (unversioned callers/tests)
-	// always applies. A panic while building the zone (before the lock) propagates,
-	// so the caller's signature commit is skipped exactly as an unapplied rebuild.
+	// Build the zone outside the lock (pure CPU; res is already fetched), then hand it
+	// to the gate, which installs it as last-writer-by-generation. A panic while building
+	// the zone (before the gate) propagates, so the caller's signature commit is skipped
+	// exactly as an unapplied rebuild.
 	z := dns.NewZone(s.collectDNSHostsWith(leases, res))
-	s.dnsZoneMu.Lock()
-	defer s.dnsZoneMu.Unlock()
-	if gen != 0 && gen < s.dnsZoneAppliedGen {
-		return false
-	}
-	s.dnsZoneAppliedGen = gen
-	s.dns.SetZone(z)
-	return true
+	return s.zone.tryApply(gen, func() { s.dns.SetZone(z) })
 }
 
 // maybeRebuildDNSZone is the sampler's gate: rebuild only when the lease set or
@@ -145,7 +179,7 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 		return
 	}
 	sig := leasesSignature(leases) ^ ggoNamesSignature(s.ggoScanIdentityByMAC())
-	if s.dnsZoneSig.Load() == sig {
+	if !s.zone.sigChanged(sig) {
 		return
 	}
 	// Latch this sig only when the rebuild actually installed the zone. A rebuild that
@@ -153,8 +187,8 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 	// race never returns true, so the sig stays put and the next tick retries instead
 	// of stranding a stale zone behind a "current" sig. The sampler is this gate's only
 	// caller, so a plain Load/Store needs no CAS.
-	if s.rebuildDNSZone(ctx, leases, s.dnsZoneSeq.Add(1)) {
-		s.dnsZoneSig.Store(sig)
+	if s.rebuildDNSZone(ctx, leases, s.zone.nextGen()) {
+		s.zone.latchSig(sig)
 	}
 }
 
@@ -237,5 +271,5 @@ func (s *Server) primeDNSZone() {
 	if err != nil {
 		return
 	}
-	s.rebuildDNSZone(ctx, leases, s.dnsZoneSeq.Add(1))
+	s.rebuildDNSZone(ctx, leases, s.zone.nextGen())
 }
