@@ -161,6 +161,13 @@ func TestInitKeaSecretGenerates(t *testing.T) {
 // must redirect to ./test-kea-gui/gui-secret. t.Chdir keeps that relative path inside
 // a tempdir so the repo isn't polluted.
 func TestInitKeaSecretFallback(t *testing.T) {
+	// Force dev mode so this exercises the fallback deterministically even when run
+	// on a box that has kea-dhcp4 installed (e.g. the Pi), where the default
+	// keaInstalled() would otherwise make initKeaSecret fail loud instead.
+	orig := keaInstalled
+	keaInstalled = func() bool { return false }
+	t.Cleanup(func() { keaInstalled = orig })
+
 	tmp := t.TempDir()
 	t.Chdir(tmp)
 	blocker := filepath.Join(tmp, "notadir")
