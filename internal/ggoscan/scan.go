@@ -222,6 +222,10 @@ func (s *Scanner) sweep() {
 // pollLeases unicasts the scan request at any lease IP not yet scanned this run, so a
 // newly leased device is identified within one poll interval. Prunes the seen set to
 // the current lease IPs so a released-then-reused IP is re-scanned.
+//
+// Runs only on the sendLoop goroutine: the lock guards fetching the seen map header,
+// but its entries are read/written lock-free below, safe only because this one
+// goroutine ever touches them.
 func (s *Scanner) pollLeases() {
 	s.mu.Lock()
 	conn, specs, seen := s.conn, s.specs, s.seen
