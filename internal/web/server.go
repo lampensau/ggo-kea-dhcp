@@ -102,15 +102,12 @@ type Server struct {
 	// instead of freezing every region for the whole outage.
 	lastLeasesMu sync.Mutex
 	lastLeases   []kea.ActiveLease
-	// applying guards against concurrent profile applies (a double-submit would
-	// otherwise race two reconciles against the live Kea conf).
-	applying atomic.Bool
-	// rescueArmed opens the zero-scopes rescue window: armed at process start,
-	// consumed by the FIRST ACTIVE converge (usually boot). Only inside that
-	// window may a nothing-to-serve ACTIVE box demote itself to ONBOARDING - a
-	// later converge (a mid-show settings save) must surface the error instead,
-	// never tear a serving box down to the SoftAP.
-	rescueArmed atomic.Bool
+	// recon is the lifecycle state machine (converge/apply/switch, the mutation
+	// guard, the zero-scopes rescue window, the uplink-audit debounce). Built by
+	// NewServer from the shared control-plane handles; the handlers drive it
+	// through the thin forwarders in reconcile_forward.go, and it reaches back
+	// into the web layer only through its nil-tolerant edges (wired in NewServer).
+	recon *reconciler
 	// updating guards the self-update install path: claimed by POST /update/install
 	// (alongside the applying guard) and held until the updater reports a result or
 	// the control plane restarts onto the new binary.
@@ -147,10 +144,6 @@ type Server struct {
 	// health tracks live Kea/MariaDB reachability so the shell warns on every page
 	// (Kea down = error, MariaDB down = warning) and transitions are audited.
 	health *backendHealth
-	// uplink debounces the WiFi-uplink audit so a persistently failing or repeatedly
-	// re-applied uplink logs exactly one row per real up/down transition (zero value =
-	// unknown, so the first connect attempt always audits its outcome).
-	uplink uplinkAudit
 	// hwResFetch overrides the hw-address reservation fetch in tests (a counting fake),
 	// so the per-broadcast fetch-count invariant is assertable. nil in production, where
 	// fetchHWReservationMap reads MariaDB directly.
@@ -247,10 +240,22 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.updateRepo = envOr("GGO_UPDATE_REPO", updateRepo)
 	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
-	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
 	s.bg = newBgRunner()
 	s.ggoFw = newFwCensus()
+	// Build the lifecycle reconciler from the shared control-plane handles, then
+	// wire its web-side edges - the ONLY way it reaches SSE, the DNS zone, the
+	// update subsystem, the monitor starts, backend-health, and pinning - and arm
+	// the boot-only zero-scopes rescue. A nil-tolerant edge fails silently if left
+	// unwired, so TestNewServerWiresReconcilerEdges asserts every one is set.
+	s.recon = s.newReconciler()
+	s.recon.notifyDashboard = s.publishDashboard
+	s.recon.notifyBackend = s.publishBackendAlert
+	s.recon.primeZone = s.primeDNSZone
+	s.recon.kickUpdate = s.kickUpdateCheck
+	s.recon.setUplinkDown = s.health.setUplinkDown
+	s.recon.pinnedPortKeys = s.pinnedPortKeys
+	s.recon.rescueArmed.Store(true)
 	// Prime the last-seen tracker from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = newLastSeenTracker()

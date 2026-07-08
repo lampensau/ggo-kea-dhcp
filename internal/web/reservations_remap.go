@@ -134,11 +134,11 @@ func hostIdentDisplay(r db.HostReservation) string {
 // so failures are logged/audited but never fail the reconcile. Orphans (IP outside
 // every scope) are audited only on ModeApply - the profile-change moment - so
 // routine boot/settings converges don't re-audit the same stale rows forever.
-func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
-	if s.mariadb == nil {
+func (r *reconciler) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
+	if r.mariadb == nil {
 		return
 	}
-	rows, err := s.mariadb.AllReservations(ctx)
+	rows, err := r.mariadb.AllReservations(ctx)
 	if err != nil {
 		log.Printf("[remap] host reservation read failed, skipping subnet remap: %v", err)
 		return
@@ -157,7 +157,7 @@ func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConf
 				NewSubnetID:    mv.newID,
 			}
 		}
-		if err := s.mariadb.UpdateReservationSubnets(ctx, updates); err != nil {
+		if err := r.mariadb.UpdateReservationSubnets(ctx, updates); err != nil {
 			// The batch is one transaction, so nothing moved. A duplicate key means a
 			// concurrent reservation write raced the plan snapshot; either way the next
 			// reconcile re-plans from fresh rows.
@@ -185,7 +185,7 @@ func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConf
 		if len(skipped) > 0 {
 			result = "WARNING"
 		}
-		_ = s.sqlite.LogAudit("SYSTEM", "RESERVATION_REMAP",
+		_ = r.sqlite.LogAudit("SYSTEM", "RESERVATION_REMAP",
 			fmt.Sprintf("%d remapped, %d skipped", applied, len(skipped)),
 			"", strings.Join(details, "; "), result)
 	}
@@ -199,7 +199,7 @@ func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConf
 		log.Printf("[remap] %d reservation(s)/pin(s) outside every configured scope, left as-is: %s",
 			len(orphans), strings.Join(names, "; "))
 		if mode == ModeApply {
-			_ = s.sqlite.LogAudit("SYSTEM", "RESERVATION_ORPHANED",
+			_ = r.sqlite.LogAudit("SYSTEM", "RESERVATION_ORPHANED",
 				fmt.Sprintf("%d reservation(s) outside every scope", len(orphans)),
 				"", strings.Join(names, "; "), "WARNING")
 		}

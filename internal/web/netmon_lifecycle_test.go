@@ -72,13 +72,13 @@ func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 	_ = seedActiveProfile(t, s)
 
 	// reconcileActive starts a monitor for the served eth0 scope.
-	_ = s.reconcileActive(ModeConverge, 0)
+	_ = s.recon.reconcileActive(ModeConverge, 0)
 	if got := s.mon.netmon.Running(); len(got) != 1 || got[0] != "eth0" {
 		t.Fatalf("after reconcileActive, monitors = %v, want [eth0]", got)
 	}
 
 	// reconcileOnboarding stops monitoring (left ACTIVE).
-	_ = s.reconcileOnboarding(ModeConverge)
+	_ = s.recon.reconcileOnboarding(ModeConverge)
 	if got := s.mon.netmon.Running(); len(got) != 0 {
 		t.Fatalf("after reconcileOnboarding, monitors = %v, want none", got)
 	}
@@ -87,7 +87,7 @@ func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 	// must NOT tear down monitoring - the box stays ACTIVE and monitoring must
 	// keep running. Teardown happens in finishApply, which runs only on a
 	// committed apply.
-	_ = s.reconcileActive(ModeConverge, 0)
+	_ = s.recon.reconcileActive(ModeConverge, 0)
 	if len(s.mon.netmon.Running()) == 0 {
 		t.Fatal("expected monitors running before beginApply")
 	}
@@ -95,7 +95,7 @@ func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 	if _, err := s.beginApply("test2", []ScopeConfig{{Preset: "greengo", CIDR: "10.0.0.0/24"}}, UplinkConfig{}); err == nil {
 		t.Fatal("expected beginApply to fail on a scope with no pool plan")
 	}
-	s.applying.Store(false) // release the guard the failed apply took
+	s.recon.applying.Store(false) // release the guard the failed apply took
 	if got := s.mon.netmon.Running(); len(got) == 0 {
 		t.Fatal("a FAILED beginApply must leave monitoring running (it stays ACTIVE)")
 	}

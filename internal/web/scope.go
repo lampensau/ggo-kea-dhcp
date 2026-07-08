@@ -407,9 +407,9 @@ func (sc ScopeConfig) servicesJSON() (string, error) {
 // loadScopeConfigs returns the scopes for profileID (or the active profile when
 // 0), decoding pool_spec and uplink_json into typed fields with checked errors.
 // It is the single scope loader shared by the reconciler and the dashboard.
-func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
+func (r *reconciler) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 	if profileID == 0 {
-		err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID)
+		err := r.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID)
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -418,7 +418,7 @@ func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 		}
 	}
 
-	rows, err := s.sqlite.Query("SELECT preset, vlan_id, cidr, pool_spec, uplink_json, pool_plan, services_json, name FROM scopes WHERE profile_id = ? ORDER BY id", profileID)
+	rows, err := r.sqlite.Query("SELECT preset, vlan_id, cidr, pool_spec, uplink_json, pool_plan, services_json, name FROM scopes WHERE profile_id = ? ORDER BY id", profileID)
 	if err != nil {
 		return nil, err
 	}

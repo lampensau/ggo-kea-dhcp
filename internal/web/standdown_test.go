@@ -215,7 +215,7 @@ func TestReconcileActiveHonorsStandDown(t *testing.T) {
 	}
 
 	// Reload fails against the dev Kea (expected); the written conf is the assertion.
-	_ = s.reconcileActive(ModeConverge, 0)
+	_ = s.recon.reconcileActive(ModeConverge, 0)
 
 	conf, err := os.ReadFile(filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf"))
 	if err != nil {
@@ -336,7 +336,7 @@ func auditActions(t *testing.T, s *Server) map[string]bool {
 func waitGuardReleased(t *testing.T, s *Server) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
-		if !s.applying.Load() {
+		if !s.recon.applying.Load() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

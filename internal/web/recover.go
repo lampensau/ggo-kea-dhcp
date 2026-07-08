@@ -25,11 +25,11 @@ func runRecovered(name string, fn func()) {
 // audited - Diagnostics is often the only place an operator can see why an
 // apply never finished. fn's own defers (endReconcile) run during unwinding,
 // before the recover here, so the mutation guard is always released.
-func (s *Server) runRecoveredAudited(name string, fn func()) {
+func (r *reconciler) runRecoveredAudited(name string, fn func()) {
 	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[%s] recovered from panic: %v", name, r)
-			_ = s.sqlite.LogAudit("SYSTEM", "PANIC_RECOVERED", name, "", fmt.Sprint(r), "ERROR")
+		if rec := recover(); rec != nil {
+			log.Printf("[%s] recovered from panic: %v", name, rec)
+			_ = r.sqlite.LogAudit("SYSTEM", "PANIC_RECOVERED", name, "", fmt.Sprint(rec), "ERROR")
 		}
 	}()
 	fn()
@@ -44,19 +44,19 @@ func (s *Server) runRecoveredAudited(name string, fn func()) {
 // down, and the converge dispatches straight into resumeInterruptedApply. The
 // kicked converge runs under the plain recover wrapper - a second panic there
 // is absorbed without kicking again, so this cannot loop.
-func (s *Server) runRecoveredReconcile(name string, fn func()) {
+func (r *reconciler) runRecoveredReconcile(name string, fn func()) {
 	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("[%s] recovered from panic: %v", name, r)
-			_ = s.sqlite.LogAudit("SYSTEM", "PANIC_RECOVERED", name, "", fmt.Sprint(r), "ERROR")
+		if rec := recover(); rec != nil {
+			log.Printf("[%s] recovered from panic: %v", name, rec)
+			_ = r.sqlite.LogAudit("SYSTEM", "PANIC_RECOVERED", name, "", fmt.Sprint(rec), "ERROR")
 			go runRecovered(name+"-recovery", func() {
-				if !s.beginReconcile() {
+				if !r.beginReconcile() {
 					return // another reconcile is running; it converges the state
 				}
-				defer s.endReconcile()
-				if err := s.ReconcileApplianceState(ModeConverge, 0); err != nil {
+				defer r.endReconcile()
+				if err := r.ReconcileApplianceState(ModeConverge, 0); err != nil {
 					log.Printf("[%s-recovery] converge after panic: %v", name, err)
-					_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", name+"-recovery", "", err.Error(), "WARNING")
+					_ = r.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", name+"-recovery", "", err.Error(), "WARNING")
 				}
 			})
 		}

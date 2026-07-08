@@ -41,6 +41,7 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	s.kea = kea.NewClient(srv.URL, "gui", "x")
+	s.recon = s.newReconciler() // reconciler copied the old Kea pointer at construction; rebind to the test Kea
 
 	// Seed one active profile with a single untagged scope.
 	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
@@ -57,7 +58,7 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 		t.Fatalf("seed lifecycle: %v", err)
 	}
 
-	if err := s.reconcileActive(ModeApply, int(pid)); err != nil {
+	if err := s.recon.reconcileActive(ModeApply, int(pid)); err != nil {
 		t.Fatalf("reconcileActive returned error: %v", err)
 	}
 
@@ -125,6 +126,7 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	s.kea = kea.NewClient(srv.URL, "gui", "x")
+	s.recon = s.newReconciler() // reconciler copied the old Kea pointer at construction; rebind to the test Kea
 
 	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
 	if err != nil {
@@ -140,7 +142,7 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 		t.Fatalf("seed lifecycle: %v", err)
 	}
 
-	if err := s.reconcileActive(ModeApply, int(pid)); err != nil {
+	if err := s.recon.reconcileActive(ModeApply, int(pid)); err != nil {
 		t.Fatalf("reconcileActive should recover via restart, got error: %v", err)
 	}
 	if !rec.Mentions("isc-kea-dhcp4-server") {
