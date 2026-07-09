@@ -74,11 +74,11 @@ type Thresholds struct {
 type detectorSlot struct {
 	d    Detector
 	kind string // cached at construction so a degraded snapshot keeps its Kind
-	// counterFed marks a detector whose Tick reads out-of-band counters (sysfs)
-	// rather than the frame stream - only the storm detector. Counter-fed detectors
-	// tick on the real clock; frame-fed detectors tick on the frame-clock, which
-	// pauses while frames are being dropped so their absence timers don't run down
-	// against frames they never received (see onTick).
+	// counterFed marks a detector whose Tick reads out-of-band counters (sysfs) rather
+	// than the frame stream - the storm and idle detectors. Counter-fed detectors tick
+	// on the real clock; frame-fed detectors tick on the frame-clock, which pauses while
+	// frames are being dropped so their absence timers don't run down against frames
+	// they never received (see onTick).
 	counterFed bool
 	degraded   bool
 }
@@ -94,11 +94,9 @@ func safeKind(d Detector) (k string) {
 	return k
 }
 
-// newDetectors builds the per-interface detector set. A RawTrunkOnly spec (the
-// synthesized raw-eth0 monitor for a pure-trunk profile) runs ONLY VLAN-reality.
-// Otherwise the standard set runs, and VLAN-reality is attached only when
-// WatchVLANs is set (the raw eth0 monitor) - never on an eth0.<vid> monitor,
-// where tags are stripped and it would run blind.
+// newDetectors builds the per-interface detector set. A RawTrunkOnly spec runs ONLY
+// VLAN-reality; otherwise the standard set runs, with VLAN-reality attached only when
+// WatchVLANs is set - never on an eth0.<vid> monitor, where it would run blind.
 func newDetectors(spec Spec, th Thresholds, rx rxCounterFunc, linkUp linkStateFunc) []Detector {
 	if spec.RawTrunkOnly {
 		return []Detector{newVLANDetector(spec.Iface, spec.ConfiguredVIDs, linkUp)}
@@ -172,14 +170,13 @@ type Monitor struct {
 
 	joiner *multicastJoiner
 
-	// Frame-clock: a clock for the frame-fed detectors that PAUSES for any tick in
-	// which the capture is dropping frames (either overflow counter rose: an
-	// AF_PACKET socket-buffer drop or a frame-channel drop-on-full). Their
-	// absence/debounce timers run on clock()-frameClockOffset, so a blind interval
-	// is elided rather than counted as the subject going absent - preventing false
-	// "lost" alarms under a control-frame storm and on the recovery afterward. The
-	// counter-fed storm detector always uses the real clock. Touched only on the
-	// monitor goroutine.
+	// Frame-clock: a clock for the frame-fed detectors that PAUSES for any tick where
+	// the capture dropped frames (either overflow counter rose: an AF_PACKET
+	// socket-buffer drop or a frame-channel drop-on-full). Their absence/debounce timers
+	// run on clock()-frameClockOffset, so a blind interval is elided rather than counted
+	// as the subject going absent, preventing false "lost" alarms under a control-frame
+	// storm and on the recovery after it. Counter-fed detectors always use the real
+	// clock. Touched only on the monitor goroutine.
 	frameClockOffset time.Duration
 	lastTickNow      time.Time
 	prevBlind        bool
@@ -195,20 +192,19 @@ type framesFreezer interface{ setFramesDropped(bool) }
 // blind time).
 func (m *Monitor) frameNow() time.Time { return m.clock().Add(-m.frameClockOffset) }
 
-// resetTickBaseline clears the frame-clock's per-capture tick baseline (see
-// serveOnce). Touched only on the monitor goroutine, like the fields it clears.
+// resetTickBaseline clears the frame-clock's per-capture tick baseline (see serveOnce).
+// Touched only on the monitor goroutine, like the fields it clears.
 //
 // TRADEOFF (deliberate, not a pure win): not crediting the fault+backoff gap means
-// frameNow jumps FORWARD by that gap (up to maxBackoff) on the first post-restart
-// tick, instead of staying frozen. A genuinely-absent device is then reported lost
-// promptly (the fix). The flip-side: a still-PRESENT short-window frame-fed detector
-// - PTP grandmaster most of all (absence threshold in seconds) - can fire a brief
-// false "lost" on that first tick, because its last sighting predates the blackout
-// and now reads gap-stale against the jumped clock. It self-heals within one announce
-// interval once the device re-announces. We accept that for this warn-only monitor
-// (netmon never mutates Kea): a self-healing blip right after an already-abnormal
-// fault is better than reporting a real loss up to maxBackoff late, and "we were
-// blind for the gap, reconfirm before trusting presence" is the honest posture.
+// frameNow jumps FORWARD by that gap (up to maxBackoff) on the first post-restart tick
+// instead of staying frozen, so a genuinely-absent device is reported lost promptly.
+// The flip-side is that a still-PRESENT short-window frame-fed detector, PTP
+// grandmaster most of all (absence threshold in seconds), can fire a brief false "lost"
+// on that tick: its last sighting predates the blackout and reads gap-stale against the
+// jumped clock. It self-heals within one announce interval. We accept that for this
+// warn-only monitor (netmon never mutates Kea): a self-healing blip right after an
+// already-abnormal fault beats reporting a real loss up to maxBackoff late, and "we
+// were blind for the gap, reconfirm before trusting presence" is the honest posture.
 func (m *Monitor) resetTickBaseline() {
 	m.prevBlind = false
 	m.haveTick = false
@@ -217,9 +213,7 @@ func (m *Monitor) resetTickBaseline() {
 func newMonitor(spec Spec, openFn OpenFunc, detectors []Detector, store *SnapshotStore, sink EventSink, clock func() time.Time, tick, backoff time.Duration, budget int) *Monitor {
 	slots := make([]*detectorSlot, len(detectors))
 	for i, d := range detectors {
-		// sysfs-counter-fed detectors read out-of-band counters, not the frame stream,
-		// so they tick on the real clock while frame-fed detectors run on the
-		// blind-time-eliding frame-clock.
+		// See detectorSlot.counterFed for why these tick on the real clock.
 		var counterFed bool
 		switch d.(type) {
 		case *stormDetector, *idleDetector:
@@ -363,11 +357,10 @@ func (m *Monitor) serveOnce() (panicked bool, err error) {
 	available := !isNop(sn)
 	cc, _ := sn.(capControl)
 	m.joiner = nil
-	// A restarted capture has no prior tick of its OWN to diff against. Clear the
-	// frame-clock's per-capture tick baseline so the first onTick doesn't bill the
-	// fault-plus-backoff gap (up to maxBackoff) as blind time and rewind frameNow,
-	// which would delay frame-fed "lost" firing for one window right after a fault.
-	// frameClockOffset (real accumulated blind time) is deliberately preserved.
+	// A restarted capture has no prior tick of its OWN to diff against, so clear the
+	// per-capture baseline: otherwise the first onTick bills the fault-plus-backoff gap
+	// (up to maxBackoff) as blind time and rewinds frameNow. frameClockOffset (the real
+	// accumulated blind time) is deliberately preserved. See resetTickBaseline.
 	m.resetTickBaseline()
 	// Join the cheap, fixed known groups (PTP + mDNS) whenever we have a real
 	// capture socket. These are benign receiver joins (no promiscuous, no querier,
@@ -445,13 +438,12 @@ func (m *Monitor) onTick(cc capControl, available bool) {
 		m.frameClockOffset += now.Sub(m.lastTickNow)
 	}
 
-	// Either overflow counter rising means the capture fell behind and dropped
-	// frames this tick - an AF_PACKET socket-buffer drop (tpDrops) or a
-	// frame-channel drop-on-full (chanDrops). That is the blindness signal the
-	// frame-clock keys on. Wire pps is deliberately NOT consulted: a busy-but-healthy
-	// show LAN runs enormous pps with zero drops (the in-kernel BPF sheds the flood),
-	// so a pps signal would freeze the frame-clock on exactly the healthy networks
-	// this monitor targets.
+	// Either overflow counter rising means the capture fell behind and dropped frames
+	// this tick: an AF_PACKET socket-buffer drop (tpDrops) or a frame-channel
+	// drop-on-full (chanDrops). That is the blindness signal the frame-clock keys on.
+	// Wire pps is deliberately NOT consulted: a busy-but-healthy show LAN runs enormous
+	// pps with zero drops (the in-kernel BPF sheds the flood), so it would freeze the
+	// frame-clock on exactly the healthy networks this monitor targets.
 	var tpDrops, chanDrops uint32
 	if cc != nil {
 		tpDrops, chanDrops = cc.stats()
@@ -593,7 +585,7 @@ func newManager(openFn OpenFunc, getState func(string) (string, error), sink Eve
 	}
 }
 
-// SnapshotAll exposes the store for the web layer (buildNetHealthView).
+// SnapshotAll exposes the store for the web layer (buildNetSignals).
 func (mm *MonitorManager) SnapshotAll() []Snapshot { return mm.store.SnapshotAll() }
 
 // Running returns the interfaces currently monitored (sorted), for the

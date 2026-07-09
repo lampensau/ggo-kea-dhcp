@@ -24,8 +24,7 @@ type Config struct {
 	KeaAPIURL     string
 	SnapshotDir   string
 	// LeaseLifetime is the active-profile DHCP lease lifetime in seconds (renew at
-	// 1/2, rebind at 7/8). Lower = host reservations and pool migrations take effect
-	// sooner, at the cost of more renewal traffic and SD-card writes.
+	// 1/2, rebind at 7/8); the -lease-lifetime flag help carries the tradeoff.
 	LeaseLifetime int
 	// LogLevel is the minimum slog level: debug | info | warn | error.
 	LogLevel string
@@ -66,7 +65,6 @@ func Load() (*Config, error) {
 	// the current dir without permission to create the parent).
 	_ = os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755)
 
-	// Initialize the randomized secure Kea API token if it doesn't exist
 	if err := cfg.initKeaSecret(); err != nil {
 		return nil, fmt.Errorf("failed to initialize Kea API secret: %w", err)
 	}
@@ -81,25 +79,21 @@ func Load() (*Config, error) {
 // app still runs; a real appliance returns an error instead of silently sending
 // rendered configs to a directory Kea never reads.
 func (c *Config) initKeaSecret() error {
-	// If the file already exists, we use the existing secret
 	if _, err := os.Stat(c.KeaSecretPath); err == nil {
-		return nil
+		return nil // an existing secret is kept
 	}
 
-	// Generate a secure 32-character hex token
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return err
 	}
 	token := hex.EncodeToString(bytes)
 
-	// Ensure directory exists
 	dir := filepath.Dir(c.KeaSecretPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return c.fallbackOrFail(token, "kea secret dir "+dir, err)
 	}
 
-	// Write token to file
 	if err := os.WriteFile(c.KeaSecretPath, []byte(token), 0600); err != nil {
 		return c.fallbackOrFail(token, "kea secret file "+c.KeaSecretPath, err)
 	}
