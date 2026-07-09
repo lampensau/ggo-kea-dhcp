@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net"
 	"net/http"
@@ -206,7 +207,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	candidate := make([]ScopeConfig, len(scopes))
 	copy(candidate, scopes)
 	candidate[sIdx] = sc
-	cfg, _, err := s.recon.renderKeaForScopes(candidate)
+	cfg, _, err := s.recon.RenderKeaForScopes(candidate)
 	if err == nil {
 		err = kea.TestConfig(cfg)
 	}
@@ -215,9 +216,9 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pj, perr := sc.planJSON()
-	sj, serr2 := sc.servicesJSON()
-	uj, uerr := sc.uplinkJSON()
+	pj, perr := sc.PlanJSON()
+	sj, serr2 := sc.ServicesJSON()
+	uj, uerr := sc.UplinkJSON()
 	if e := errors.Join(perr, serr2, uerr); e != nil {
 		toastErr("Failed to save: " + e.Error())
 		return
@@ -269,7 +270,7 @@ func poolScopeTitle(sc ScopeConfig) string {
 	// The CIDR is shown once, in the pool-plan sub-heading (pool-plan-sub); the
 	// scope card title carries the operator's name (or the derived preset) plus the
 	// VLAN, so /pools doesn't print the subnet twice directly below itself.
-	title := PresetLabel(sc.Preset)
+	title := appliance.PresetLabel(sc.Preset)
 	if sc.Name != "" {
 		title = sc.Name
 	}

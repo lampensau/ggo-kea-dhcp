@@ -18,10 +18,10 @@ const firmwareTipCap = 20
 // scopes. Best-effort and ACTIVE-only, like startNetmon/startArpProber; an empty
 // spec set (no Green-GO preset scope) stops the scanner.
 func (s *Server) startGgoScan(scopes []ScopeConfig) {
-	if s.mon.ggoscan == nil {
+	if s.mon.Ggoscan == nil {
 		return
 	}
-	s.mon.ggoscan.Start(s.buildGgoSpecs(scopes))
+	s.mon.Ggoscan.Start(s.buildGgoSpecs(scopes))
 }
 
 // fwScope is one greengo-preset scope the scanner targets: the interface whose
@@ -103,10 +103,10 @@ func namesFromDevices(devs []ggoscan.Device) map[string]string {
 // friendly label the appliance has for them. Takes its own scanner snapshot - callers
 // on the dashboard build path pass the shared map to overlayGgoNamesWith instead.
 func (s *Server) ggoNamesByMAC() map[string]string {
-	if s.mon.ggoscan == nil {
+	if s.mon.Ggoscan == nil {
 		return nil
 	}
-	return namesFromDevices(s.mon.ggoscan.Snapshot().Devices)
+	return namesFromDevices(s.mon.Ggoscan.Snapshot().Devices)
 }
 
 // ggoDeviceByMAC returns the scanned Green-GO device with the given (any-form) MAC,
@@ -114,14 +114,14 @@ func (s *Server) ggoNamesByMAC() map[string]string {
 // that an address belongs to a Green-GO client, and carries the device's current IP
 // and name - the basis for the reboot-to-apply offer.
 func (s *Server) ggoDeviceByMAC(mac string) (ggoscan.Device, bool) {
-	if s.mon.ggoscan == nil {
+	if s.mon.Ggoscan == nil {
 		return ggoscan.Device{}, false
 	}
 	want := normalizeMAC(mac)
 	if want == "" {
 		return ggoscan.Device{}, false
 	}
-	for _, d := range s.mon.ggoscan.Snapshot().Devices {
+	for _, d := range s.mon.Ggoscan.Snapshot().Devices {
 		if normalizeMAC(d.MAC) == want {
 			return d, true
 		}
@@ -133,10 +133,10 @@ func (s *Server) ggoDeviceByMAC(mac string) (ggoscan.Device, bool) {
 // by the release-path reboot offer (rebootOfferForIP) to prefill the dialog; the
 // handler itself re-derives eligibility from the live MAC at the address, not this map.
 func (s *Server) ggoDeviceByIP(ip string) (ggoscan.Device, bool) {
-	if s.mon.ggoscan == nil || ip == "" {
+	if s.mon.Ggoscan == nil || ip == "" {
 		return ggoscan.Device{}, false
 	}
-	for _, d := range s.mon.ggoscan.Snapshot().Devices {
+	for _, d := range s.mon.Ggoscan.Snapshot().Devices {
 		if d.IP == ip {
 			return d, true
 		}

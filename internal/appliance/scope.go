@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"database/sql"
@@ -10,23 +10,22 @@ import (
 	"strings"
 
 	"ggo-kea-dhcp/internal/kea"
-	"ggo-kea-dhcp/internal/web/views"
 )
 
 // staticReserveSize is the default carved-out static-host reserve (.2–.19) that
 // seeds a plan, matching the legacy firstDynamic=.20 start.
 const staticReserveSize = 18
 
-// flatPlan is the "Flat" size: no device-class pools, just a static reserve and
+// FlatPlan is the "Flat" size: no device-class pools, just a static reserve and
 // one elastic catch-all that fills the subnet to the brink.
-func flatPlan() PoolPlan {
+func FlatPlan() PoolPlan {
 	return PoolPlan{
 		{Kind: PoolKindReserve, Name: "Static reserve", Count: staticReserveSize},
 		{Kind: PoolKindElastic, Name: "All devices", Icon: "cpu", Weight: 1},
 	}
 }
 
-// seedPlan derives a PoolPlan from a legacy scope (preset + counts) - the bridge
+// SeedPlan derives a PoolPlan from a legacy scope (preset + counts) - the bridge
 // that lets the active config and the wizard adopt the new per-pool model. A
 // greengo scope seeds a static reserve, then the device classes in the
 // operator-facing order (user stations, antennas, interfaces) as Fixed pools sized
@@ -34,7 +33,7 @@ func flatPlan() PoolPlan {
 // and the single non-Green-GO Elastic backstop that takes the remainder (see
 // TestSeedPlanGreengo). A single-pool preset seeds a static reserve plus one
 // Elastic catch-all.
-func seedPlan(sc ScopeConfig) PoolPlan {
+func SeedPlan(sc ScopeConfig) PoolPlan {
 	if sc.Preset != "greengo" {
 		// Single-pool / flat / custom presets seed one elastic catch-all. (Custom's
 		// user-defined vendor-classified islands are added via the editor; the
@@ -66,8 +65,8 @@ func seedPlan(sc ScopeConfig) PoolPlan {
 	}
 	plan := PoolPlan{{Kind: PoolKindReserve, Name: "Static reserve", Count: staticReserveSize}}
 	elastic := func(class string) {
-		m := views.ClassDisplay(class)
-		plan = append(plan, PoolPlanEntry{Kind: PoolKindElastic, Class: class, Name: m.Label, Icon: m.Icon, Weight: 1})
+		label, icon, _ := kea.ClassMetadata(class)
+		plan = append(plan, PoolPlanEntry{Kind: PoolKindElastic, Class: class, Name: label, Icon: icon, Weight: 1})
 	}
 	// fixed seeds a device-class pool only when it has a forecast count; empty (0)
 	// types are omitted - the operator adds them deliberately via "+ Add pool". No
@@ -76,8 +75,8 @@ func seedPlan(sc ScopeConfig) PoolPlan {
 		if countFor(class) <= 0 {
 			return
 		}
-		m := views.ClassDisplay(class)
-		plan = append(plan, PoolPlanEntry{Kind: PoolKindFixed, Class: class, Name: m.Label, Icon: m.Icon, Sizing: "auto", Count: countFor(class)})
+		label, icon, _ := kea.ClassMetadata(class)
+		plan = append(plan, PoolPlanEntry{Kind: PoolKindFixed, Class: class, Name: label, Icon: icon, Sizing: "auto", Count: countFor(class)})
 	}
 	// Operator-facing default order: user stations, then antennas, then interfaces,
 	// then the catch-alls. This is the display + address-layout order and is
@@ -101,8 +100,8 @@ func seedPlan(sc ScopeConfig) PoolPlan {
 	// capacity should favour unconfigured Green-GO gear - e.g. MCXDs plugged in later,
 	// when only a BPX pool was set up, land here and need room to grow. (Was: a small
 	// Fixed pool sized from the "Others" count, which capped that growth.)
-	unk := views.ClassDisplay(kea.ClassNameGGOOthers)
-	plan = append(plan, PoolPlanEntry{Kind: PoolKindElastic, Class: kea.ClassNameGGOOthers, Name: unk.Label, Icon: unk.Icon, Weight: 2})
+	unkLabel, unkIcon, _ := kea.ClassMetadata(kea.ClassNameGGOOthers)
+	plan = append(plan, PoolPlanEntry{Kind: PoolKindElastic, Class: kea.ClassNameGGOOthers, Name: unkLabel, Icon: unkIcon, Weight: 2})
 	elastic(kea.ClassNameOthers)
 	return plan
 }
@@ -124,7 +123,7 @@ type ScopeConfig struct {
 	Uplink UplinkConfig `json:"uplink"`
 	// Plan is the per-pool model (ordered Fixed/Elastic/Reserve) and the authoritative
 	// source for rendering (ToRenderInput emits it as kea.PoolSpec). Persisted to
-	// scopes.pool_plan; loadScopeConfigs seeds one for any legacy row that lacks it.
+	// scopes.pool_plan; LoadScopeConfigs seeds one for any legacy row that lacks it.
 	Plan PoolPlan `json:"pool_plan,omitempty"`
 	// Services are the per-scope DHCP network services (explicit gateway/DNS, extra
 	// options, lease-lifetime override). Persisted to scopes.services_json. All-zero
@@ -173,13 +172,13 @@ func (g GlobalDHCPOptions) keaOptions() []kea.OptionKV {
 	return out
 }
 
-// parseScopeServices builds and validates a ScopeServices from raw form strings.
+// ParseScopeServices builds and validates a ScopeServices from raw form strings.
 // It is the SINGLE parse path shared by the setup wizard and the /pools editor so
 // the two surfaces can't drift. gateway/DNS are the only IP-validated fields; each
 // option row is free-form (kea -t is the gate) and blank rows are dropped. optNames
 // and optData are positional - row i pairs optNames[i] with optData[i]. localDNS is
 // the checkbox value ("true" when checked) of the local-DNS handout toggle.
-func parseScopeServices(gateway, dns, lease, localDNS string, optNames, optData []string) (ScopeServices, error) {
+func ParseScopeServices(gateway, dns, lease, localDNS string, optNames, optData []string) (ScopeServices, error) {
 	var svc ScopeServices
 	svc.LocalDNS = localDNS == "true"
 	// IPv4-only (To4) is intentional: this is a DHCPv4 server (routers / domain-name-
@@ -338,7 +337,7 @@ type UplinkConfig struct {
 }
 
 // ToRenderInput maps a ScopeConfig to the DB-agnostic renderer input. The Plan is
-// the authoritative kea.PoolSpec list; loadScopeConfigs and the wizard always seed
+// the authoritative kea.PoolSpec list; LoadScopeConfigs and the wizard always seed
 // one, so the renderer is purely plan-driven.
 func (sc ScopeConfig) ToRenderInput() kea.ScopeInput {
 	opts := make([]kea.OptionKV, 0, len(sc.Services.Options))
@@ -358,9 +357,9 @@ func (sc ScopeConfig) ToRenderInput() kea.ScopeInput {
 	}
 }
 
-// planJSON marshals the pool plan for the scopes.pool_plan column. An empty plan
+// PlanJSON marshals the pool plan for the scopes.pool_plan column. An empty plan
 // renders as "" (NULL semantics → the legacy preset/counts path renders the scope).
-func (sc ScopeConfig) planJSON() (string, error) {
+func (sc ScopeConfig) PlanJSON() (string, error) {
 	if len(sc.Plan) == 0 {
 		return "", nil
 	}
@@ -371,10 +370,10 @@ func (sc ScopeConfig) planJSON() (string, error) {
 	return string(b), nil
 }
 
-// poolSpecJSON / uplinkJSON marshal the two JSON columns. Errors are surfaced so
+// PoolSpecJSON / UplinkJSON marshal the two JSON columns. Errors are surfaced so
 // a persist failure is never silent (the old fmt.Sprintf path could not fail but
 // also could not escape).
-func (sc ScopeConfig) poolSpecJSON() (string, error) {
+func (sc ScopeConfig) PoolSpecJSON() (string, error) {
 	b, err := json.Marshal(sc.Counts)
 	if err != nil {
 		return "", fmt.Errorf("marshal pool_spec: %w", err)
@@ -382,7 +381,7 @@ func (sc ScopeConfig) poolSpecJSON() (string, error) {
 	return string(b), nil
 }
 
-func (sc ScopeConfig) uplinkJSON() (string, error) {
+func (sc ScopeConfig) UplinkJSON() (string, error) {
 	b, err := json.Marshal(sc.Uplink)
 	if err != nil {
 		return "", fmt.Errorf("marshal uplink_json: %w", err)
@@ -390,9 +389,9 @@ func (sc ScopeConfig) uplinkJSON() (string, error) {
 	return string(b), nil
 }
 
-// servicesJSON marshals the per-scope network services for scopes.services_json.
+// ServicesJSON marshals the per-scope network services for scopes.services_json.
 // An all-zero ScopeServices renders as "" (NULL) so untouched scopes stay clean.
-func (sc ScopeConfig) servicesJSON() (string, error) {
+func (sc ScopeConfig) ServicesJSON() (string, error) {
 	if sc.Services.Gateway == "" && sc.Services.DNS == "" && !sc.Services.LocalDNS &&
 		sc.Services.LeaseLifetime == 0 && len(sc.Services.Options) == 0 {
 		return "", nil
@@ -404,10 +403,10 @@ func (sc ScopeConfig) servicesJSON() (string, error) {
 	return string(b), nil
 }
 
-// loadScopeConfigs returns the scopes for profileID (or the active profile when
+// LoadScopeConfigs returns the scopes for profileID (or the active profile when
 // 0), decoding pool_spec and uplink_json into typed fields with checked errors.
-// It is the single scope loader shared by the reconciler and the dashboard.
-func (r *reconciler) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
+// It is the single scope loader shared by the Reconciler and the dashboard.
+func (r *Reconciler) LoadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 	if profileID == 0 {
 		err := r.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID)
 		if err == sql.ErrNoRows {
@@ -428,8 +427,8 @@ func (r *reconciler) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 	for rows.Next() {
 		var sc ScopeConfig
 		var vlan sql.NullInt64
-		var poolSpec, uplinkJSON, poolPlan, servicesJSON, name sql.NullString
-		if e := rows.Scan(&sc.Preset, &vlan, &sc.CIDR, &poolSpec, &uplinkJSON, &poolPlan, &servicesJSON, &name); e != nil {
+		var poolSpec, UplinkJSON, poolPlan, ServicesJSON, name sql.NullString
+		if e := rows.Scan(&sc.Preset, &vlan, &sc.CIDR, &poolSpec, &UplinkJSON, &poolPlan, &ServicesJSON, &name); e != nil {
 			return nil, e
 		}
 		sc.Name = name.String
@@ -451,23 +450,23 @@ func (r *reconciler) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 				sc.Counts = DeviceCounts{}
 			}
 		}
-		if uplinkJSON.Valid && uplinkJSON.String != "" {
-			if e := json.Unmarshal([]byte(uplinkJSON.String), &sc.Uplink); e != nil {
+		if UplinkJSON.Valid && UplinkJSON.String != "" {
+			if e := json.Unmarshal([]byte(UplinkJSON.String), &sc.Uplink); e != nil {
 				log.Printf("[scopes] malformed uplink_json for scope %q - uplink disabled: %v", sc.CIDR, e)
 				sc.Uplink = UplinkConfig{}
 			}
 		}
-		if servicesJSON.Valid && servicesJSON.String != "" {
-			if e := json.Unmarshal([]byte(servicesJSON.String), &sc.Services); e != nil {
+		if ServicesJSON.Valid && ServicesJSON.String != "" {
+			if e := json.Unmarshal([]byte(ServicesJSON.String), &sc.Services); e != nil {
 				log.Printf("[scopes] malformed services_json for scope %q - no extra services: %v", sc.CIDR, e)
 				sc.Services = ScopeServices{}
 			}
 		}
 		// Every scope must carry a Plan (the single render path). A legacy row with
 		// no pool_plan is seeded from its stored counts here, so the dashboard and
-		// reconciler are uniformly plan-driven and never hit a legacy branch.
+		// Reconciler are uniformly plan-driven and never hit a legacy branch.
 		if len(sc.Plan) == 0 {
-			sc.Plan = seedDefaultPlan(sc)
+			sc.Plan = SeedDefaultPlan(sc)
 		}
 		out = append(out, sc)
 	}

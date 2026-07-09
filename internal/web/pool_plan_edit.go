@@ -12,19 +12,6 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-// goSizePresets mirrors the wizard's size buttons server-side (the seed source for
-// the Small/Medium/Large tabs); Flat/Custom are handled separately.
-var goSizePresets = map[string]DeviceCounts{
-	"small":  {BPX: 15, MCX: 3, Interface: 3, Others: 15, WAA: 2, Nodes: 25},
-	"medium": {BPX: 50, MCX: 20, WPX: 2, Interface: 6, Bridge: 2, Stride: 6, Beacon: 2, Others: 18, Nodes: 120},
-	"large":  {BPX: 100, MCX: 40, WPX: 16, Interface: 40, Bridge: 10, Stride: 50, Beacon: 50, Others: 20, Nodes: 300},
-}
-
-// defaultSizePreset is the size a brand-new / untouched scope seeds to. It keeps a
-// fresh greengo scope from collapsing to a degenerate plan (reserve + catch-alls,
-// no device-class pools) when no Counts have been supplied yet.
-const defaultSizePreset = "small"
-
 // defaultSeedSize is the size tab to activate for a freshly (re)seeded scope: the
 // device-count default for greengo, else "flat" - a non-greengo scope is a single
 // dynamic pool, which is exactly what Flat represents (its only other tab is Custom).
@@ -33,17 +20,6 @@ func defaultSeedSize(preset string) string {
 		return defaultSizePreset
 	}
 	return "flat"
-}
-
-// seedDefaultPlan seeds a plan for a scope, substituting the configured default
-// size when the scope carries no device counts (a truly fresh scope). A scope that
-// already has counts (e.g. a legacy row loaded from pool_spec) seeds from those.
-// Non-greengo presets ignore counts, so the substitution is harmless there.
-func seedDefaultPlan(sc ScopeConfig) PoolPlan {
-	if sc.Counts == (DeviceCounts{}) {
-		sc.Counts = goSizePresets[defaultSizePreset]
-	}
-	return seedPlan(sc)
 }
 
 // handleWizardPoolEdit is the Datastar SSE endpoint for the wizard's pool plan.

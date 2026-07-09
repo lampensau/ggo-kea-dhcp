@@ -166,7 +166,7 @@ func TestSweepOrphanedStashes(t *testing.T) {
 		}
 	}
 
-	if err := s.recon.sweepOrphanedStashes(); err != nil {
+	if err := s.recon.SweepOrphanedStashes(); err != nil {
 		t.Fatalf("sweepOrphanedStashes: %v", err)
 	}
 

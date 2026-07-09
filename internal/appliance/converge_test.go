@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"io"
@@ -24,7 +24,7 @@ import (
 // of the three effects happened (conf written, reload sent, interface set), not their
 // ordering.
 func TestReconcileActiveHappyPath(t *testing.T) {
-	s, rec := newTestServer(t)
+	r, rec := newTestReconciler(t)
 
 	// Fake Kea control socket: every command succeeds, and we capture the last one so
 	// the test can prove config-reload was actually sent.
@@ -40,30 +40,31 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"result":0,"arguments":{}}]`)
 	}))
 	t.Cleanup(srv.Close)
-	s.kea = kea.NewClient(srv.URL, "gui", "x")
-	s.recon = s.newReconciler() // reconciler copied the old Kea pointer at construction; rebind to the test Kea
+	// In-package: assigning the field rebinds the very handle the engine reads, so
+	// there is no constructor to re-run (the web layer must rebuild instead).
+	r.kea = kea.NewClient(srv.URL, "gui", "x")
 
 	// Seed one active profile with a single untagged scope.
-	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
+	res, err := r.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
 	if err != nil {
 		t.Fatalf("seed profile: %v", err)
 	}
 	pid, _ := res.LastInsertId()
-	if _, err := s.sqlite.Exec(
+	if _, err := r.sqlite.Exec(
 		"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?,?,?,?)",
 		pid, 0, "10.0.0.0/24", "greengo"); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
-	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+	if err := r.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		t.Fatalf("seed lifecycle: %v", err)
 	}
 
-	if err := s.recon.reconcileActive(ModeApply, int(pid)); err != nil {
+	if err := r.reconcileActive(ModeApply, int(pid)); err != nil {
 		t.Fatalf("reconcileActive returned error: %v", err)
 	}
 
 	// 1) kea-dhcp4.conf was rendered to disk with the scope's subnet.
-	confPath := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
+	confPath := filepath.Join(r.cfg.KeaConfDir, "kea-dhcp4.conf")
 	conf, err := os.ReadFile(confPath)
 	if err != nil {
 		t.Fatalf("kea conf not written: %v", err)
@@ -94,7 +95,7 @@ func TestReconcileActiveHappyPath(t *testing.T) {
 // answers version-get so the post-restart re-probe succeeds, and RestartService is
 // recorded through the fake commander.
 func TestReconcileActiveRestartRecovery(t *testing.T) {
-	s, rec := newTestServer(t)
+	r, rec := newTestReconciler(t)
 
 	origInstalled := kea.Installed
 	kea.Installed = func() bool { return true }
@@ -125,24 +126,25 @@ func TestReconcileActiveRestartRecovery(t *testing.T) {
 		_, _ = io.WriteString(w, `[{"result":0,"arguments":{}}]`)
 	}))
 	t.Cleanup(srv.Close)
-	s.kea = kea.NewClient(srv.URL, "gui", "x")
-	s.recon = s.newReconciler() // reconciler copied the old Kea pointer at construction; rebind to the test Kea
+	// In-package: assigning the field rebinds the very handle the engine reads, so
+	// there is no constructor to re-run (the web layer must rebuild instead).
+	r.kea = kea.NewClient(srv.URL, "gui", "x")
 
-	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
+	res, err := r.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Live','',1)")
 	if err != nil {
 		t.Fatalf("seed profile: %v", err)
 	}
 	pid, _ := res.LastInsertId()
-	if _, err := s.sqlite.Exec(
+	if _, err := r.sqlite.Exec(
 		"INSERT INTO scopes (profile_id, vlan_id, cidr, preset) VALUES (?,?,?,?)",
 		pid, 0, "10.0.0.0/24", "greengo"); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
-	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+	if err := r.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		t.Fatalf("seed lifecycle: %v", err)
 	}
 
-	if err := s.recon.reconcileActive(ModeApply, int(pid)); err != nil {
+	if err := r.reconcileActive(ModeApply, int(pid)); err != nil {
 		t.Fatalf("reconcileActive should recover via restart, got error: %v", err)
 	}
 	if !rec.Mentions("isc-kea-dhcp4-server") {

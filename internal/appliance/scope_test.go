@@ -1,8 +1,6 @@
-package web
+package appliance
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"ggo-kea-dhcp/internal/kea"
@@ -12,7 +10,7 @@ import (
 // gateway/DNS, lease bounds, free-form option rows, and dropping blank/half rows.
 func TestParseScopeServices(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		svc, err := parseScopeServices("10.0.0.254", "10.0.0.53, 10.0.0.54", "600", "true",
+		svc, err := ParseScopeServices("10.0.0.254", "10.0.0.53, 10.0.0.54", "600", "true",
 			[]string{"ntp-servers", "", "domain-name"}, []string{"10.0.0.1", "", "intercom.local"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -26,7 +24,7 @@ func TestParseScopeServices(t *testing.T) {
 		}
 	})
 	t.Run("empty is zero", func(t *testing.T) {
-		svc, err := parseScopeServices("", "", "", "", nil, nil)
+		svc, err := ParseScopeServices("", "", "", "", nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -43,53 +41,10 @@ func TestParseScopeServices(t *testing.T) {
 		{"lease too high", "", "", "99999"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := parseScopeServices(tc.gw, tc.dns, tc.lease, "", nil, nil); err == nil {
+			if _, err := ParseScopeServices(tc.gw, tc.dns, tc.lease, "", nil, nil); err == nil {
 				t.Errorf("%s: expected an error", tc.name)
 			}
 		})
-	}
-}
-
-// TestProfileExportRoundTrip verifies a profile survives marshal→unmarshal and
-// that the JSON uses the stable snake_case keys the wizard's client-side import
-// reads (vlan_id, count_bpx, ...). If these drift, the Import button silently
-// stops prefilling.
-func TestProfileExportRoundTrip(t *testing.T) {
-	in := ProfileExport{
-		Name: "Tour_A",
-		Scopes: []ScopeConfig{
-			{
-				Preset: "greengo", VlanID: 0, CIDR: "10.0.0.0/23",
-				Counts: DeviceCounts{BPX: 50, MCX: 8, Nodes: 100},
-				Uplink: UplinkConfig{Enabled: true, SSID: "Venue", Password: "secret"},
-			},
-			{Preset: "dante", VlanID: 20, CIDR: "10.20.0.0/24"},
-		},
-	}
-	data, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var out ProfileExport
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.Name != "Tour_A" || len(out.Scopes) != 2 {
-		t.Fatalf("round trip lost data: %+v", out)
-	}
-	s0 := out.Scopes[0]
-	if s0.Preset != "greengo" || s0.CIDR != "10.0.0.0/23" || s0.Counts.BPX != 50 || s0.Counts.MCX != 8 || s0.Counts.Nodes != 100 {
-		t.Errorf("scope0 round trip wrong: %+v", s0)
-	}
-	if !s0.Uplink.Enabled || s0.Uplink.SSID != "Venue" || s0.Uplink.Password != "secret" {
-		t.Errorf("scope0 uplink round trip wrong: %+v", s0.Uplink)
-	}
-
-	for _, key := range []string{`"vlan_id"`, `"cidr"`, `"counts"`, `"count_bpx"`, `"uplink"`, `"enabled"`} {
-		if !strings.Contains(string(data), key) {
-			t.Errorf("export JSON missing expected key %s:\n%s", key, data)
-		}
 	}
 }
 
@@ -124,7 +79,7 @@ func TestSeedPlanPresets(t *testing.T) {
 		{"", "Devices"},
 	} {
 		t.Run("preset="+tc.preset, func(t *testing.T) {
-			plan := seedPlan(ScopeConfig{Preset: tc.preset, CIDR: "10.0.0.0/24"})
+			plan := SeedPlan(ScopeConfig{Preset: tc.preset, CIDR: "10.0.0.0/24"})
 			if len(plan) != 2 {
 				t.Fatalf("preset %q seeded %d pools, want [Reserve, Elastic]: %+v", tc.preset, len(plan), plan)
 			}
@@ -141,7 +96,7 @@ func TestSeedPlanPresets(t *testing.T) {
 	// greengo seeds the full plan: leading reserve, and both non-removable catch-alls
 	// present as elastic. (Device-class order is asserted by the layout golden tests.)
 	t.Run("preset=greengo", func(t *testing.T) {
-		plan := seedPlan(ScopeConfig{Preset: "greengo", CIDR: "10.0.0.0/24",
+		plan := SeedPlan(ScopeConfig{Preset: "greengo", CIDR: "10.0.0.0/24",
 			Counts: DeviceCounts{BPX: 10, MCX: 4}})
 		if plan[0].Kind != PoolKindReserve {
 			t.Fatalf("greengo pool[0] = %+v, want a static reserve", plan[0])

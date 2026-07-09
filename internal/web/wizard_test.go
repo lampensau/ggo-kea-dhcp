@@ -144,7 +144,7 @@ func TestBuildRenderScopesGatewayPrefersUntagged(t *testing.T) {
 	}
 }
 
-// fakeRogueProbe satisfies rogueProber without a capture socket. watching mirrors
+// fakeRogueProbe satisfies RogueProber without a capture socket. watching mirrors
 // a real, non-blind capture being live; a foreign OFFER is only credible when it is.
 type fakeRogueProbe struct {
 	ip, mac  string
@@ -175,17 +175,17 @@ func TestShieldStatus(t *testing.T) {
 	}
 
 	// A probe present but not watching (stopped in ACTIVE, or blind) is Unverified.
-	s.mon.rogueProbe = &fakeRogueProbe{watching: false}
+	s.mon.RogueProbe = &fakeRogueProbe{watching: false}
 	if st, d := s.shieldStatus("Active"); st != "Unverified" || d != "" {
 		t.Errorf("blind/stopped probe: got %q/%q, want Unverified", st, d)
 	}
 
-	s.mon.rogueProbe = &fakeRogueProbe{watching: true}
+	s.mon.RogueProbe = &fakeRogueProbe{watching: true}
 	if st, d := s.shieldStatus("Active"); st != "Active" || d != "" {
 		t.Errorf("quiet live probe: got %q/%q, want Active", st, d)
 	}
 
-	s.mon.rogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true, watching: true}
+	s.mon.RogueProbe = &fakeRogueProbe{ip: "10.0.0.250", mac: "00:11:22:33:44:55", found: true, watching: true}
 	if st, d := s.shieldStatus("Active"); st != "Detected" || d != "10.0.0.250" {
 		t.Errorf("foreign OFFER: got %q/%q, want Detected/10.0.0.250", st, d)
 	}

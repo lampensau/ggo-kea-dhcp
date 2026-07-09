@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net"
 	"net/http"
@@ -44,8 +45,8 @@ func (s *Server) reservationConflict(ctx context.Context, subnetID int, ip uint3
 			return ipStr + " is already " + what + " - remove that first or choose another address.", true
 		}
 	}
-	if s.mon.arp != nil && ownMAC != "" {
-		if mac, alive := s.mon.arp.ProbeHost(ipStr); alive && normalizeMAC(mac) != normalizeMAC(ownMAC) {
+	if s.mon.Arp != nil && ownMAC != "" {
+		if mac, alive := s.mon.Arp.ProbeHost(ipStr); alive && normalizeMAC(mac) != normalizeMAC(ownMAC) {
 			return ipStr + " is currently in use on the network by " + mac + " - release that device or choose another address.", true
 		}
 	}
@@ -83,7 +84,7 @@ func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
 	var profileID int
 	if err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err == nil {
 		if scopes, err := s.loadScopeConfigs(profileID); err == nil {
-			return subnetMatcherForScopes(scopes)
+			return appliance.SubnetMatcherForScopes(scopes)
 		}
 	}
 	return func(net.IP) (int, bool) { return 0, false }
@@ -522,7 +523,7 @@ func (s *Server) unifiedLeaseRows(ctx context.Context, leases []kea.ActiveLease)
 	return s.unifiedLeaseRowsFrom(ctx, leases, leaseRowSources{
 		Reachable:  reachable,
 		Available:  available,
-		PinnedKeys: s.pinnedPortKeys(ctx),
+		PinnedKeys: s.recon.PinnedPortKeys(ctx),
 		GgoNames:   s.ggoNamesByMAC(),
 		Awaiting:   s.awaitingPoolHosts(),
 		Res:        s.fetchHWReservationMap(ctx),
@@ -563,27 +564,6 @@ func (s *Server) fetchHWReservationMap(ctx context.Context) map[string]db.HostRe
 		res[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = rsv
 	}
 	return res
-}
-
-// pinnedPortKeys returns the set of pinned switch-port identities (flex-id, type-4
-// reservations), keyed the same way decodePortIdentity renders a lease's port. Returns
-// nil when MariaDB is absent or the query fails. The dashboard broadcast builds the
-// equivalent set from the pins buildDashboardViewWith already fetched (v.Pinned), so it
-// never queries type-4 reservations twice per render.
-func (s *Server) pinnedPortKeys(ctx context.Context) map[string]bool {
-	if s.mariadb == nil {
-		return nil
-	}
-	p, err := s.fetchPinnedPorts(ctx)
-	if err != nil {
-		log.Printf("[Reservations] pinned-port read failed: %v", err)
-		return nil
-	}
-	keys := make(map[string]bool, len(p))
-	for k := range p {
-		keys[k] = true
-	}
-	return keys
 }
 
 // dedupeStaleLeases collapses two active leases that share a MAC AND a subnet down to

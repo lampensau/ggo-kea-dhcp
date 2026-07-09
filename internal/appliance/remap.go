@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 // re-derives every row's subnet-id from its IP - the stable key - over the scopes
 // being reconciled, and moves the rows that differ.
 
-// subnetMatcherForScopes returns the canonical IP -> positional Kea subnet-id
+// SubnetMatcherForScopes returns the canonical IP -> positional Kea subnet-id
 // mapping ((scope index + 1) over scope order, the same numbering RenderProfile
 // assigns) for an already-loaded scope list. An unparseable stored CIDR is logged
 // and matches nothing.
-func subnetMatcherForScopes(scopes []ScopeConfig) func(net.IP) (int, bool) {
+func SubnetMatcherForScopes(scopes []ScopeConfig) func(net.IP) (int, bool) {
 	nets := make([]*net.IPNet, 0, len(scopes))
 	for _, sc := range scopes {
 		_, ipnet, err := net.ParseCIDR(sc.CIDR)
@@ -54,7 +54,7 @@ func hostKey(identifier []byte, identifierType, subnetID int) string {
 	return string(identifier) + "|" + strconv.Itoa(identifierType) + "|" + strconv.Itoa(subnetID)
 }
 
-// planSubnetRemaps is the pure decision core of remapReservationSubnets, split out
+// planSubnetRemaps is the pure decision core of RemapReservationSubnets, split out
 // so it is testable without a live MariaDB. For each host row it derives the
 // current subnet-id from the row's IP via subnetFor and classifies the row: moves
 // (stored id differs from the derived one), orphans (IP no longer inside any scope
@@ -124,17 +124,17 @@ func hostIdentDisplay(r db.HostReservation) string {
 	if r.IdentifierType == 0 && len(r.Identifier) == 6 {
 		return net.HardwareAddr(r.Identifier).String()
 	}
-	return bytesToPortIdentity(r.Identifier)
+	return BytesToPortIdentity(r.Identifier)
 }
 
-// remapReservationSubnets re-stamps every host reservation/pin's dhcp4_subnet_id
+// RemapReservationSubnets re-stamps every host reservation/pin's dhcp4_subnet_id
 // from its IP over the scopes being reconciled, so reservations keep working when
 // a profile edit or switch renumbers the positional subnet-ids. Idempotent (rows
 // already correct are untouched) and best-effort: MariaDB is an optional backend,
 // so failures are logged/audited but never fail the reconcile. Orphans (IP outside
 // every scope) are audited only on ModeApply - the profile-change moment - so
 // routine boot/settings converges don't re-audit the same stale rows forever.
-func (r *reconciler) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
+func (r *Reconciler) RemapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
 	if r.mariadb == nil {
 		return
 	}
@@ -143,7 +143,7 @@ func (r *reconciler) remapReservationSubnets(ctx context.Context, scopes []Scope
 		log.Printf("[remap] host reservation read failed, skipping subnet remap: %v", err)
 		return
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(scopes))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(scopes))
 
 	applied := 0
 	var details []string

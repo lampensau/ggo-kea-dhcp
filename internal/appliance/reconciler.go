@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"ggo-kea-dhcp/internal/network"
 )
 
-// ReconcileMode controls how aggressively the reconciler rebuilds runtime state.
+// ReconcileMode controls how aggressively the Reconciler rebuilds runtime state.
 type ReconcileMode int
 
 const (
@@ -56,7 +56,7 @@ const softAPWlanIP = "172.31.255.1"
 // calls are not context-aware - but a log line beats a silent hang.
 const reconcileWatchdog = 60 * time.Second
 
-// reconcilePassDeadline bounds one whole reconcile pass end-to-end: every Kea and
+// ReconcilePassDeadline bounds one whole reconcile pass end-to-end: every Kea and
 // MariaDB operation inside reconcileActive/reconcileOnboarding shares this
 // context. Each individual operation already carries a driver bound (the Kea
 // client's 10s HTTP timeout; the MariaDB DSN's 5s dial / 10s read defaults), so
@@ -65,7 +65,7 @@ const reconcileWatchdog = 60 * time.Second
 // bounded time. Generous on purpose: the privileged commands (nmcli etc.) are
 // bounded per-command by the Commander, and a genuinely slow-but-recovering pass
 // must not be turned into a rollback.
-const reconcilePassDeadline = 5 * time.Minute
+const ReconcilePassDeadline = 5 * time.Minute
 
 // resumeApplyAttempts / resumeApplyBackoff bound how hard a boot-time resume of an
 // interrupted apply retries before falling back to ONBOARDING, so a transient
@@ -76,32 +76,35 @@ var (
 	resumeApplyBackoff  = 2 * time.Second
 )
 
-// reconcileBusyMsg is shown when a mutating action is refused because an apply,
+// ReconcileBusyMsg is shown when a mutating action is refused because an apply,
 // switch, or reconcile already holds the guard.
-const reconcileBusyMsg = "A configuration change is already in progress - try again in a moment."
+const ReconcileBusyMsg = "A configuration change is already in progress - try again in a moment."
 
-// reconciler owns the lifecycle state machine: it makes runtime network + Kea
+// Reconciler owns the lifecycle state machine: it makes runtime network + Kea
 // state match the persisted lifecycle state and runs the apply/switch converges.
 // It holds only control-plane primitives (config, the two databases, the Kea
 // client, DNS, the network manager, the monitor set) plus the mutation guards; it
-// reaches the web layer (uplink announce, DNS-zone prime, update checks, monitor
-// starts, pinned-port reads) ONLY through the func edges below. Those edges are the
-// one seam that will become a package boundary when this type moves to
-// internal/appliance.
+// reaches its caller (uplink announce, DNS-zone prime, update checks, monitor starts)
+// ONLY through the func edges below. Those edges ARE the package boundary: nothing in
+// here may import the web layer.
 //
-// The edges come in two kinds. NewServer wires the production-only side effects,
-// and each of those is nil-tolerant: a nil edge is a no-op, so a converge in a test
-// never reaches SSE, the DNS zone or the update path. newReconciler itself wires the
-// three monitor starts, which are therefore never nil and are called unguarded - a
-// hand-built &reconciler{} that skips newReconciler must not drive reconcileActive.
-type reconciler struct {
+// The edges come in two kinds. The caller sets the production-only side effects after
+// construction, and each of those is nil-tolerant: a nil edge is a no-op, so a converge
+// in a test never reaches SSE, the DNS zone or the update path. New requires the three
+// monitor starts, which are therefore never nil and are called unguarded - a hand-built
+// &Reconciler{} that skips New must not drive reconcileActive.
+//
+// All six are written once, before any converge runs, and read afterwards from the
+// background goroutines a converge spawns. They are NOT synchronized: assigning one on
+// a running appliance is a data race.
+type Reconciler struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB
 	mariadb *db.MariaDB
 	kea     *kea.Client
 	dns     *dns.Server
 	net     *network.Manager
-	mon     *monitorSet
+	mon     *MonitorSet
 
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
@@ -117,78 +120,113 @@ type reconciler struct {
 	// = unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
 
-	// --- web-side edges (nil-tolerant), wired by NewServer; nil in test Servers ---
-	// announceUplink records the uplink's up/down state in backend-health AND
+	// --- caller-side edges (nil-tolerant), set after New; nil in a bare test Reconciler ---
+	// AnnounceUplink records the uplink's up/down state in backend-health AND
 	// re-renders the always-on #backend-alert banner. One edge, not two, because
 	// they are only ever right together: flipping the state without the push leaves
 	// a stale banner on the page the operator has open, and pushing without the
 	// state flip renders the old one.
-	announceUplink func(down bool, detail string)
-	// primeZone rebuilds the DNS device zone from the freshly-served leases.
-	primeZone func()
-	// kickUpdate fires an out-of-band release check when the box gains uplink.
-	kickUpdate func()
-	// startGgoScan/startNetmon/startArpProber start the ACTIVE observers; they stay
-	// in web because their spec builders read the web-owned lease providers. Unlike
-	// the edges above these are set by newReconciler itself, so they are never nil
-	// and their call sites do not guard.
-	startGgoScan   func(scopes []ScopeConfig)
-	startNetmon    func(scopes []ScopeConfig)
-	startArpProber func(scopes []ScopeConfig)
-	// pinnedPortKeys returns the pinned switch-port lease IPs the rebalancer must
-	// leave in place (reads the web-side pinning store).
-	pinnedPortKeys func(ctx context.Context) map[string]bool
+	AnnounceUplink func(down bool, detail string)
+	// PrimeZone rebuilds the DNS device zone from the freshly-served leases.
+	PrimeZone func()
+	// KickUpdate fires an out-of-band release check when the box gains uplink.
+	KickUpdate func()
+	// StartGgoScan/StartNetmon/StartArpProber start the ACTIVE observers; they stay
+	// with the caller because their spec builders read its lease providers. Unlike the
+	// edges above, New requires them (see Monitors), so they are never nil and their
+	// call sites do not guard.
+	StartGgoScan   func(scopes []ScopeConfig)
+	StartNetmon    func(scopes []ScopeConfig)
+	StartArpProber func(scopes []ScopeConfig)
 }
 
-// newReconciler builds the lifecycle reconciler from the Server's shared control-
-// plane handles and wires the monitor-start edges. Those three are wired here, not
-// in NewServer, because they are always safe (each early-returns when its monitor is
-// absent and touches no SSE/network): a converge in a unit test starts a faked
-// monitor exactly as production does, and reconcileActive can call them unguarded.
-// The remaining edges - uplink announce, DNS-zone prime, update kick, pinned-port
-// reads - are production-only side effects that NewServer wires on top; a bare test
-// reconciler leaves them nil (every call site guards).
+// New builds the lifecycle Reconciler from the caller's shared control-plane handles.
+// The monitor starts are required and are called unguarded by reconcileActive; the
+// remaining edges - uplink announce, DNS-zone prime, update kick - are production-only
+// side effects the caller sets on the returned value, and every call site guards them,
+// so a bare test Reconciler leaves them nil and reaches no SSE hub, zone, or updater.
 //
-// The control-plane handles are ALIASED, not owned: the reconciler reads whatever
-// s.kea/s.dns/... pointed at when it was built, for the process lifetime. Nothing in
-// production rebinds them after NewServer, so there is one appliance and one guard.
-// Code that does rebind one must rebuild the reconciler, or the two halves diverge -
-// the converge tests swap in an httptest Kea and re-call this for exactly that reason.
-func (s *Server) newReconciler() *reconciler {
-	return &reconciler{
-		cfg:            s.cfg,
-		sqlite:         s.sqlite,
-		mariadb:        s.mariadb,
-		kea:            s.kea,
-		dns:            s.dns,
-		net:            s.net,
-		mon:            &s.mon,
-		startGgoScan:   s.startGgoScan,
-		startNetmon:    s.startNetmon,
-		startArpProber: s.startArpProber,
+// The control-plane handles are ALIASED, not owned: the Reconciler reads whatever
+// kea/dns/... pointed at when it was built, for the process lifetime. Nothing in
+// production rebinds them, so there is one appliance and one guard. Code that does
+// rebind one must rebuild the Reconciler, or the two halves diverge - the converge
+// tests swap in an httptest Kea and re-call New for exactly that reason.
+// Monitors carries the three ACTIVE-only observer starts. A struct rather than three
+// positional func parameters of the same type: transposing two of those compiles clean
+// and silently starts the wrong observer against the wrong spec set (netmon twice, the
+// ARP prober never), and each start early-returns when its monitor is absent, so the
+// mistake never surfaces. Named fields make it a compile error.
+type Monitors struct {
+	Netmon  func(scopes []ScopeConfig)
+	Arp     func(scopes []ScopeConfig)
+	GgoScan func(scopes []ScopeConfig)
+}
+
+func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *kea.Client, dnsSrv *dns.Server, netMgr *network.Manager, mon *MonitorSet, starts Monitors) *Reconciler {
+	// Fail fast rather than degrade: a caller that builds the Reconciler before it has
+	// set one of these handles would otherwise drive a different appliance than the one
+	// it renders from, silently. mariadb is the one legitimate nil (a documented
+	// degraded mode - dynamic leases keep serving without host reservations).
+	switch {
+	case cfg == nil:
+		panic("appliance.New: nil config")
+	case sqlite == nil:
+		panic("appliance.New: nil sqlite")
+	case keaCli == nil:
+		panic("appliance.New: nil kea client")
+	case dnsSrv == nil:
+		panic("appliance.New: nil dns server")
+	case netMgr == nil:
+		panic("appliance.New: nil network manager")
+	case mon == nil:
+		panic("appliance.New: nil monitor set")
+	case starts.Netmon == nil || starts.Arp == nil || starts.GgoScan == nil:
+		// reconcileActive calls these unguarded, on the strength of this check.
+		panic("appliance.New: nil monitor start")
+	}
+	return &Reconciler{
+		cfg:            cfg,
+		sqlite:         sqlite,
+		mariadb:        mariadb,
+		kea:            keaCli,
+		dns:            dnsSrv,
+		net:            netMgr,
+		mon:            mon,
+		StartGgoScan:   starts.GgoScan,
+		StartNetmon:    starts.Netmon,
+		StartArpProber: starts.Arp,
 	}
 }
 
-// beginReconcile claims the single appliance-mutation guard shared by every path
+// ArmRescue opens the boot-only zero-scopes rescue window. Called once, by the
+// caller's constructor path, before any converge runs: only inside that window may a
+// nothing-to-serve ACTIVE box demote itself to ONBOARDING.
+func (r *Reconciler) ArmRescue() { r.rescueArmed.Store(true) }
+
+// IsApplying reports whether a mutation path currently holds the guard. For tests and
+// for the handlers that refuse a concurrent apply; claiming it is BeginReconcile's job.
+func (r *Reconciler) IsApplying() bool { return r.applying.Load() }
+
+// BeginReconcile claims the single appliance-mutation guard shared by every path
 // that rewrites kea-dhcp4.conf / the lifecycle state (apply, switch, settings,
 // reset, pools, restore). It returns false when another such path is already
 // running, so the caller can refuse instead of racing a second reconcile against
 // the live config. On success the caller OWNS the guard and must release it -
-// endReconcile for synchronous work, or hand it to scheduleReconcileHeld which
+// EndReconcile for synchronous work, or hand it to ScheduleReconcileHeld which
 // releases it when the background reconcile finishes.
-func (r *reconciler) beginReconcile() bool { return r.applying.CompareAndSwap(false, true) }
+func (r *Reconciler) BeginReconcile() bool { return r.applying.CompareAndSwap(false, true) }
 
-// endReconcile releases the guard claimed by beginReconcile.
-func (r *reconciler) endReconcile() { r.applying.Store(false) }
+// EndReconcile releases the guard claimed by BeginReconcile.
+func (r *Reconciler) EndReconcile() { r.applying.Store(false) }
 
-// scheduleReconcileHeld runs a reconcile in the background after an optional delay
+// ScheduleReconcileHeld runs a reconcile in the background after an optional delay
 // (which lets an already-flushed interstitial reach the client before links drop),
-// then releases the guard the caller MUST already hold (via beginReconcile). This
+// then releases the guard the caller MUST already hold (via BeginReconcile). This
 // is the single entry point for the fire-and-forget reconciles triggered by
 // settings saves and resets - serialized against apply/switch by the shared guard.
-func (r *reconciler) scheduleReconcileHeld(label string, delay time.Duration, mode ReconcileMode, profileID int) {
-	go r.runRecoveredAudited("reconcile-"+label, func() {
-		defer r.endReconcile()
+func (r *Reconciler) ScheduleReconcileHeld(label string, delay time.Duration, mode ReconcileMode, profileID int) {
+	go r.RunRecoveredAudited("reconcile-"+label, func() {
+		defer r.EndReconcile()
 		if delay > 0 {
 			time.Sleep(delay)
 		}
@@ -212,7 +250,7 @@ func (r *reconciler) scheduleReconcileHeld(label string, delay time.Duration, mo
 // ReconcileApplianceState is the single authority that makes runtime network +
 // Kea state match the persisted lifecycle state. targetProfileID==0 means "use
 // the active profile" (only relevant in ACTIVE).
-func (r *reconciler) ReconcileApplianceState(mode ReconcileMode, targetProfileID int) error {
+func (r *Reconciler) ReconcileApplianceState(mode ReconcileMode, targetProfileID int) error {
 	state, _ := r.sqlite.GetState(db.LifecycleStateKey)
 	if state == "" {
 		state = db.StateFactory
@@ -249,7 +287,7 @@ func (r *reconciler) ReconcileApplianceState(mode ReconcileMode, targetProfileID
 			// active=0 stash row + scopes leak forever. Boot-only (rescueOpen) and
 			// success-only, so it never races an in-flight apply's live rollback stash.
 			if err == nil {
-				if e := r.sweepOrphanedStashes(); e != nil {
+				if e := r.SweepOrphanedStashes(); e != nil {
 					log.Printf("[reconcile] failed to sweep orphaned stash on ACTIVE boot: %v", e)
 				}
 			}
@@ -266,7 +304,7 @@ func (r *reconciler) ReconcileApplianceState(mode ReconcileMode, targetProfileID
 // any interface is configured and the box is unreachable except by console.
 // Converge-only: the apply/switch paths (ModeApply) have their own rollback and
 // must see the error, not a silent demotion.
-func (r *reconciler) rescueToOnboarding(cause error) error {
+func (r *Reconciler) rescueToOnboarding(cause error) error {
 	log.Printf("[reconcile] %v - falling back to ONBOARDING so the box stays reachable", cause)
 	_ = r.sqlite.LogAudit("SYSTEM", "RESCUE_ONBOARDING", "lifecycle", "", cause.Error(), "WARNING")
 	if e := r.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); e != nil {
@@ -288,7 +326,7 @@ func (r *reconciler) rescueToOnboarding(cause error) error {
 // discards - covering both a genuinely half-applied box and one whose apply
 // succeeded but whose ACTIVE state-write was interrupted (reconcile is idempotent
 // and re-validates the config, so finishing is safe).
-func (r *reconciler) resumeInterruptedApply(profileID int) error {
+func (r *Reconciler) resumeInterruptedApply(profileID int) error {
 	log.Printf("[reconcile] found %s at converge - completing the interrupted apply", db.StateConfiguring)
 	// Retry with backoff before giving up: on a cold boot the Kea control socket or
 	// eth0 link may not be up yet, and reconcileActive folds such transient errors in
@@ -324,18 +362,18 @@ func (r *reconciler) resumeInterruptedApply(profileID int) error {
 	// Drop any profile that persistProfile renamed aside as a rollback stash: a
 	// crash between persistProfile and finishApply leaves one behind, and the
 	// apply we just completed made the new profile authoritative.
-	if e := r.sweepOrphanedStashes(); e != nil {
+	if e := r.SweepOrphanedStashes(); e != nil {
 		log.Printf("[reconcile] failed to sweep orphaned apply stash: %v", e)
 	}
 	return nil
 }
 
-// sweepOrphanedStashes drops any rollback-stash profile (persistProfile renames a
+// SweepOrphanedStashes drops any rollback-stash profile (persistProfile renames a
 // replaced same-named profile aside as "<name>.stash-<id>", always active = 0) that a
 // crash between persistProfile and finishApply left behind. The active = 0 guard means
 // it can never delete a live profile. Idempotent; excluded from the switcher too (see
 // listProfiles). Returns the error for the caller to log.
-func (r *reconciler) sweepOrphanedStashes() error {
+func (r *Reconciler) SweepOrphanedStashes() error {
 	_, err := r.sqlite.Exec("DELETE FROM profiles WHERE active = 0 AND name GLOB '*.stash-[0-9]*'")
 	return err
 }
@@ -347,15 +385,15 @@ func interruptedMidApply(state string, mode ReconcileMode) bool {
 	return state == db.StateConfiguring && mode == ModeConverge
 }
 
-// stopActiveMonitors tears down every ACTIVE-only background service: the passive
+// StopActiveMonitors tears down every ACTIVE-only background service: the passive
 // network monitor, the ARP presence prober, the Green-GO scanner, and the port-53
 // DNS listeners (bound to the outgoing profile's scope addresses, so they must
 // drop before any re-IP; reconcileActive rebinds on the new addresses). The single
 // teardown used by every ACTIVE-exit path - finishApply, beginSwitch,
 // reconcileOnboarding, and process shutdown (stopBackground) - so a lifecycle fix
 // cannot land in one path and strand the others. All stops are idempotent and nil-safe.
-func (r *reconciler) stopActiveMonitors() {
-	r.mon.stopActive()
+func (r *Reconciler) StopActiveMonitors() {
+	r.mon.StopActive()
 	if r.dns != nil {
 		r.dns.Stop()
 	}
@@ -364,12 +402,12 @@ func (r *reconciler) stopActiveMonitors() {
 // reconcileOnboarding brings up the onboarding environment: eth0 management IP,
 // wlan0 SoftAP, torn-down NAT, and the ungrouped dynamic Kea scope. No captive DNS
 // redirector runs here - it is only stopped (see the no-DNS note below).
-func (r *reconciler) reconcileOnboarding(mode ReconcileMode) error {
-	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+func (r *Reconciler) reconcileOnboarding(mode ReconcileMode) error {
+	ctx, cancel := context.WithTimeout(context.Background(), ReconcilePassDeadline)
 	defer cancel()
 	var errs []error
-	cidr := r.onboardingCIDR()
-	ssid, pass := r.softAPSettings()
+	cidr := r.OnboardingCIDR()
+	ssid, pass := r.SoftAPSettings()
 
 	if mode == ModeApply {
 		_ = r.net.DeleteApplianceConnections()
@@ -391,18 +429,18 @@ func (r *reconciler) reconcileOnboarding(mode ReconcileMode) error {
 	// Leaving ACTIVE: stop the passive monitor, ARP prober, Green-GO scanner, and the
 	// port-53 listeners (no DNS is served during onboarding - see the no-DNS note
 	// below). Idempotent if nothing runs.
-	r.stopActiveMonitors()
+	r.StopActiveMonitors()
 	// Onboarding-only: passively sniff eth0 for tagged VLANs so the wizard's link badge can
 	// tell the operator the switch port is a trunk. Best-effort (no CAP_NET_RAW -> inert).
-	if r.mon.trunkProbe != nil {
-		r.mon.trunkProbe.Start("eth0")
+	if r.mon.TrunkProbe != nil {
+		r.mon.TrunkProbe.Start("eth0")
 	}
 	// Onboarding-only: watch eth0 for a DHCP server already answering, so the wizard's
 	// shield badge names it before the operator applies. Best-effort like the trunk probe.
 	// The box serves its own onboarding pool on eth0; Start reads eth0's MAC and suppresses
 	// the box's own OFFERs by source MAC, so the probe never flags the appliance itself.
-	if r.mon.rogueProbe != nil {
-		r.mon.rogueProbe.Start("eth0")
+	if r.mon.RogueProbe != nil {
+		r.mon.RogueProbe.Start("eth0")
 	}
 
 	// Onboarding never routes - make sure no NAT state leaks in from a prior gig.
@@ -428,7 +466,7 @@ func (r *reconciler) reconcileOnboarding(mode ReconcileMode) error {
 	})
 	if err != nil {
 		errs = append(errs, fmt.Errorf("render onboarding: %w", err))
-	} else if werr := r.writeAndReloadKea(ctx, cfgStr); werr != nil {
+	} else if werr := r.WriteAndReloadKea(ctx, cfgStr); werr != nil {
 		errs = append(errs, werr)
 	} else if mode == ModeApply {
 		// A reset (ModeApply) must not inherit the prior job's leases: the memfile lease
@@ -446,17 +484,17 @@ func (r *reconciler) reconcileOnboarding(mode ReconcileMode) error {
 
 // reconcileActive brings up all served interfaces, renders+reloads the profile
 // Kea config, and applies (or tears down) uplink NAT.
-func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+func (r *Reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), ReconcilePassDeadline)
 	defer cancel()
 	var errs []error
 
 	// Leaving onboarding: the trunk and rogue-DHCP probes are onboarding-only hints, and
 	// ACTIVE has the full passive monitor for VLAN reality and rogue servers. (The trunk
 	// probe's last-seen VLANs are snapshotted at apply.)
-	r.mon.stopOnboarding()
+	r.mon.StopOnboarding()
 
-	scopes, err := r.loadScopeConfigs(profileID)
+	scopes, err := r.LoadScopeConfigs(profileID)
 	if err != nil {
 		return fmt.Errorf("active reconcile: load scopes: %w", err)
 	}
@@ -472,7 +510,7 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// that fails here re-stamps rows for a config that won't load, but the next
 	// reconcile re-derives them, and a reconcile-time validation failure is
 	// environmental (every reconcile would fail, not just this one).
-	r.remapReservationSubnets(ctx, scopes, mode)
+	r.RemapReservationSubnets(ctx, scopes, mode)
 
 	if mode == ModeApply {
 		_ = r.net.DeleteApplianceConnections()
@@ -505,7 +543,7 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// app_state. We connect wlan0 and masquerade only when the uplink is enabled AND
 	// at least one scope is toggled to route through it. WHICH scope advertises the
 	// gateway is the renderer's job (per-scope toggle, gated by the master enable).
-	boxUplinkEnabled, upSSID, upPass := r.uplinkSettings()
+	boxUplinkEnabled, upSSID, upPass := r.UplinkSettings()
 	hasUplink := boxUplinkEnabled && anyScopeUplink && upSSID != ""
 
 	// Active mode: tear down onboarding-only services. (The port-53 server is
@@ -514,14 +552,14 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	_ = r.net.SetInterfaceManaged("wlan0", true)
 
 	// Render + write + reload Kea from the scopes already loaded above (no second
-	// DB load / JSON unmarshal). keaConfigForState honors a persisted operator
+	// DB load / JSON unmarshal). KeaConfigForState honors a persisted operator
 	// stand-down: while stood down it renders the holdoff config (Kea reachable but
 	// serving no subnet), so a reboot mid-conflict does not silently resume serving.
 	reloadOK := false
-	cfgStr, rerr := r.keaConfigForState(scopes)
+	cfgStr, rerr := r.KeaConfigForState(scopes)
 	if rerr != nil {
 		errs = append(errs, fmt.Errorf("render profile: %w", rerr))
-	} else if werr := r.writeAndReloadKea(ctx, cfgStr); werr != nil {
+	} else if werr := r.WriteAndReloadKea(ctx, cfgStr); werr != nil {
 		errs = append(errs, werr)
 	} else {
 		reloadOK = true
@@ -537,7 +575,7 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// actually drops wlan0 - converge fully owns the uplink state.
 	switch {
 	case hasUplink && !r.net.IsWifiUplinkActive():
-		go r.runRecoveredAudited("uplink-connect", func() { r.connectUplink(upSSID, upPass) })
+		go r.RunRecoveredAudited("uplink-connect", func() { r.connectUplink(upSSID, upPass) })
 	case !hasUplink:
 		_ = r.net.DisconnectWifiUplink()
 	}
@@ -548,7 +586,7 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// Best-effort; gated on a successful reload so we never act against a config Kea
 	// did not accept. Skipped while stood down - the holdoff config serves no pool,
 	// so there is nothing to rebalance into.
-	if reloadOK && !r.dhcpStoodDown() {
+	if reloadOK && !r.DHCPStoodDown() {
 		r.rebalanceLeases(ctx, scopes)
 	}
 
@@ -556,9 +594,9 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// ACTIVE: this is their sole Start site, reached once the served interfaces are up.
 	// Best-effort - both launch goroutines, never error, and so cannot affect the
 	// reconcile outcome (errs above), keeping the core apply path isolated.
-	r.startNetmon(scopes)
-	r.startArpProber(scopes)
-	r.startGgoScan(scopes)
+	r.StartNetmon(scopes)
+	r.StartArpProber(scopes)
+	r.StartGgoScan(scopes)
 	// ACTIVE-only: the port-53 owner serves the device zones, one socket per served
 	// scope's own address (never wlan0) so each apex answer names the address that
 	// segment can reach. Best-effort like the monitors; the zone primes in the
@@ -583,8 +621,8 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 		for _, ip := range r.dns.StartZone(bindIPs) {
 			_ = r.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed, retrying on the sampler tick", "WARNING")
 		}
-		if r.primeZone != nil {
-			go r.runRecoveredAudited("dns-zone-prime", r.primeZone)
+		if r.PrimeZone != nil {
+			go r.RunRecoveredAudited("dns-zone-prime", r.PrimeZone)
 		}
 	}
 
@@ -620,7 +658,7 @@ func (u *uplinkAudit) observe(ok bool) (changed bool) {
 // reset/rollback returned the box to onboarding while we were connecting, it
 // tears the just-(re)created uplink back down so a late goroutine can't leave a
 // stale uplink active after teardown.
-func (r *reconciler) connectUplink(ssid, pwd string) {
+func (r *Reconciler) connectUplink(ssid, pwd string) {
 	if e := r.net.SetWifiUplink(ssid, pwd); e != nil {
 		log.Printf("Warning: WiFi uplink connect failed: %v", e)
 		// Surface the failure the way Kea/MariaDB outages are (onBackendChange):
@@ -636,8 +674,8 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 		// Log): the connect runs in a background goroutine, so the Settings save that
 		// triggered it already returned "saved". The always-on #backend-alert banner
 		// carries nmcli's reason so "the SSID or password is wrong" reaches the UI.
-		if r.announceUplink != nil {
-			r.announceUplink(true, "Wi-Fi uplink: "+e.Error())
+		if r.AnnounceUplink != nil {
+			r.AnnounceUplink(true, "Wi-Fi uplink: "+e.Error())
 		}
 		return
 	}
@@ -647,8 +685,8 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 		// Deliberate teardown (not a failure), so it is not audited - but mark the link
 		// down so a genuine re-connect after the box returns to ACTIVE audits UPLINK_UP.
 		r.uplink.observe(false)
-		if r.announceUplink != nil {
-			r.announceUplink(false, "") // not a failure - clear any prior alert
+		if r.AnnounceUplink != nil {
+			r.AnnounceUplink(false, "") // not a failure - clear any prior alert
 		}
 		return
 	}
@@ -659,17 +697,17 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 	}
 	// The box just gained internet - the one moment a release check is worth
 	// kicking rather than waiting out the 30-min ticker.
-	if r.kickUpdate != nil {
-		r.kickUpdate()
+	if r.KickUpdate != nil {
+		r.KickUpdate()
 	}
-	if r.announceUplink != nil {
-		r.announceUplink(false, "") // connected - clear the banner
+	if r.AnnounceUplink != nil {
+		r.AnnounceUplink(false, "") // connected - clear the banner
 	}
 }
 
 // applyNAT enables masquerade + forwarding when any scope has an uplink, and
 // fully tears it down otherwise. Idempotent (ApplyMasquerade flushes first).
-func (r *reconciler) applyNAT(hasUplink bool) error {
+func (r *Reconciler) applyNAT(hasUplink bool) error {
 	var errs []error
 	if hasUplink {
 		if e := r.net.SetIPForwarding(true); e != nil {
@@ -687,16 +725,16 @@ func (r *reconciler) applyNAT(hasUplink bool) error {
 	return errors.Join(errs...)
 }
 
-// renderKeaForScopes renders the profile Kea config from already-loaded scopes
+// RenderKeaForScopes renders the profile Kea config from already-loaded scopes
 // (the caller loads them once and passes them in, avoiding a second DB read +
 // JSON unmarshal on the boot/converge critical path).
-// baseRenderInput assembles the ProfileRenderInput fields shared by every render path -
+// BaseRenderInput assembles the ProfileRenderInput fields shared by every render path -
 // the MariaDB DSN split, the Kea secret path, and the global DHCP options. Each caller
 // then sets Scopes plus its path-specific fields (LeaseLifetime for the served reconcile,
 // IfaceWildcard for the apply/switch validation renders) before calling RenderProfile.
-func (r *reconciler) baseRenderInput() kea.ProfileRenderInput {
+func (r *Reconciler) BaseRenderInput() kea.ProfileRenderInput {
 	host, user, pass, name := config.ParseMariaDSN(r.cfg.MariaDBDSN)
-	g := r.globalDHCPOptions()
+	g := r.GlobalDHCPOptionsFor()
 	return kea.ProfileRenderInput{
 		MariaDBHost:   host,
 		MariaDBUser:   user,
@@ -708,14 +746,14 @@ func (r *reconciler) baseRenderInput() kea.ProfileRenderInput {
 	}
 }
 
-func (r *reconciler) renderKeaForScopes(scopes []ScopeConfig) (string, []string, error) {
+func (r *Reconciler) RenderKeaForScopes(scopes []ScopeConfig) (string, []string, error) {
 	if len(scopes) == 0 {
 		return "", nil, fmt.Errorf("no scopes for profile")
 	}
 
-	in := r.baseRenderInput()
-	in.LeaseLifetime = r.leaseLifetime()
-	boxUplink, _, _ := r.uplinkSettings()
+	in := r.BaseRenderInput()
+	in.LeaseLifetime = r.LeaseLifetime()
+	boxUplink, _, _ := r.UplinkSettings()
 	for _, sc := range scopes {
 		ri := sc.ToRenderInput()
 		// A scope advertises the uplink gateway only when its toggle is on AND the
@@ -727,10 +765,10 @@ func (r *reconciler) renderKeaForScopes(scopes []ScopeConfig) (string, []string,
 	return kea.RenderProfile(in)
 }
 
-// snapshotKeaConf copies the current live Kea config into the snapshot directory
+// SnapshotKeaConf copies the current live Kea config into the snapshot directory
 // and records it, returning the snapshot path for rollback. A missing live conf
 // (first apply) is not an error and returns an empty path.
-func (r *reconciler) snapshotKeaConf(reason string) (string, error) {
+func (r *Reconciler) SnapshotKeaConf(reason string) (string, error) {
 	live := filepath.Join(r.cfg.KeaConfDir, "kea-dhcp4.conf")
 	data, err := os.ReadFile(live)
 	if err != nil {
@@ -743,7 +781,7 @@ func (r *reconciler) snapshotKeaConf(reason string) (string, error) {
 		return "", fmt.Errorf("create snapshot dir: %w", err)
 	}
 	path := filepath.Join(r.cfg.SnapshotDir, fmt.Sprintf("kea-dhcp4.%d.conf", time.Now().UnixNano()))
-	if err := writeFileSync(path, data, 0600); err != nil {
+	if err := WriteFileSync(path, data, 0600); err != nil {
 		return "", fmt.Errorf("write snapshot: %w", err)
 	}
 	// The snapshot file is on disk; a failed index insert only hides it from the
@@ -754,7 +792,7 @@ func (r *reconciler) snapshotKeaConf(reason string) (string, error) {
 	return path, nil
 }
 
-// writeFileSync writes path in place (truncate + write + fsync), returning the
+// WriteFileSync writes path in place (truncate + write + fsync), returning the
 // error from every step including Sync and the success-path Close. Deliberately
 // NOT temp-file+rename: /etc/kea is 0750 and root-owned - the service user owns
 // the conf file itself but cannot create files in the directory, so an atomic
@@ -762,7 +800,7 @@ func (r *reconciler) snapshotKeaConf(reason string) (string, error) {
 // after a successful apply can no longer lose the config); the residual torn-write
 // window (crash mid-write) self-heals on the next reconcile, which re-renders from
 // SQLite and overwrites this file - it only bites if Kea itself restarts first.
-func writeFileSync(path string, data []byte, perm os.FileMode) error {
+func WriteFileSync(path string, data []byte, perm os.FileMode) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
@@ -778,17 +816,17 @@ func writeFileSync(path string, data []byte, perm os.FileMode) error {
 	return f.Close()
 }
 
-// writeAndReloadKea validates, writes the rendered config to the live path, and
+// WriteAndReloadKea validates, writes the rendered config to the live path, and
 // reloads Kea. Validation happens before the live file is touched so a bad
 // render can't take Kea down on reload - this covers the boot/settings/reset
 // converge paths that don't go through handleSetupApply's own pre-apply check.
 // ctx bounds the Kea control-socket calls (the reconcile pass deadline).
-func (r *reconciler) writeAndReloadKea(ctx context.Context, configStr string) error {
+func (r *Reconciler) WriteAndReloadKea(ctx context.Context, configStr string) error {
 	if err := kea.TestConfig(configStr); err != nil {
 		return fmt.Errorf("kea config validation failed: %w", err)
 	}
 	live := filepath.Join(r.cfg.KeaConfDir, "kea-dhcp4.conf")
-	if err := writeFileSync(live, []byte(configStr), 0660); err != nil {
+	if err := WriteFileSync(live, []byte(configStr), 0660); err != nil {
 		return fmt.Errorf("write kea conf: %w", err)
 	}
 	if err := r.kea.ReloadConfig(ctx); err != nil {
@@ -828,7 +866,7 @@ const keaServiceName = "isc-kea-dhcp4-server"
 
 // waitKeaReachable polls Kea's control socket until it answers, the attempts run
 // out, or ctx expires - returning the last probe error.
-func (r *reconciler) waitKeaReachable(ctx context.Context, attempts int, delay time.Duration) error {
+func (r *Reconciler) waitKeaReachable(ctx context.Context, attempts int, delay time.Duration) error {
 	var err error
 	for range attempts {
 		if err = r.kea.Ping(ctx); err == nil {
@@ -844,14 +882,14 @@ func (r *reconciler) waitKeaReachable(ctx context.Context, attempts int, delay t
 
 // --- app_state-backed settings with defaults ---
 
-func (r *reconciler) onboardingCIDR() string {
+func (r *Reconciler) OnboardingCIDR() string {
 	if v, _ := r.sqlite.GetState("onboarding_ip"); v != "" {
 		return v
 	}
 	return defaultOnboardingCIDR
 }
 
-func (r *reconciler) softAPSettings() (ssid, pass string) {
+func (r *Reconciler) SoftAPSettings() (ssid, pass string) {
 	ssid, _ = r.sqlite.GetState("softap_ssid")
 	if ssid == "" {
 		ssid = "GGO-DHCP-Onboarding"
@@ -860,21 +898,21 @@ func (r *reconciler) softAPSettings() (ssid, pass string) {
 	return ssid, pass
 }
 
-// uplinkSettings returns the box-level WiFi uplink config (one wlan0): the master
+// UplinkSettings returns the box-level WiFi uplink config (one wlan0): the master
 // enable plus the SSID/password handed to NetworkManager, from app_state. WHICH scopes
 // route through the uplink is the per-scope toggle (ScopeConfig.Uplink.Enabled); this
 // master enable governs the whole uplink - off means no scope routes, full stop.
-func (r *reconciler) uplinkSettings() (enabled bool, ssid, pass string) {
+func (r *Reconciler) UplinkSettings() (enabled bool, ssid, pass string) {
 	e, _ := r.sqlite.GetState("uplink_enabled")
 	ssid, _ = r.sqlite.GetState("uplink_ssid")
 	pass, _ = r.sqlite.GetState("uplink_pass")
 	return e == "1", ssid, pass
 }
 
-// migrateUplinkToBoxLevel seeds the box-level uplink app_state keys from a legacy
+// MigrateUplinkToBoxLevel seeds the box-level uplink app_state keys from a legacy
 // per-scope uplink_json once (the pre-box-level model), so an upgraded box keeps its
 // configured uplink. No-op once a box-level key exists.
-func (r *reconciler) migrateUplinkToBoxLevel() {
+func (r *Reconciler) MigrateUplinkToBoxLevel() {
 	if v, _ := r.sqlite.GetState("uplink_ssid"); v != "" {
 		return
 	}
@@ -885,18 +923,18 @@ func (r *reconciler) migrateUplinkToBoxLevel() {
 	if !ok || cfg.SSID == "" {
 		return
 	}
-	if err := r.sqlite.SetStates(uplinkState(cfg.Enabled, cfg.SSID, cfg.Password)); err != nil {
+	if err := r.sqlite.SetStates(UplinkState(cfg.Enabled, cfg.SSID, cfg.Password)); err != nil {
 		log.Printf("[migrate] seed box-level uplink: %v", err)
 		return
 	}
 	log.Printf("[migrate] seeded box-level WiFi uplink from legacy per-scope config")
 }
 
-// leaseLifetime returns the active-profile DHCP lease lifetime in seconds: the operator's
+// LeaseLifetime returns the active-profile DHCP lease lifetime in seconds: the operator's
 // saved Settings value (app_state "lease_lifetime") when set and valid, else the
 // --lease-lifetime flag default. Settings is the single source of truth; the flag is only
 // the fallback.
-func (r *reconciler) leaseLifetime() int {
+func (r *Reconciler) LeaseLifetime() int {
 	if v, _ := r.sqlite.GetState("lease_lifetime"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
@@ -905,8 +943,8 @@ func (r *reconciler) leaseLifetime() int {
 	return r.cfg.LeaseLifetime
 }
 
-// ipOnly strips a /mask suffix, returning just the address.
-func ipOnly(cidr string) string {
+// IPOnly strips a /mask suffix, returning just the address.
+func IPOnly(cidr string) string {
 	addr, _, _ := strings.Cut(cidr, "/")
 	return addr
 }

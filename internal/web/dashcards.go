@@ -81,7 +81,7 @@ func (s *Server) fetchPinningSplit(ctx context.Context, leases []kea.ActiveLease
 		return nil, nil
 	}
 	labels, err1 := s.fetchPortLabels()
-	pinnedMap, err2 := s.fetchPinnedPorts(ctx)
+	pinnedMap, err2 := s.recon.FetchPinnedPorts(ctx)
 	if err1 != nil || err2 != nil {
 		return nil, nil
 	}

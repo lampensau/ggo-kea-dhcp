@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"io"
 	"log"
 	"net/http"
@@ -211,7 +212,7 @@ func (s *Server) handleUpdateInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.beginReconcile() {
 		s.updating.Store(false)
-		refuse(http.StatusConflict, reconcileBusyMsg)
+		refuse(http.StatusConflict, appliance.ReconcileBusyMsg)
 		return
 	}
 	// Both guards are held from here until the updater reports a result (poll

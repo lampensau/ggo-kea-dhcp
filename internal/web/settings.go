@@ -2,7 +2,7 @@ package web
 
 import (
 	"encoding/json"
-	"log"
+	"ggo-kea-dhcp/internal/appliance"
 	"net"
 	"net/http"
 	"strconv"
@@ -13,32 +13,13 @@ import (
 	"ggo-kea-dhcp/internal/web/views"
 )
 
-// globalDHCPOptions returns the site-wide DHCP option defaults (every scope inherits
-// them unless it overrides per-scope). When the key is unset it migrates a previously
-// chosen legacy uplink_dns resolver into the global DNS default - the bare 1.1.1.1
-// default is NOT migrated, since a global default must be an explicit operator choice.
-func (r *reconciler) globalDHCPOptions() GlobalDHCPOptions {
-	var g GlobalDHCPOptions
-	if v, _ := r.sqlite.GetState("global_dhcp_options"); v != "" {
-		if err := json.Unmarshal([]byte(v), &g); err != nil {
-			log.Printf("[settings] malformed global_dhcp_options - ignoring: %v", err)
-			return GlobalDHCPOptions{}
-		}
-		return g
-	}
-	if v, _ := r.sqlite.GetState("uplink_dns"); v != "" && v != "disabled" {
-		g.DNS = v
-	}
-	return g
-}
-
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	g := s.recon.globalDHCPOptions()
+	g := s.recon.GlobalDHCPOptionsFor()
 	gOpts := make([]views.ScopeOptionRow, 0, len(g.Options))
 	for _, o := range g.Options {
 		gOpts = append(gOpts, views.ScopeOptionRow{Name: o.Name, Data: o.Data})
 	}
-	ssid, pass := s.recon.softAPSettings()
+	ssid, pass := s.recon.SoftAPSettings()
 
 	// WiFi uplink is editable only in ACTIVE (before that wlan0 hosts the
 	// onboarding SoftAP). The credentials are box-level (one wlan0); which scopes route
@@ -240,7 +221,7 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 		// If the management IP changed, the current connection is about to drop -
 		// hand the operator the reconnect interstitial pointed at the new IP.
 		if ipChanged {
-			s.respondInterstitial(w, ipOnly(newCIDR))
+			s.respondInterstitial(w, appliance.IPOnly(newCIDR))
 			return
 		}
 	} else if state == db.StateActive && (leaseChanged || globalOptsChanged || upChanged) {
@@ -254,24 +235,4 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 
 	s.setFlash(w, r, "Settings saved.", "success")
 	s.redirectHTMX(w, r, "/settings")
-}
-
-// activeProfileUplink returns the active profile's id and its uplink config. The
-// uplink is conceptually one per box; it is persisted on every scope row, so we
-// return the first enabled scope's uplink (else the first scope's). ok is false
-// when there is no active profile or it has no scopes.
-func (r *reconciler) activeProfileUplink() (profileID int, cfg UplinkConfig, ok bool) {
-	if err := r.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err != nil {
-		return 0, UplinkConfig{}, false
-	}
-	scopes, err := r.loadScopeConfigs(profileID)
-	if err != nil || len(scopes) == 0 {
-		return profileID, UplinkConfig{}, false
-	}
-	for _, sc := range scopes {
-		if sc.Uplink.Enabled {
-			return profileID, sc.Uplink, true
-		}
-	}
-	return profileID, scopes[0].Uplink, true
 }
