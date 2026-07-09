@@ -65,10 +65,10 @@ jobs:
       - name: Cross-compile (Raspberry Pi arm64)
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -o ggo-kea-dhcp-arm64 .
 
-      - name: Shellcheck packaging scripts
+      - name: Shellcheck shell scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -f gcc -S error install.sh packaging/scripts/*.sh
+          shellcheck -f gcc -S error install.sh packaging/scripts/*.sh scripts/*.sh
 
   # Fail CI when a vendored dependency (or the stdlib we build with) has a known
   # vulnerability that the code actually reaches. Dependabot only proposes
