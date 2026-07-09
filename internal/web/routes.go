@@ -17,7 +17,7 @@ import (
 func (s *Server) Start() error {
 	// One-shot: lift any legacy per-scope WiFi uplink up to the box-level keys before
 	// the boot reconcile reads them.
-	s.migrateUplinkToBoxLevel()
+	s.recon.migrateUplinkToBoxLevel()
 
 	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
 	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.
@@ -190,16 +190,11 @@ func (s *Server) Start() error {
 // below are idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
 	s.bg.stop()
-	// The ACTIVE monitors share the single stopActiveMonitors teardown, so a new one
-	// added there is torn down on shutdown too (rather than stranded in this copy).
-	// The onboarding probes are not part of that set - stop them here.
+	// Both teardowns are the same ones the reconciler's lifecycle paths use, so a
+	// monitor added to either set is torn down on shutdown too (rather than
+	// stranded in a copy here).
 	s.stopActiveMonitors()
-	if s.trunkProbe != nil {
-		s.trunkProbe.Stop()
-	}
-	if s.rogueProbe != nil {
-		s.rogueProbe.Stop()
-	}
+	s.mon.stopOnboarding()
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {

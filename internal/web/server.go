@@ -59,21 +59,13 @@ type Server struct {
 	// live is the in-process SSE broadcaster pushing state changes to connected
 	// operators (lifecycle badge, tiles, lease/learnable lists) without polling.
 	live *liveHub
-	// netmon is the passive network-health monitor. It runs only while ACTIVE
-	// (started/stopped by the reconciler), is a read-only observer that never
-	// touches Kea, and feeds the dashboard's Network Health card + edge-triggered
-	// audit rows. Best-effort: its Start never aborts the reconcile.
-	netmon *netmon.MonitorManager
-	// arp is the active device-presence prober: it ARPs each active lease IP and
-	// reports which answered recently - the single source for the online/offline dot
-	// on the leases/dashboard views. Runs only while ACTIVE, started/stopped beside
-	// netmon. (netmon stays passive; this is the active counterpart that reliably
-	// reaches quiet devices a passive capture never sees.)
-	arp presenceProber
-	// ggoscan is the active Green-GO device scanner (6464 device-scan): a firmware/model
-	// inventory used for the firmware-mismatch warning and friendly hostnames. Runs only
-	// while ACTIVE and only under a Green-GO preset, started/stopped beside netmon.
-	ggoscan deviceScanner
+	// mon owns the background network observers (passive monitor, ARP prober,
+	// Green-GO scanner, and the onboarding trunk/rogue probes). The reconciler
+	// drives their lifecycle; the web layer reads their snapshots. A value, not a
+	// pointer: its fields are written once in NewServer and only read afterwards,
+	// so the zero value is a usable empty set and a bare &Server{} test double
+	// reads through it without a nil check. See monitorSet.
+	mon monitorSet
 	// reservationMu serializes the reservation conflict-check + insert (single add and
 	// bulk import) so two concurrent writes can't both pass the check for the same IP
 	// and both insert - the hosts unique key does not include ipv4_address, so the DB
@@ -96,15 +88,6 @@ type Server struct {
 	// lease fetcher outside the mutation handlers, which stay direct because
 	// they act on the state they read.
 	leaseSrc *leaseCache
-	// trunkProbe passively sniffs eth0 during onboarding to tell the setup wizard whether
-	// the switch port is trunking tagged VLANs (the full monitor runs only in ACTIVE).
-	// Started/stopped by the reconciler beside the onboarding bring-up.
-	trunkProbe *netmon.TrunkProbe
-	// rogueProbe passively watches eth0 during onboarding for a foreign DHCP server
-	// already answering (an OFFER/ACK carrying another server-id), feeding the wizard's
-	// shield badge. Same lifecycle as trunkProbe. Interface-typed so wizard tests can
-	// fake a detection without a capture socket.
-	rogueProbe rogueProber
 	// metrics holds the dashboard's live trend series (lease count, pool
 	// utilization, Kea RTT, uplink), filled by an always-on sampler independent of
 	// the client-gated live ticker so a cold-opened dashboard has sparkline history.
@@ -122,15 +105,12 @@ type Server struct {
 	// instead of freezing every region for the whole outage.
 	lastLeasesMu sync.Mutex
 	lastLeases   []kea.ActiveLease
-	// applying guards against concurrent profile applies (a double-submit would
-	// otherwise race two reconciles against the live Kea conf).
-	applying atomic.Bool
-	// rescueArmed opens the zero-scopes rescue window: armed at process start,
-	// consumed by the FIRST ACTIVE converge (usually boot). Only inside that
-	// window may a nothing-to-serve ACTIVE box demote itself to ONBOARDING - a
-	// later converge (a mid-show settings save) must surface the error instead,
-	// never tear a serving box down to the SoftAP.
-	rescueArmed atomic.Bool
+	// recon is the lifecycle state machine (converge/apply/switch, the mutation
+	// guard, the zero-scopes rescue window, the uplink-audit debounce). Built by
+	// NewServer from the shared control-plane handles; the handlers drive it
+	// through the thin forwarders in reconcile_forward.go, and it reaches back
+	// into the web layer only through its nil-tolerant edges (wired in NewServer).
+	recon *reconciler
 	// updating guards the self-update install path: claimed by POST /update/install
 	// (alongside the applying guard) and held until the updater reports a result or
 	// the control plane restarts onto the new binary.
@@ -167,10 +147,6 @@ type Server struct {
 	// health tracks live Kea/MariaDB reachability so the shell warns on every page
 	// (Kea down = error, MariaDB down = warning) and transitions are audited.
 	health *backendHealth
-	// uplink debounces the WiFi-uplink audit so a persistently failing or repeatedly
-	// re-applied uplink logs exactly one row per real up/down transition (zero value =
-	// unknown, so the first connect attempt always audits its outcome).
-	uplink uplinkAudit
 	// hwResFetch overrides the hw-address reservation fetch in tests (a counting fake),
 	// so the per-broadcast fetch-count invariant is assertable. nil in production, where
 	// fetchHWReservationMap reads MariaDB directly.
@@ -216,19 +192,23 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		net:     network.NewManager(),
 		live:    newLiveHub(),
 	}
-	// netmon emits one audit row per confirmed transition (never per tick) via
-	// LogAudit, and reads its thresholds via GetState. The closures are the only
-	// coupling - netmon imports neither web nor db. The audit Result is derived
-	// from the event Severity so a rogue-DHCP (error) and a benign notice (warn)
-	// read distinctly in the audit log rather than both as free-text "warning".
-	s.netmon = netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
-		_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
-	})
-	// The active ARP presence prober (started/stopped beside netmon by the reconciler).
-	s.arp = arpscan.NewProber()
-	// The active Green-GO device scanner (6464); started under a Green-GO preset, stopped
-	// beside netmon/arp on every ACTIVE exit.
-	s.ggoscan = ggoscan.NewScanner()
+	// mon owns the background observers. netmon emits one audit row per confirmed
+	// transition (never per tick) via LogAudit and reads its thresholds via
+	// GetState - the closures are the only coupling (netmon imports neither web nor
+	// db). The audit Result is derived from the event Severity so a rogue-DHCP
+	// (error) and a benign notice (warn) read distinctly in the audit log rather
+	// than both as free-text "warning". The ARP prober + Green-GO scanner are the
+	// ACTIVE-only counterparts; the trunk + rogue-DHCP probes are onboarding-only
+	// (started in reconcileOnboarding, stopped on entering ACTIVE).
+	s.mon = monitorSet{
+		netmon: netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
+			_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
+		}),
+		arp:        arpscan.NewProber(),
+		ggoscan:    ggoscan.NewScanner(),
+		trunkProbe: netmon.NewTrunkProbe(),
+		rogueProbe: netmon.NewRogueProbe(),
+	}
 	// The shared lease provider (leasecache.go); every read-through consumer
 	// below funnels into this one fetcher.
 	s.leaseSrc = newLeaseCache(func(ctx context.Context) ([]kea.ActiveLease, error) {
@@ -250,10 +230,6 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 		}
 		return out, true
 	}, leaseCacheTTL, time.Now)
-	// The onboarding trunk + rogue-DHCP probes (started in reconcileOnboarding,
-	// stopped on entering ACTIVE).
-	s.trunkProbe = netmon.NewTrunkProbe()
-	s.rogueProbe = netmon.NewRogueProbe()
 	s.metrics = newMetricsStore()
 	s.sysHealth = newSysHealthStore(cfg.DBPath)
 	s.updateHTTP = newUpdateHTTPClient()
@@ -267,10 +243,23 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.updateRepo = envOr("GGO_UPDATE_REPO", updateRepo)
 	s.updateDir = filepath.Join(filepath.Dir(cfg.DBPath), "update")
 	s.loginThrottle = newLoginThrottle()
-	s.rescueArmed.Store(true)
 	s.health = newBackendHealth()
 	s.bg = newBgRunner()
 	s.ggoFw = newFwCensus()
+	// Build the lifecycle reconciler from the shared control-plane handles, then
+	// wire its web-side edges - the ONLY way it reaches SSE, the DNS zone, the
+	// update subsystem, the monitor starts, backend-health, and pinning - and arm
+	// the boot-only zero-scopes rescue. A nil-tolerant edge fails silently if left
+	// unwired, so TestNewServerWiresReconcilerEdges asserts every one is set.
+	s.recon = s.newReconciler()
+	s.recon.announceUplink = func(down bool, detail string) {
+		s.health.setUplinkDown(down, detail)
+		s.publishBackendAlert()
+	}
+	s.recon.primeZone = s.primeDNSZone
+	s.recon.kickUpdate = s.kickUpdateCheck
+	s.recon.pinnedPortKeys = s.pinnedPortKeys
+	s.recon.rescueArmed.Store(true)
 	// Prime the last-seen tracker from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = newLastSeenTracker()

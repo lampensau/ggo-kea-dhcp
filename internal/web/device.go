@@ -56,7 +56,7 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.ggoscan.SendReboot(ip); err != nil {
+	if err := s.mon.ggoscan.SendReboot(ip); err != nil {
 		_ = s.sqlite.LogAudit(s.getActor(r), "DEVICE_REBOOT", name+" -> "+ip, "", err.Error(), "ERROR")
 		s.handleError(w, r, "Could not reach "+ip+" to reboot it: "+err.Error(), http.StatusBadGateway)
 		return
@@ -80,10 +80,10 @@ func (s *Server) rebootEligible(ctx context.Context, ip string) (name, liveMAC, 
 		return "", "", "", false // can't confirm the device is online - don't reboot into the void
 	}
 	mac := s.macAtIP(ctx, ip)
-	if mac == "" && s.arp != nil {
+	if mac == "" && s.mon.arp != nil {
 		// Lease already gone (a release): the device is still on the wire, so ARP tells
 		// us who actually answers at the address now.
-		if m, alive := s.arp.ProbeHost(ip); alive {
+		if m, alive := s.mon.arp.ProbeHost(ip); alive {
 			mac = m
 		}
 	}

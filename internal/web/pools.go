@@ -206,7 +206,7 @@ func (s *Server) handlePoolsPlanSave(w http.ResponseWriter, r *http.Request) {
 	candidate := make([]ScopeConfig, len(scopes))
 	copy(candidate, scopes)
 	candidate[sIdx] = sc
-	cfg, _, err := s.renderKeaForScopes(candidate)
+	cfg, _, err := s.recon.renderKeaForScopes(candidate)
 	if err == nil {
 		err = kea.TestConfig(cfg)
 	}

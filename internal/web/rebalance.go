@@ -109,20 +109,23 @@ func rebalanceTargets(scopes []ScopeConfig, leases []kea.ActiveLease, fixed map[
 // alone. Such a device would only be re-granted the same IP on re-request, so deleting
 // its lease just makes it disappear from the table until its next renewal. Empty (nothing
 // fixed) when MariaDB is absent, which also disables rebalance migration of those rows.
-func (s *Server) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease) map[string]bool {
+func (r *reconciler) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease) map[string]bool {
 	fixed := map[string]bool{}
-	if s.mariadb == nil {
+	if r.mariadb == nil {
 		return fixed
 	}
 	resMACs := map[string]bool{}
-	if list, err := s.mariadb.HWReservations(ctx); err == nil {
+	if list, err := r.mariadb.HWReservations(ctx); err == nil {
 		for _, rsv := range list {
 			resMACs[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
 		}
 	} else {
 		log.Printf("[Rebalance] reservation read failed: %v", err)
 	}
-	pinnedKeys := s.pinnedPortKeys(ctx)
+	var pinnedKeys map[string]bool
+	if r.pinnedPortKeys != nil {
+		pinnedKeys = r.pinnedPortKeys(ctx)
+	}
 	for _, l := range leases {
 		if resMACs[normalizeMAC(l.HWAddress)] {
 			fixed[l.IPAddress] = true
@@ -162,24 +165,24 @@ func classIndex(pools []poolBound, class string) int {
 // deletes are logged/audited but never fail a reconcile. Run after a successful Kea
 // reload (the new, exclusive class guards must be live first - otherwise a released
 // device could be re-granted its old address).
-func (s *Server) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
-	if s.kea == nil {
+func (r *reconciler) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
+	if r.kea == nil {
 		return
 	}
-	leases, err := s.kea.GetLeases(ctx, defaultLeasePageSize)
+	leases, err := r.kea.GetLeases(ctx, defaultLeasePageSize)
 	if err != nil {
 		log.Printf("[Rebalance] lease fetch failed: %v", err)
 		return
 	}
-	fixed := s.fixedLeaseIPs(ctx, leases)
+	fixed := r.fixedLeaseIPs(ctx, leases)
 	moved := 0
 	for _, m := range rebalanceTargets(scopes, leases, fixed) {
-		if err := s.kea.DeleteLease(ctx, m.IP); err != nil {
+		if err := r.kea.DeleteLease(ctx, m.IP); err != nil {
 			log.Printf("[Rebalance] lease4-del %s failed: %v", m.IP, err)
 			continue
 		}
 		moved++
-		_ = s.sqlite.LogAudit("SYSTEM", "LEASE_REBALANCE",
+		_ = r.sqlite.LogAudit("SYSTEM", "LEASE_REBALANCE",
 			fmt.Sprintf("%s (%s): %s pool -> %s pool", m.IP, m.HW, m.FromClass, m.ToClass), "", "", "SUCCESS")
 	}
 	if moved > 0 {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -69,17 +70,80 @@ func newTestServer(t testing.TB) (*Server, *network.RecordingCommander) {
 		lastSeen: newLastSeenTracker(),
 		ggoFw:    newFwCensus(),
 	}
+	// The reconciler shares the Server's handles; its web-side edges stay nil so a
+	// converge in a unit test never reaches the SSE hub, DNS zone, or update path.
+	s.recon = s.newReconciler()
 	return s, rec
+}
+
+// TestNewServerWiresReconcilerEdges guards the nil-tolerant reconciler edges. A
+// forgotten wire is silent - the edge just no-ops - so this reflects over every
+// func-typed field on the reconciler and fails if NewServer left one nil. It
+// covers new edges automatically, so a later edge added without wiring is caught.
+func TestNewServerWiresReconcilerEdges(t *testing.T) {
+	dir := t.TempDir()
+	sqlite, err := db.OpenSQLite(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+
+	// A non-nil MariaDB sentinel: NewServer only stores the handle, and asserting
+	// identity against nil would be vacuous. Passing nil here is what let the
+	// reconciler's mariadb go unchecked - and a nil recon.mariadb beside a live
+	// s.mariadb degrades silently (fixedLeaseIPs treats every lease as movable,
+	// remapReservationSubnets returns early), it never errors.
+	mariadb := &db.MariaDB{}
+	s := NewServer(&config.Config{
+		KeaConfDir:    dir,
+		KeaSecretPath: filepath.Join(dir, "secret"),
+		DBPath:        filepath.Join(dir, "test.db"),
+		KeaAPIURL:     "http://127.0.0.1:1/",
+	}, sqlite, mariadb)
+
+	rv := reflect.ValueOf(s.recon).Elem()
+	rt := rv.Type()
+	wired := 0
+	for i := range rt.NumField() {
+		if rt.Field(i).Type.Kind() != reflect.Func {
+			continue
+		}
+		wired++
+		if rv.Field(i).IsNil() {
+			t.Errorf("NewServer left reconciler edge %q unwired (nil func)", rt.Field(i).Name)
+		}
+	}
+	if wired == 0 {
+		t.Fatal("no func-typed edges found on reconciler - test can no longer guard wiring")
+	}
+
+	// The reconciler aliases the Server's control-plane handles rather than owning
+	// them. If NewServer is ever reordered to build the reconciler before one of
+	// these is set, the two halves silently drive different appliances - the
+	// reconciler reconfiguring a Kea nobody reads, or stopping a monitor set the
+	// dashboard still renders. Cheap to assert, invisible to catch otherwise.
+	if s.recon.kea != s.kea || s.recon.dns != s.dns || s.recon.net != s.net {
+		t.Error("reconciler does not share the Server's kea/dns/net handles")
+	}
+	if s.recon.sqlite != s.sqlite || s.recon.cfg != s.cfg {
+		t.Error("reconciler does not share the Server's sqlite/cfg handles")
+	}
+	if s.recon.mariadb != s.mariadb {
+		t.Error("reconciler does not share the Server's mariadb handle - a nil one degrades silently, it does not error")
+	}
+	if s.recon.mon != &s.mon {
+		t.Error("reconciler does not point at the Server's monitorSet - monitor starts and reads would diverge")
+	}
 }
 
 // TestApplyNATDrivesFirewall proves the reconciler drives the network layer
 // through the injectable Commander seam (no real nft / root needed). applyNAT
-// touches only s.net, so a Server with just that field is sufficient.
+// touches only r.net, so a reconciler with just that field is sufficient.
 func TestApplyNATDrivesFirewall(t *testing.T) {
 	rec := &network.RecordingCommander{}
-	s := &Server{net: network.NewManagerWithCommander(rec)}
+	r := &reconciler{net: network.NewManagerWithCommander(rec)}
 
-	if err := s.applyNAT(true); err != nil {
+	if err := r.applyNAT(true); err != nil {
 		t.Fatalf("applyNAT(true): %v", err)
 	}
 	if !rec.Ran("sysctl") {
@@ -90,8 +154,8 @@ func TestApplyNATDrivesFirewall(t *testing.T) {
 	}
 
 	rec2 := &network.RecordingCommander{}
-	s2 := &Server{net: network.NewManagerWithCommander(rec2)}
-	if err := s2.applyNAT(false); err != nil {
+	r2 := &reconciler{net: network.NewManagerWithCommander(rec2)}
+	if err := r2.applyNAT(false); err != nil {
 		t.Fatalf("applyNAT(false): %v", err)
 	}
 	if !rec2.Ran("sysctl") || !rec2.Ran("nft") {
@@ -193,7 +257,7 @@ func TestActiveZeroScopesRescuesToOnboarding(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := seed(t, tc.withProfile)
-			s.rescueArmed.Store(true) // NewServer arms it; newTestServer builds the struct bare
+			s.recon.rescueArmed.Store(true) // NewServer arms it; newTestServer builds the struct bare
 			_ = s.ReconcileApplianceState(ModeConverge, 0)
 
 			if got, _ := s.sqlite.GetState(db.LifecycleStateKey); got != db.StateOnboarding {
@@ -236,7 +300,7 @@ func TestZeroScopesRescueOnlyOnFirstConverge(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The boot converge already ran (and consumed the window) on a healthy box.
-	s.rescueArmed.Store(false)
+	s.recon.rescueArmed.Store(false)
 
 	err := s.ReconcileApplianceState(ModeConverge, 0)
 	if !errors.Is(err, errNoScopes) {
@@ -259,7 +323,7 @@ func TestZeroScopesRescueOnlyOnFirstConverge(t *testing.T) {
 // serving box - the gap the ACTIVE-only consume left open.
 func TestZeroScopesRescueConsumedByAnyBoot(t *testing.T) {
 	s, _ := newTestServer(t)
-	s.rescueArmed.Store(true)
+	s.recon.rescueArmed.Store(true)
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}

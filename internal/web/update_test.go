@@ -15,11 +15,12 @@ import (
 	"ggo-kea-dhcp/internal/db"
 )
 
-// watchUpdateResult must join the shutdown wait (bg.add), so a shutdown
-// already under way makes it skip rather than fold a result into the closing DB.
-// Without the gate it enters its poll loop (updateResultPollInterval) and would
-// process the staged result - the test catches both the missing skip (2s timeout
-// vs the 10s poll) and the folded state.
+// watchUpdateResult must join the shutdown wait (bg.add), so a shutdown already
+// under way makes it skip rather than fold a result into the closing DB. This
+// asserts the outcome (returns promptly, folds nothing); it does NOT isolate the
+// bg.add gate, since stop() also closes doneCh and a gate-less watchUpdateResult
+// would bail on that instead. The gate itself is pinned directly in bg_test.go
+// (TestBgRunnerRefusesAddAfterStop).
 func TestWatchUpdateResultSkipsDuringShutdown(t *testing.T) {
 	s, _ := newUpdateTestServer(t, nil)
 
@@ -325,7 +326,7 @@ func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
 	}
 
 	// Join the one dispatched background check, then assert it hit the API exactly once.
-	s.bg.wg.Wait()
+	s.bg.wait()
 	if got := api.hits.Load(); got != 1 {
 		t.Fatalf("throttled load checks made %d API requests, want exactly 1", got)
 	}
@@ -340,7 +341,7 @@ func TestKickUpdateCheckOnLoadThrottles(t *testing.T) {
 	if !s.kickUpdateCheckOnLoad() {
 		t.Fatal("a page-load check after the floor elapsed should dispatch again")
 	}
-	s.bg.wg.Wait()
+	s.bg.wait()
 	if got := api.hits.Load(); got != 2 {
 		t.Fatalf("post-expiry dispatch made %d total API requests, want 2", got)
 	}

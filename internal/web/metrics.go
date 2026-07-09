@@ -261,10 +261,10 @@ func (s *Server) recordLastSeen(leases []kea.ActiveLease) {
 // step, which mere presence never would. Only "domain N" snapshots count; the
 // detector's idle "No PTP grandmaster seen" (subject = interface) is not a GM.
 func (s *Server) samplePTPClass() int {
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return -1
 	}
-	for _, snap := range s.netmon.SnapshotAll() {
+	for _, snap := range s.mon.netmon.SnapshotAll() {
 		for _, d := range snap.Detectors {
 			if d.Kind != "ptp" || !strings.HasPrefix(d.Subject, "domain ") {
 				continue

@@ -92,8 +92,8 @@ func (s *Server) handleFactorySetup(w http.ResponseWriter, r *http.Request) {
 // on the link) rather than just the box's own configuration.
 func (s *Server) linkTrunkState(configState string) (state, detail string) {
 	state = configState
-	if state == "Flat" && s.trunkProbe != nil {
-		if vids := s.trunkProbe.VLANs(); len(vids) > 0 {
+	if state == "Flat" && s.mon.trunkProbe != nil {
+		if vids := s.mon.trunkProbe.VLANs(); len(vids) > 0 {
 			state = "Trunk"
 			detail = "tagged VLANs seen: " + joinInts(vids)
 		}
@@ -113,10 +113,10 @@ func (s *Server) shieldStatus(carrierState string) (state, detail string) {
 	if carrierState != "Active" {
 		return carrierState, ""
 	}
-	if s.rogueProbe == nil || !s.rogueProbe.Watching() {
+	if s.mon.rogueProbe == nil || !s.mon.rogueProbe.Watching() {
 		return "Unverified", ""
 	}
-	if ip, _, ok := s.rogueProbe.Server(); ok {
+	if ip, _, ok := s.mon.rogueProbe.Server(); ok {
 		return "Detected", ip
 	}
 	return "Active", ""

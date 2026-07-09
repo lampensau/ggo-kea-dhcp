@@ -112,7 +112,7 @@ type applyPlan struct {
 // (TestBeginApplyValidatesBeforeClaimingGuard pins this). The guard is claimed before any
 // persistent artifact so every irreversible step is serialized by one apply/switch.
 func (s *Server) prepareReconcile(renderScopes []kea.ScopeInput, snapLabel string) (string, error) {
-	in := s.baseRenderInput()
+	in := s.recon.baseRenderInput()
 	in.Scopes = renderScopes
 	// Validate on "*": a scope's eth0.<vid> interface isn't created until the reconcile,
 	// so a per-interface kea -t here would wrongly fail "interface doesn't exist"; the
@@ -133,7 +133,7 @@ func (s *Server) prepareReconcile(renderScopes []kea.ScopeInput, snapLabel strin
 	if !s.beginReconcile() {
 		return "", fmt.Errorf("Another profile change is already in progress.")
 	}
-	snapPath, err := s.snapshotKeaConf(snapLabel)
+	snapPath, err := s.recon.snapshotKeaConf(snapLabel)
 	if err != nil {
 		s.endReconcile()
 		return "", fmt.Errorf("Failed to snapshot the current configuration: %w", err)

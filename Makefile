@@ -34,7 +34,7 @@ GGO_VERSION ?= $(shell sed -n 's/.*Number = "\(.*\)".*/\1/p' internal/version/ve
 DEPLOY_HOST ?= 10.0.0.1
 DEPLOY_USER ?= timo
 
-.PHONY: generate build vet test all check cover-gate cover-floors pi deb deploy release
+.PHONY: generate build vet test all check cover-gate cover-floors move-check pi deb deploy release
 
 generate:
 	@[ -x "$(TEMPL)" ] || go install github.com/a-h/templ/cmd/templ@$(TEMPL_VERSION)
@@ -50,6 +50,12 @@ test: generate
 	go test $(GOFLAGS_VENDOR) -race -coverprofile=coverage.txt -covermode=atomic ./...
 
 all: generate build vet test
+
+# Assert a commit relocates code without changing or reordering it. Not part of
+# `check` - it only means something on a commit that is meant to be a pure move
+# (the refactor series isolates those). Usage: make move-check [COMMIT=<sha>]
+move-check:
+	@scripts/assert-move-only.sh $(or $(COMMIT),HEAD)
 
 # Mirror every CI gate locally so `make release` (and you) can confirm the tree
 # is clean and green before tagging: templ output committed, gofmt, vendor in
@@ -72,7 +78,7 @@ check: generate
 	@[ -x "$(GOVULNCHECK)" ] || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$(GOVULNCHECK) ./...
 	@if command -v shellcheck >/dev/null; then \
-		shellcheck -S error install.sh packaging/scripts/*.sh; \
+		shellcheck -S error install.sh packaging/scripts/*.sh scripts/*.sh; \
 	else \
 		echo "shellcheck not installed - skipping (CI still runs it)"; \
 	fi

@@ -20,8 +20,8 @@ import (
 const dhcpStandDownKey = "dhcp_standdown"
 
 // dhcpStoodDown reports whether the operator has stood DHCP down.
-func (s *Server) dhcpStoodDown() bool {
-	v, _ := s.sqlite.GetState(dhcpStandDownKey)
+func (r *reconciler) dhcpStoodDown() bool {
+	v, _ := r.sqlite.GetState(dhcpStandDownKey)
 	return v == "1"
 }
 
@@ -45,11 +45,11 @@ type rogueSighting struct {
 // error severity, across every served interface. Empty when netmon is absent
 // (dev sandbox) or nothing rogue is visible.
 func (s *Server) activeRogues() []rogueSighting {
-	if s.netmon == nil {
+	if s.mon.netmon == nil {
 		return nil
 	}
 	var out []rogueSighting
-	for _, snap := range s.netmon.SnapshotAll() {
+	for _, snap := range s.mon.netmon.SnapshotAll() {
 		for _, d := range snap.Detectors {
 			if d.Kind == "rogue_dhcp" && d.Severity == netmon.SevError {
 				count := 1
@@ -232,7 +232,7 @@ func rogueAuditDetail(rogues []rogueSighting) string {
 
 // renderHoldoffConfig renders the stand-down Kea config for the active profile's
 // served interfaces: Kea stays reachable but serves no subnet on any of them.
-func (s *Server) renderHoldoffConfig(scopes []ScopeConfig) (string, error) {
+func (r *reconciler) renderHoldoffConfig(scopes []ScopeConfig) (string, error) {
 	ifaces := make([]string, 0, len(scopes))
 	seen := map[string]bool{}
 	for _, sc := range scopes {
@@ -248,7 +248,7 @@ func (s *Server) renderHoldoffConfig(scopes []ScopeConfig) (string, error) {
 	}
 	return kea.RenderHoldoff(kea.HoldoffInput{
 		Interfaces:    ifaces,
-		KeaSecretPath: s.cfg.KeaSecretPath,
+		KeaSecretPath: r.cfg.KeaSecretPath,
 	})
 }
 
@@ -256,11 +256,11 @@ func (s *Server) renderHoldoffConfig(scopes []ScopeConfig) (string, error) {
 // holdoff (no subnets) when DHCP is stood down, else the active profile config.
 // reconcileActive and the stand-down/resume handlers both go through here, so a
 // reboot honors a persisted stand-down instead of silently resuming service.
-func (s *Server) keaConfigForState(scopes []ScopeConfig) (string, error) {
-	if s.dhcpStoodDown() {
-		return s.renderHoldoffConfig(scopes)
+func (r *reconciler) keaConfigForState(scopes []ScopeConfig) (string, error) {
+	if r.dhcpStoodDown() {
+		return r.renderHoldoffConfig(scopes)
 	}
-	cfg, _, err := s.renderKeaForScopes(scopes)
+	cfg, _, err := r.renderKeaForScopes(scopes)
 	return cfg, err
 }
 
@@ -304,7 +304,7 @@ func (s *Server) applyDHCPServingState() error {
 	// fallback (service restart + reachability probe) can take well over opCtx.
 	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
 	defer cancel()
-	return s.writeAndReloadKea(ctx, cfg)
+	return s.recon.writeAndReloadKea(ctx, cfg)
 }
 
 // scheduleServingReloadHeld applies the current serving state (holdoff or profile) to

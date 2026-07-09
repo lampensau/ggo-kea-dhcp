@@ -33,14 +33,14 @@ type zoneGate struct {
 // nextGen stamps a zone-rebuild dispatch with the next monotonic generation.
 func (g *zoneGate) nextGen() uint64 { return g.seq.Add(1) }
 
-// tryApply runs install (the SetZone) as last-writer-by-generation: gen 0
-// (unversioned callers/tests) always applies; otherwise a gen below the last applied
-// is refused so a stale detached rebuild cannot clobber a fresher zone. Reports whether
-// install ran, so a signature-tracking caller latches its sig only on a win.
+// tryApply runs install (the SetZone) as last-writer-by-generation: a gen below the
+// last applied is refused, so a stale detached rebuild cannot clobber a fresher zone.
+// Reports whether install ran, so a signature-tracking caller latches its sig only on
+// a win. Every caller stamps its dispatch with nextGen, which counts from 1.
 func (g *zoneGate) tryApply(gen uint64, install func()) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if gen != 0 && gen < g.appliedGen {
+	if gen < g.appliedGen {
 		return false
 	}
 	g.appliedGen = gen
@@ -60,8 +60,8 @@ func (g *zoneGate) latchSig(sig uint64) { g.sig.Store(sig) }
 // fragments instead of querying MariaDB twice per broadcast.
 func (s *Server) collectDNSHostsWith(leases []kea.ActiveLease, res map[string]db.HostReservation) map[string]string {
 	var devs []ggoscan.Device
-	if s.ggoscan != nil {
-		devs = s.ggoscan.Snapshot().Devices
+	if s.mon.ggoscan != nil {
+		devs = s.mon.ggoscan.Snapshot().Devices
 	}
 	return buildDNSHosts(devs, leases, res)
 }
@@ -199,10 +199,10 @@ func (s *Server) maybeRebuildDNSZone(ctx context.Context, leases []kea.ActiveLea
 // Scan addresses are the device's real lease/static IP (stable per device), so folding
 // them in triggers a rebuild only on a genuine re-IP, not on churn.
 func (s *Server) ggoScanIdentityByMAC() map[string]string {
-	if s.ggoscan == nil {
+	if s.mon.ggoscan == nil {
 		return nil
 	}
-	return scanIdentityByMAC(s.ggoscan.Snapshot().Devices)
+	return scanIdentityByMAC(s.mon.ggoscan.Snapshot().Devices)
 }
 
 // scanIdentityByMAC is the pure body of ggoScanIdentityByMAC: name+address per
