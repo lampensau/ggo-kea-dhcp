@@ -249,7 +249,6 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// the boot-only zero-scopes rescue. A nil-tolerant edge fails silently if left
 	// unwired, so TestNewServerWiresReconcilerEdges asserts every one is set.
 	s.recon = s.newReconciler()
-	s.recon.notifyDashboard = s.publishDashboard
 	s.recon.notifyBackend = s.publishBackendAlert
 	s.recon.primeZone = s.primeDNSZone
 	s.recon.kickUpdate = s.kickUpdateCheck

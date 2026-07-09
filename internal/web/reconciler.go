@@ -113,8 +113,6 @@ type reconciler struct {
 	uplink uplinkAudit
 
 	// --- web-side edges (nil-tolerant), wired by NewServer; nil in test Servers ---
-	// notifyDashboard pushes the SSE dashboard fragment after an apply/switch.
-	notifyDashboard func()
 	// notifyBackend re-renders the always-on backend-alert banner (uplink up/down).
 	notifyBackend func()
 	// primeZone rebuilds the DNS device zone from the freshly-served leases.
