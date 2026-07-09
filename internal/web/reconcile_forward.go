@@ -1,9 +1,6 @@
 package web
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 // serverHooks is the Server's side of appliance.Hooks: the reconciler's only path
 // back into the web layer, and so the only place the SSE hub, the DNS zone, the
@@ -47,10 +44,6 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 
 func (s *Server) stopActiveMonitors() { s.recon.StopActiveMonitors() }
 
-func (s *Server) runRecoveredAudited(name string, fn func()) {
-	s.recon.RunRecoveredAudited(name, fn)
-}
-
 func (s *Server) runRecoveredReconcile(name string, fn func()) {
 	s.recon.RunRecoveredReconcile(name, fn)
 }
@@ -71,8 +64,4 @@ func (s *Server) dhcpStoodDown() bool { return s.recon.DHCPStoodDown() }
 
 func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 	return s.recon.LoadScopeConfigs(profileID)
-}
-
-func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
-	s.recon.RemapReservationSubnets(ctx, scopes, mode)
 }
