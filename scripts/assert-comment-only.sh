@@ -12,15 +12,111 @@
 #   2. Directive equality. `//go:embed`, `//go:build`, `//nolint` are comments to the
 #      parser but CODE to the toolchain - check 1 passes happily when one is deleted,
 #      and internal/db/sqlite.go's `//go:embed migrations/*.sql` failing silently
-#      would empty the migrations FS. Compare the sorted directive lines verbatim.
+#      would empty the migrations FS.
+#
+# Check 2 compares each directive BOUND TO the declaration it governs, in file order.
+# A set comparison is not enough: moving a lone `//go:embed` onto the neighbouring var
+# leaves both the AST and the directive set identical while silently emptying the
+# original var, and two `//nolint`s trading places would likewise pass. Binding catches
+# the re-bind, order catches the swap. Neither sort nor a bare presence check would.
 #
 # Usage: scripts/assert-comment-only.sh [commit]   (default HEAD)
+#        scripts/assert-comment-only.sh --selftest (prove the checks still catch)
 #        ALLOW_NONGO=1 scripts/assert-comment-only.sh   (a sweep that also edits docs)
 # Exit 0 = comment-only; non-zero + a diff = code or a directive changed.
 set -e
 
-commit="${1:-HEAD}"
 root=$(git rev-parse --show-toplevel)
+
+# Canonical code, comments stripped. Deliberately NOT a pipeline: a pipeline's status
+# is its last command, so a failing `go run` (broken toolchain, unparseable source)
+# would be masked by a trailing filter and the script would compare two empty files
+# and declare them equal. stripcomments.go drops blank lines itself for this reason.
+strip() { go run "$root/scripts/stripcomments.go"; }
+
+# Emit `<directive> => <declaration it governs>` per directive, in file order. Blank
+# lines and ordinary comments between a directive and its declaration are skipped, so
+# rewording a doc comment above a var never disturbs the binding. A directive trailing
+# a code line is emitted with that whole line.
+#
+# ponytail: a `//go:` or `//nolint` appearing inside prose or a raw string binds like a
+# real directive. It compares to itself on both sides, so it only ever costs a false
+# FAIL (loud, never silent) if a sweep rewords that exact line. No such line exists here.
+directives() {
+    awk '
+        function isdir(s) { return s ~ /\/\/(go:|nolint)/ }
+        /^[ \t]*\/\// { if (isdir($0)) pend[++n] = $0; next }
+        /^[ \t]*$/    { next }
+        {
+            for (i = 1; i <= n; i++) print pend[i] " => " $0
+            n = 0
+            if (isdir($0)) print "trailing => " $0
+        }
+        END { for (i = 1; i <= n; i++) print pend[i] " => <EOF>" }
+    '
+}
+
+selftest() {
+    t=$(mktemp -d)
+    trap 'rm -rf "$t"' EXIT
+    mkdir -p "$t/scripts" "$t/migrations"
+    cp "$root/scripts/assert-comment-only.sh" "$root/scripts/stripcomments.go" "$t/scripts/"
+    touch "$t/migrations/001.sql"
+    cd "$t"
+    printf 'module t\n\ngo 1.24\n' > go.mod
+    git init -q . && git config user.email s@s && git config user.name s
+
+    fails=0
+    # want: "ok" = script must exit 0, "fail" = script must exit non-zero.
+    case_run() {
+        want=$1; label=$2
+        if scripts/assert-comment-only.sh >/dev/null 2>&1; then got=ok; else got=fail; fi
+        if [ "$got" = "$want" ]; then
+            echo "  PASS  $label (want $want)"
+        else
+            echo "  BROKEN  $label: want $want, got $got" >&2
+            fails=$((fails + 1))
+        fi
+    }
+
+    printf 'package p\n\n// doc\nfunc F() int { return 1 }\n' > a.go
+    git add -A && git commit -qm base
+    printf 'package p\n\n// reworded doc\nfunc F() int { return 1 }\n' > a.go
+    git commit -aqm x && case_run ok "comment reword"
+
+    printf 'package p\n\n// reworded doc\nfunc F() int { return 2 }\n' > a.go
+    git commit -aqm x && case_run fail "code change (1 -> 2)"
+
+    # The same code change with a broken toolchain must still FAIL, never pass silently.
+    printf 'package p\n\n// doc\nfunc F() int { return 3 }\n' > a.go
+    git commit -aqm x
+    if GOCACHE=/nonexistent-selftest scripts/assert-comment-only.sh >/dev/null 2>&1; then
+        echo "  BROKEN  broken toolchain reported OK on a code change" >&2
+        fails=$((fails + 1))
+    else
+        echo "  PASS  broken toolchain (want fail)"
+    fi
+
+    printf 'package p\n\nimport "embed"\n\n//go:embed migrations\nvar mig embed.FS\n\nvar other embed.FS\n' > e.go
+    git add -A && git commit -qm base-embed
+    printf 'package p\n\nimport "embed"\n\nvar mig embed.FS\n\n//go:embed migrations\nvar other embed.FS\n' > e.go
+    git commit -aqm x && case_run fail "//go:embed re-bound to another var"
+
+    printf 'package p\n\n//nolint:gosec\nfunc A() {}\n\n//nolint:errcheck\nfunc B() {}\n' > n.go
+    git add -A && git commit -qm base-nolint
+    printf 'package p\n\n//nolint:errcheck\nfunc A() {}\n\n//nolint:gosec\nfunc B() {}\n' > n.go
+    git commit -aqm x && case_run fail "two //nolint swapped between funcs"
+
+    printf 'package p\n\n//go:embed migrations\nvar mig2 embed.FS\n' > z.go
+    git add -A && git commit -qm x && case_run fail "adds a .go file"
+
+    [ "$fails" -eq 0 ] || { echo "SELFTEST FAILED ($fails)" >&2; exit 1; }
+    echo "OK: selftest passed - every check still catches what it is for"
+}
+
+[ "${1:-}" != "--selftest" ] || { selftest; exit 0; }
+
+commit="${1:-HEAD}"
 
 # `git show $commit^:f` silently means the FIRST parent on a merge, so the whole
 # comparison would be against the wrong side. Refuse rather than mislead.
@@ -43,16 +139,6 @@ fi
 files=$(git diff-tree --no-commit-id --name-only -r "$commit" -- '*.go')
 [ -n "$files" ] || { echo "no .go files touched by $commit"; exit 0; }
 
-# Canonical code, comments stripped. go/printer is fed a fresh FileSet so it cannot
-# reproduce the original line structure - the output is position-independent, which
-# is what makes a deleted comment invisible here. awk 'NF' drops the residual blanks.
-strip() { go run "$root/scripts/stripcomments.go" | awk 'NF'; }
-
-# ponytail: greps the raw source, so a `//go:` inside a string literal or block
-# comment would be counted as a directive. Harmless (it is compared to itself on both
-# sides) and no such string exists here; switch to an ast.CommentGroup scan if one appears.
-directives() { grep -E '^[[:space:]]*//(go:|nolint)' || true; }
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 rc=0
@@ -61,20 +147,23 @@ for f in $files; do
     git show "$commit^:$f" > "$tmp/before.go"
     git show "$commit:$f"  > "$tmp/after.go"
 
-    strip < "$tmp/before.go" > "$tmp/before.code"
-    strip < "$tmp/after.go"  > "$tmp/after.code"
+    if ! strip < "$tmp/before.go" > "$tmp/before.code" || ! strip < "$tmp/after.go" > "$tmp/after.code"; then
+        echo "FAIL: $f could not be normalized (toolchain broken, or source does not parse)" >&2
+        rc=1
+        continue
+    fi
     if ! diff -u --label "$f (before)" --label "$f (after)" "$tmp/before.code" "$tmp/after.code"; then
         echo "FAIL: $f changed CODE, not just comments" >&2
         rc=1
     fi
 
-    directives < "$tmp/before.go" | sort > "$tmp/before.dir"
-    directives < "$tmp/after.go"  | sort > "$tmp/after.dir"
+    directives < "$tmp/before.go" > "$tmp/before.dir"
+    directives < "$tmp/after.go"  > "$tmp/after.dir"
     if ! diff -u --label "$f directives (before)" --label "$f directives (after)" "$tmp/before.dir" "$tmp/after.dir"; then
-        echo "FAIL: $f changed a toolchain directive (//go: or //nolint)" >&2
+        echo "FAIL: $f changed a toolchain directive (//go: or //nolint) or what it binds to" >&2
         rc=1
     fi
 done
 
 [ "$rc" -eq 0 ] || exit "$rc"
-echo "OK: $commit is comment-only ($(echo "$files" | wc -w) files, code + directives byte-identical)"
+echo "OK: $commit is comment-only ($(echo "$files" | wc -w) files, code + bound directives byte-identical)"
