@@ -57,7 +57,7 @@ const (
 
 // IsCatchAll reports whether class is one of the two unmatched-device safety nets.
 // Their pools are non-removable in the editor, so no device is ever left without a
-// pool, and so without a lease.
+// pool, and thus without a lease.
 func IsCatchAll(class string) bool {
 	return class == ClassNameGGOOthers || class == ClassNameOthers
 }
@@ -135,9 +135,8 @@ func GGOOthersTest(pooled []DeviceClass) string {
 
 // ClientClasses renders the GLOBAL ordered set of Kea client-classes: every mapped
 // device band, then OTHERS (the non-Green-GO pool). The Green-GO catch-all GGO-OTHERS
-// is NOT global - it is generated PER SCOPE in RenderProfile (GGO-OTHERS-<idx>) with a
-// scope-relative test (see GGOOthersTest) so a classified device is not a member of the
-// catch-all pool in a scope that already pools its type.
+// is NOT global - RenderProfile generates it PER SCOPE (GGO-OTHERS-<idx>) with a
+// scope-relative test; see GGOOthersTest for why.
 func ClientClasses() []ClientClassConfig {
 	classes := make([]ClientClassConfig, 0, len(DeviceClasses)+1)
 	for _, dc := range DeviceClasses {

@@ -15,9 +15,9 @@ import (
 // --- Kea config JSON shape (marshalled, not string-templated) ---
 //
 // These private structs mirror the `Dhcp4` configuration object. Emitting them through
-// encoding/json makes commas, nesting and value escaping the encoder's job: a MariaDB
-// password or SSID holding a quote or backslash can no longer produce invalid JSON, and
-// an added optional field never reopens hand-managed comma logic.
+// encoding/json makes the JSON syntax the encoder's job: a MariaDB password or SSID
+// holding a quote or backslash cannot produce invalid config, and an added field
+// reopens no hand-managed comma logic.
 
 type keaConfig struct {
 	Dhcp4 dhcp4Config `json:"Dhcp4"`
@@ -177,13 +177,12 @@ type TemplateData struct {
 	KeaSecretPath string
 	ClientClasses []ClientClassConfig
 	Subnets       []SubnetConfig
-	// Lease timers (seconds); zero leaves them unset (Kea defaults). See
-	// defaultLeaseLifetime; onboarding leaves them zero.
+	// Lease timers (seconds); zero leaves them unset (onboarding). See defaultLeaseLifetime.
 	ValidLifetime int
 	RenewTimer    int
 	RebindTimer   int
-	// Debug raises Kea logging to DEBUG/debuglevel 99. Default (false) renders INFO so
-	// production boxes don't hammer the SD card / fill the disk.
+	// Debug raises Kea logging to DEBUG/debuglevel 99. Default (false) renders
+	// INFO so production boxes don't hammer the SD card / fill the disk.
 	Debug bool
 }
 
@@ -265,8 +264,8 @@ func hostsDB(data TemplateData) *hostsDatabase {
 	}
 }
 
-// buildHooks lists the hooks libraries in load order. The MySQL host-backend hooks are
-// conditional (hasDB) so the onboarding config loads without MariaDB present.
+// buildHooks lists the hooks libraries in load order. Each conditional block below says why
+// it is conditional.
 func buildHooks(hooksDir string, portPinning, hasDB bool) []hookLibrary {
 	var hooks []hookLibrary
 	if portPinning {

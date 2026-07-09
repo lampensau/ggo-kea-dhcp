@@ -15,8 +15,8 @@ import (
 type ScopeInput struct {
 	VlanID int    // 0 = untagged on eth0; otherwise eth0.<vid>
 	CIDR   string // e.g. "10.0.0.0/23"
-	// PoolPlan is the authoritative ordered pool plan, rendered via LayoutPools. The web
-	// layer always seeds one, so RenderProfile rejects a scope without it.
+	// PoolPlan is the authoritative ordered pool plan, rendered via LayoutPools.
+	// Required: RenderProfile rejects a scope without one.
 	PoolPlan []PoolSpec
 	Uplink   bool // hand out the DERIVED gateway + DNS fallback when true
 	// Gateway/DNS are explicit per-scope overrides (routers / domain-name-servers) and
@@ -35,23 +35,24 @@ type ScopeInput struct {
 }
 
 // defaultLeaseLifetime is the active-profile lease lifetime (seconds) when none is
-// configured. A device only re-DHCPs at the renew timer (T1), and that renewal is when it
-// adopts a freshly-created host reservation OR migrates into its correct device-class pool
-// after a class/pool change (its old, now-disallowed lease is NAKed). ~30 min keeps that
-// window reasonable while riding through a Kea restart and staying gentle on the SD card;
-// override via --lease-lifetime. Onboarding uses onboardingLeaseLifetime instead.
+// configured. ~30 min keeps the T1 change-latency (see leaseTimers) reasonable while still
+// letting devices ride through a Kea restart and staying gentle on the SD card; override
+// via --lease-lifetime. Onboarding uses onboardingLeaseLifetime instead.
 const defaultLeaseLifetime = 1800
 
 // onboardingLeaseLifetime is the SHORT lease (seconds) the transient onboarding config hands
 // out. After a setup-apply re-IPs the box, the operator's device drops its old lease - and
-// the now-stale default gateway it carried - within ~T1 (~45s) and re-DHCPs into the new
-// subnet, so the reconnect interstitial lands quickly rather than waiting out Kea's 2h
-// default (the cause of the lingering-gateway / slow-reconnect behaviour).
+// the now-stale default gateway it carried - at T1 (~45s) and re-DHCPs into the new subnet,
+// so the reconnect interstitial lands quickly rather than waiting out Kea's 2h default (the
+// cause of the lingering-gateway / slow-reconnect behaviour).
 const onboardingLeaseLifetime = 90
 
 // leaseTimers derives (valid, renew, rebind) from a lease lifetime in seconds using the
 // conventional T1 = 1/2 and T2 = 7/8 of the lifetime. A non-positive lifetime falls back
 // to the default.
+// T1, not the lifetime, is the latency of every change that only lands on renewal, because a
+// device re-DHCPs then: adopting a freshly-created host reservation, or migrating into its
+// correct device-class pool after a class/pool change (its old, now-disallowed lease is NAKed).
 func leaseTimers(lifetime int) (valid, renew, rebind int) {
 	if lifetime <= 0 {
 		lifetime = defaultLeaseLifetime
@@ -180,7 +181,8 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 	var subnets []SubnetConfig
 	// Per-pool vendor classes generated from custom pools' OUIs, appended to the built-in
 	// Green-GO classes. One pool with OUIs yields one client-class OR-matching them, and
-	// guards that pool. Order a vendor pool BEFORE the OTHERS catch-all to be preferred.
+	// guards that pool. Devices match by OUI, so a vendor pool must be ordered BEFORE the
+	// OTHERS catch-all for its devices to prefer it.
 	var vendorClasses []ClientClassConfig
 
 	for idx, sc := range in.Scopes {
