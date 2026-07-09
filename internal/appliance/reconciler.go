@@ -84,16 +84,19 @@ const ReconcileBusyMsg = "A configuration change is already in progress - try ag
 // state match the persisted lifecycle state and runs the apply/switch converges.
 // It holds only control-plane primitives (config, the two databases, the Kea
 // client, DNS, the network manager, the monitor set) plus the mutation guards; it
-// reaches the web layer (uplink announce, DNS-zone prime, update checks, monitor
-// starts, pinned-port reads) ONLY through the func edges below. Those edges are the
-// one seam that will become a package boundary when this type moves to
-// internal/appliance.
+// reaches its caller (uplink announce, DNS-zone prime, update checks, monitor starts)
+// ONLY through the func edges below. Those edges ARE the package boundary: nothing in
+// here may import the web layer.
 //
-// The edges come in two kinds. NewServer wires the production-only side effects,
-// and each of those is nil-tolerant: a nil edge is a no-op, so a converge in a test
-// never reaches SSE, the DNS zone or the update path. newReconciler itself wires the
-// three monitor starts, which are therefore never nil and are called unguarded - a
-// hand-built &Reconciler{} that skips newReconciler must not drive reconcileActive.
+// The edges come in two kinds. The caller sets the production-only side effects after
+// construction, and each of those is nil-tolerant: a nil edge is a no-op, so a converge
+// in a test never reaches SSE, the DNS zone or the update path. New requires the three
+// monitor starts, which are therefore never nil and are called unguarded - a hand-built
+// &Reconciler{} that skips New must not drive reconcileActive.
+//
+// All six are written once, before any converge runs, and read afterwards from the
+// background goroutines a converge spawns. They are NOT synchronized: assigning one on
+// a running appliance is a data race.
 type Reconciler struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB
@@ -117,7 +120,7 @@ type Reconciler struct {
 	// = unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
 
-	// --- web-side edges (nil-tolerant), wired by NewServer; nil in test Servers ---
+	// --- caller-side edges (nil-tolerant), set after New; nil in a bare test Reconciler ---
 	// AnnounceUplink records the uplink's up/down state in backend-health AND
 	// re-renders the always-on #backend-alert banner. One edge, not two, because
 	// they are only ever right together: flipping the state without the push leaves
@@ -129,29 +132,37 @@ type Reconciler struct {
 	// KickUpdate fires an out-of-band release check when the box gains uplink.
 	KickUpdate func()
 	// StartGgoScan/StartNetmon/StartArpProber start the ACTIVE observers; they stay
-	// in web because their spec builders read the web-owned lease providers. Unlike
-	// the edges above these are set by newReconciler itself, so they are never nil
-	// and their call sites do not guard.
+	// with the caller because their spec builders read its lease providers. Unlike the
+	// edges above, New requires them (see Monitors), so they are never nil and their
+	// call sites do not guard.
 	StartGgoScan   func(scopes []ScopeConfig)
 	StartNetmon    func(scopes []ScopeConfig)
 	StartArpProber func(scopes []ScopeConfig)
 }
 
-// New builds the lifecycle Reconciler from the caller's shared control-plane handles
-// and wires the monitor-start edges. Those three are wired here, not by the caller,
-// because they are always safe (each early-returns when its monitor is absent and
-// touches no SSE/network): a converge in a unit test starts a faked monitor exactly
-// as production does, and reconcileActive can call them unguarded. The remaining
-// edges - uplink announce, DNS-zone prime, update kick - are production-only side
-// effects the caller sets on the returned value; a bare test Reconciler leaves them
-// nil (every call site guards).
+// New builds the lifecycle Reconciler from the caller's shared control-plane handles.
+// The monitor starts are required and are called unguarded by reconcileActive; the
+// remaining edges - uplink announce, DNS-zone prime, update kick - are production-only
+// side effects the caller sets on the returned value, and every call site guards them,
+// so a bare test Reconciler leaves them nil and reaches no SSE hub, zone, or updater.
 //
 // The control-plane handles are ALIASED, not owned: the Reconciler reads whatever
 // kea/dns/... pointed at when it was built, for the process lifetime. Nothing in
 // production rebinds them, so there is one appliance and one guard. Code that does
 // rebind one must rebuild the Reconciler, or the two halves diverge - the converge
 // tests swap in an httptest Kea and re-call New for exactly that reason.
-func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *kea.Client, dnsSrv *dns.Server, netMgr *network.Manager, mon *MonitorSet, StartNetmon, StartArpProber, StartGgoScan func(scopes []ScopeConfig)) *Reconciler {
+// Monitors carries the three ACTIVE-only observer starts. A struct rather than three
+// positional func parameters of the same type: transposing two of those compiles clean
+// and silently starts the wrong observer against the wrong spec set (netmon twice, the
+// ARP prober never), and each start early-returns when its monitor is absent, so the
+// mistake never surfaces. Named fields make it a compile error.
+type Monitors struct {
+	Netmon  func(scopes []ScopeConfig)
+	Arp     func(scopes []ScopeConfig)
+	GgoScan func(scopes []ScopeConfig)
+}
+
+func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *kea.Client, dnsSrv *dns.Server, netMgr *network.Manager, mon *MonitorSet, starts Monitors) *Reconciler {
 	// Fail fast rather than degrade: a caller that builds the Reconciler before it has
 	// set one of these handles would otherwise drive a different appliance than the one
 	// it renders from, silently. mariadb is the one legitimate nil (a documented
@@ -169,6 +180,9 @@ func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *k
 		panic("appliance.New: nil network manager")
 	case mon == nil:
 		panic("appliance.New: nil monitor set")
+	case starts.Netmon == nil || starts.Arp == nil || starts.GgoScan == nil:
+		// reconcileActive calls these unguarded, on the strength of this check.
+		panic("appliance.New: nil monitor start")
 	}
 	return &Reconciler{
 		cfg:            cfg,
@@ -178,9 +192,9 @@ func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *k
 		dns:            dnsSrv,
 		net:            netMgr,
 		mon:            mon,
-		StartGgoScan:   StartGgoScan,
-		StartNetmon:    StartNetmon,
-		StartArpProber: StartArpProber,
+		StartGgoScan:   starts.GgoScan,
+		StartNetmon:    starts.Netmon,
+		StartArpProber: starts.Arp,
 	}
 }
 
@@ -905,7 +919,7 @@ func (r *Reconciler) MigrateUplinkToBoxLevel() {
 	if v, _ := r.sqlite.GetState("uplink_enabled"); v != "" {
 		return
 	}
-	_, cfg, ok := r.ActiveProfileUplink()
+	_, cfg, ok := r.activeProfileUplink()
 	if !ok || cfg.SSID == "" {
 		return
 	}

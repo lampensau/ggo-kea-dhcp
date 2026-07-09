@@ -44,8 +44,11 @@ func newTestServer(t testing.TB) (*Server, *network.RecordingCommander) {
 	}
 	// The reconciler shares the Server's handles; its web-side edges stay nil so a
 	// converge in a unit test never reaches the SSE hub, DNS zone, or update path.
-	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon,
-		s.startNetmon, s.startArpProber, s.startGgoScan)
+	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, appliance.Monitors{
+		Netmon:  s.startNetmon,
+		Arp:     s.startArpProber,
+		GgoScan: s.startGgoScan,
+	})
 	return s, rec
 }
 

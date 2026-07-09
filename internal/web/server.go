@@ -87,10 +87,11 @@ type Server struct {
 	lastLeasesMu sync.Mutex
 	lastLeases   []kea.ActiveLease
 	// recon is the lifecycle state machine (converge/apply/switch, the mutation
-	// guard, the zero-scopes rescue window, the uplink-audit debounce). Built by
-	// NewServer from the shared control-plane handles; the handlers drive it
-	// through the thin forwarders in reconcile_forward.go, and it reaches back
-	// into the web layer only through its nil-tolerant edges (wired in NewServer).
+	// guard, the zero-scopes rescue window, the uplink-audit debounce), which lives
+	// in internal/appliance. Built by NewServer from the shared control-plane
+	// handles; the handlers drive it through the thin forwarders in
+	// reconcile_forward.go, and it reaches back into the web layer only through its
+	// nil-tolerant edges (wired in NewServer).
 	recon *appliance.Reconciler
 	// updating guards the self-update install path: claimed by POST /update/install
 	// (alongside the applying guard) and held until the updater reports a result or
@@ -216,12 +217,17 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.health = newBackendHealth()
 	s.bg = newBgRunner()
 	s.ggoFw = newFwCensus()
-	// Build the lifecycle reconciler from the shared control-plane handles, then
-	// wire its web-side edges - the ONLY way it reaches SSE, the DNS zone, the
-	// update subsystem, the monitor starts, backend-health, and pinning - and arm
-	// the boot-only zero-scopes rescue. A nil-tolerant edge fails silently if left
-	// unwired, so TestNewServerWiresReconcilerEdges asserts every one is set.
-	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, s.startNetmon, s.startArpProber, s.startGgoScan)
+	// Build the lifecycle reconciler from the shared control-plane handles, then wire
+	// its web-side edges - the ONLY way it reaches SSE, the DNS zone, backend-health
+	// and the update subsystem - and arm the boot-only zero-scopes rescue. A
+	// nil-tolerant edge fails silently if left unwired, so
+	// TestNewServerWiresReconcilerEdges asserts every one is set. The monitor starts
+	// are not edges: appliance.New requires them.
+	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, appliance.Monitors{
+		Netmon:  s.startNetmon,
+		Arp:     s.startArpProber,
+		GgoScan: s.startGgoScan,
+	})
 	s.recon.AnnounceUplink = func(down bool, detail string) {
 		s.health.setUplinkDown(down, detail)
 		s.publishBackendAlert()

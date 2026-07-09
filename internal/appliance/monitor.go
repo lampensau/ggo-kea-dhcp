@@ -8,13 +8,13 @@ import (
 
 // MonitorSet owns the appliance's background network observers. The Reconciler
 // holds one and drives their lifecycle across the lifecycle transitions; every
-// field is nil-safe so a dev sandbox (no CAP_NET_RAW) or a bare test Server can
+// field is nil-safe so a dev sandbox (no CAP_NET_RAW) or a bare zero value can
 // start/stop without special-casing. The stop discipline lives here so a
 // lifecycle fix cannot land in one exit path and strand the others.
 //
-// Fields are written once (NewServer) and only read after, which is what lets
-// Server hold this by value: the zero value is a usable empty set, and the
-// Reconciler points at the Server's copy, so no nil *MonitorSet ever exists.
+// Fields are written once by the constructing caller and only read after, which is
+// what lets that caller hold this by value: the zero value is a usable empty set, and
+// the Reconciler points at the caller's copy, so no nil *MonitorSet ever exists.
 type MonitorSet struct {
 	// Netmon is the passive network-health monitor. It runs only while ACTIVE, is
 	// a read-only observer that never touches Kea, and feeds the dashboard's
@@ -40,7 +40,7 @@ type MonitorSet struct {
 
 // StopActive tears down the ACTIVE-only observers (passive monitor, ARP prober,
 // Green-GO scanner). Idempotent; each field is nil-checked, since a dev sandbox or a
-// bare test Server leaves them unset. The port-53 DNS listeners are NOT stopped here -
+// zero-value set leaves them unset. The port-53 DNS listeners are NOT stopped here -
 // the Reconciler owns dns and stops it alongside this call (see
 // Reconciler.StopActiveMonitors).
 func (m *MonitorSet) StopActive() {
@@ -66,7 +66,7 @@ func (m *MonitorSet) StopOnboarding() {
 	}
 }
 
-// DeviceScanner is the subset of *ggoscan.Scanner the web layer drives. Declaring the
+// DeviceScanner is the subset of *ggoscan.Scanner the reconciler drives. Declaring the
 // field as an interface lets a test inject a fake inventory and capture the reboot send
 // without opening a real socket. *ggoscan.Scanner satisfies it.
 type DeviceScanner interface {
@@ -76,7 +76,7 @@ type DeviceScanner interface {
 	SendReboot(ip string) error
 }
 
-// PresenceProber is the subset of *arpscan.Prober the web layer drives, seamed for the
+// PresenceProber is the subset of *arpscan.Prober the reconciler drives, seamed for the
 // same reason: a test can report presence and the live MAC at an IP. *arpscan.Prober
 // satisfies it.
 type PresenceProber interface {

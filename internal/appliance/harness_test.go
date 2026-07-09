@@ -16,6 +16,8 @@ import (
 // machine without touching the host or a real Kea. The web-side edges stay nil, so a
 // converge here never reaches the SSE hub, the DNS zone, or the update path. This is
 // the payoff of the package split: no HTTP server is needed to test the lifecycle.
+func noopStart([]ScopeConfig) {}
+
 func newTestReconciler(t testing.TB) (*Reconciler, *network.RecordingCommander) {
 	t.Helper()
 	dir := t.TempDir()
@@ -39,7 +41,7 @@ func newTestReconciler(t testing.TB) (*Reconciler, *network.RecordingCommander) 
 		dns.New(""),
 		network.NewManagerWithCommander(rec),
 		&MonitorSet{},
-		func([]ScopeConfig) {}, func([]ScopeConfig) {}, func([]ScopeConfig) {},
+		Monitors{Netmon: noopStart, Arp: noopStart, GgoScan: noopStart},
 	)
 	return r, rec
 }
@@ -61,15 +63,15 @@ func TestNewRejectsNilHandles(t *testing.T) {
 	dnsSrv := dns.New("")
 	netMgr := network.NewManagerWithCommander(&network.RecordingCommander{})
 	mon := &MonitorSet{}
-	noop := func([]ScopeConfig) {}
+	starts := Monitors{Netmon: noopStart, Arp: noopStart, GgoScan: noopStart}
 
 	cases := map[string]func(){
-		"nil config":          func() { New(nil, sqlite, nil, keaCli, dnsSrv, netMgr, mon, noop, noop, noop) },
-		"nil sqlite":          func() { New(cfg, nil, nil, keaCli, dnsSrv, netMgr, mon, noop, noop, noop) },
-		"nil kea client":      func() { New(cfg, sqlite, nil, nil, dnsSrv, netMgr, mon, noop, noop, noop) },
-		"nil dns server":      func() { New(cfg, sqlite, nil, keaCli, nil, netMgr, mon, noop, noop, noop) },
-		"nil network manager": func() { New(cfg, sqlite, nil, keaCli, dnsSrv, nil, mon, noop, noop, noop) },
-		"nil monitor set":     func() { New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, nil, noop, noop, noop) },
+		"nil config":          func() { New(nil, sqlite, nil, keaCli, dnsSrv, netMgr, mon, starts) },
+		"nil sqlite":          func() { New(cfg, nil, nil, keaCli, dnsSrv, netMgr, mon, starts) },
+		"nil kea client":      func() { New(cfg, sqlite, nil, nil, dnsSrv, netMgr, mon, starts) },
+		"nil dns server":      func() { New(cfg, sqlite, nil, keaCli, nil, netMgr, mon, starts) },
+		"nil network manager": func() { New(cfg, sqlite, nil, keaCli, dnsSrv, nil, mon, starts) },
+		"nil monitor set":     func() { New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, nil, starts) },
 	}
 	for name, build := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -82,8 +84,18 @@ func TestNewRejectsNilHandles(t *testing.T) {
 		})
 	}
 
+	// A nil monitor start is a programming error too: reconcileActive calls them unguarded.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("New accepted a nil monitor start; reconcileActive calls them unguarded")
+			}
+		}()
+		New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, mon, Monitors{Netmon: noopStart, Arp: noopStart})
+	}()
+
 	// MariaDB absent is a supported degraded mode, not a programming error.
-	r := New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, mon, noop, noop, noop)
+	r := New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, mon, starts)
 	if r == nil {
 		t.Fatal("New must accept a nil MariaDB (documented degraded mode)")
 	}
@@ -105,9 +117,9 @@ func TestNewSharesHandles(t *testing.T) {
 	dnsSrv := dns.New("")
 	netMgr := network.NewManagerWithCommander(&network.RecordingCommander{})
 	mon := &MonitorSet{}
-	noop := func([]ScopeConfig) {}
+	starts := Monitors{Netmon: noopStart, Arp: noopStart, GgoScan: noopStart}
 
-	r := New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, mon, noop, noop, noop)
+	r := New(cfg, sqlite, nil, keaCli, dnsSrv, netMgr, mon, starts)
 	if r.cfg != cfg || r.sqlite != sqlite || r.kea != keaCli || r.dns != dnsSrv || r.net != netMgr || r.mon != mon {
 		t.Error("New did not store the handles it was given")
 	}

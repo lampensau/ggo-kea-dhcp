@@ -24,11 +24,11 @@ func (r *Reconciler) GlobalDHCPOptionsFor() GlobalDHCPOptions {
 	return g
 }
 
-// ActiveProfileUplink returns the active profile's id and its uplink config. The
+// activeProfileUplink returns the active profile's id and its uplink config. The
 // uplink is conceptually one per box; it is persisted on every scope row, so we
 // return the first enabled scope's uplink (else the first scope's). ok is false
 // when there is no active profile or it has no scopes.
-func (r *Reconciler) ActiveProfileUplink() (profileID int, cfg UplinkConfig, ok bool) {
+func (r *Reconciler) activeProfileUplink() (profileID int, cfg UplinkConfig, ok bool) {
 	if err := r.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err != nil {
 		return 0, UplinkConfig{}, false
 	}

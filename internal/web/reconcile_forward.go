@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-// Thin Server -> reconciler forwarders. The lifecycle state machine lives on
-// *reconciler (see reconciler.go); these keep the handler and background call
-// sites that still speak to *Server compiling unchanged while the reconciler owns
-// the logic. They carry no behavior of their own - each is a one-line delegate.
+// Thin Server -> Reconciler forwarders. The lifecycle state machine lives in
+// internal/appliance; these keep the handler and background call sites that speak to
+// *Server compiling unchanged while the appliance owns the logic. They carry no
+// behavior of their own - each is a one-line delegate.
 //
 // Only names with several callers (or callers in tests) earn a forwarder; a lone
 // call site says s.recon.X() outright rather than paying for one here.

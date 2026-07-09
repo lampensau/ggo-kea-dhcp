@@ -46,7 +46,7 @@ type PortIdent struct {
 // normal client-id (0x01 + MAC), an empty id, or a 0x00-only id - none are Option-82
 // ports and must not be listed as learnable/pinnable (that produced phantom ports).
 func DecodePortIdentity(clientID string) (PortIdent, bool) {
-	raw := DecodeHex(clientID)
+	raw := decodeHex(clientID)
 	if len(raw) < 2 || raw[0] != 0x00 {
 		return PortIdent{}, false
 	}
@@ -116,7 +116,7 @@ func CapacityOf(lo, hi uint32) int {
 	return int(int64(hi) - int64(lo) + 1)
 }
 
-func DecodeHex(h string) string {
+func decodeHex(h string) string {
 	h = strings.ReplaceAll(h, ":", "")
 	b, err := hex.DecodeString(h)
 	if err != nil {

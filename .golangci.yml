@@ -8,6 +8,7 @@ linters:
     - bodyclose      # HTTP response bodies left unclosed (kea control client)
     - sqlclosecheck  # sql.Rows/Stmt left unclosed (db, backup, reservations)
     - errorlint      # correct error wrapping: %w, errors.As/Is
+    - depguard       # keep the appliance/web import direction one-way
 
   exclusions:
     presets:
@@ -44,6 +45,22 @@ linters:
         text: SA4000
 
   settings:
+    depguard:
+      rules:
+        # internal/appliance is the control-plane domain: it must never import the web
+        # layer. The appliance -> web direction is already a compile error (web imports
+        # appliance), but appliance -> web/views is NOT: views imports only kea, so it
+        # would compile. views is exactly the dependency this package had to dissolve
+        # (seedPlan called views.ClassDisplay for a label), so deny it explicitly.
+        appliance-is-not-web:
+          files:
+            - "**/internal/appliance/*.go"
+          deny:
+            - pkg: ggo-kea-dhcp/internal/web
+              desc: the appliance owns the control plane and must not reach the web layer
+            - pkg: ggo-kea-dhcp/internal/web/views
+              desc: display types belong to web; use kea.ClassMetadata and friends instead
+
     staticcheck:
       # golangci's default disables ST1000/1003/1016/1020/1021/1022; overriding
       # `checks` re-enables them, so they are re-listed. -ST1005 is ours: error

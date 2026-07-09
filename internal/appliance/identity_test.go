@@ -94,13 +94,13 @@ func TestRenderIDPart(t *testing.T) {
 }
 
 func TestDecodeHex(t *testing.T) {
-	if got := DecodeHex("4869"); got != "Hi" {
-		t.Errorf("DecodeHex(4869)=%q want Hi", got)
+	if got := decodeHex("4869"); got != "Hi" {
+		t.Errorf("decodeHex(4869)=%q want Hi", got)
 	}
-	if got := DecodeHex("48:69"); got != "Hi" {
+	if got := decodeHex("48:69"); got != "Hi" {
 		t.Errorf("decodeHex with colons =%q want Hi", got)
 	}
-	if got := DecodeHex("zzz"); got != "zzz" {
-		t.Errorf("DecodeHex(invalid) =%q want passthrough", got)
+	if got := decodeHex("zzz"); got != "zzz" {
+		t.Errorf("decodeHex(invalid) =%q want passthrough", got)
 	}
 }

@@ -1,11 +1,6 @@
 package web
 
-import (
-	"context"
-
-	"ggo-kea-dhcp/internal/appliance"
-	"ggo-kea-dhcp/internal/db"
-)
+import "ggo-kea-dhcp/internal/appliance"
 
 // The lifecycle state machine lives in internal/appliance. These aliases and thin
 // wrappers keep the ~15 web files that name its types, and the many that call its
@@ -65,6 +60,3 @@ func parseScopeServices(gateway, dns, lease, localDNS string, optNames, optData 
 const defaultSizePreset = appliance.DefaultSizePreset
 
 var goSizePresets = appliance.GoSizePresets
-
-var _ = context.Background
-var _ db.HostReservation
