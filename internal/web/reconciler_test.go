@@ -66,7 +66,6 @@ func newTestServer(t testing.TB) (*Server, *network.RecordingCommander) {
 		kea:      kea.NewClient("http://127.0.0.1:1/", "gui", "x"),
 		dns:      dns.New(""),
 		net:      network.NewManagerWithCommander(rec),
-		mon:      &monitorSet{},
 		bg:       newBgRunner(),
 		lastSeen: newLastSeenTracker(),
 		ggoFw:    newFwCensus(),
@@ -110,6 +109,21 @@ func TestNewServerWiresReconcilerEdges(t *testing.T) {
 	}
 	if wired == 0 {
 		t.Fatal("no func-typed edges found on reconciler - test can no longer guard wiring")
+	}
+
+	// The reconciler aliases the Server's control-plane handles rather than owning
+	// them. If NewServer is ever reordered to build the reconciler before one of
+	// these is set, the two halves silently drive different appliances - the
+	// reconciler reconfiguring a Kea nobody reads, or stopping a monitor set the
+	// dashboard still renders. Cheap to assert, invisible to catch otherwise.
+	if s.recon.kea != s.kea || s.recon.dns != s.dns || s.recon.net != s.net {
+		t.Error("reconciler does not share the Server's kea/dns/net handles")
+	}
+	if s.recon.sqlite != s.sqlite || s.recon.cfg != s.cfg {
+		t.Error("reconciler does not share the Server's sqlite/cfg handles")
+	}
+	if s.recon.mon != &s.mon {
+		t.Error("reconciler does not point at the Server's monitorSet - monitor starts and reads would diverge")
 	}
 }
 

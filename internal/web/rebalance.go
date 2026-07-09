@@ -122,7 +122,10 @@ func (r *reconciler) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease
 	} else {
 		log.Printf("[Rebalance] reservation read failed: %v", err)
 	}
-	pinnedKeys := r.pinnedPortKeys(ctx)
+	var pinnedKeys map[string]bool
+	if r.pinnedPortKeys != nil {
+		pinnedKeys = r.pinnedPortKeys(ctx)
+	}
 	for _, l := range leases {
 		if resMACs[normalizeMAC(l.HWAddress)] {
 			fixed[l.IPAddress] = true

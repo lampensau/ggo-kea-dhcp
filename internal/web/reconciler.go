@@ -135,9 +135,15 @@ type reconciler struct {
 // plane handles and wires the monitor-start edges. Those three are always safe
 // (each early-returns when its monitor is absent and touches no SSE/network), so
 // a converge in a unit test starts a faked monitor exactly as production does. The
-// remaining edges - SSE push, backend alert, DNS-zone prime, update kick, uplink
-// health, pinning - are production-only side effects that NewServer wires on top;
-// a bare test reconciler leaves them nil (no-op).
+// remaining edges - backend alert, DNS-zone prime, update kick, uplink health,
+// pinned-port reads - are production-only side effects that NewServer wires on top;
+// a bare test reconciler leaves them nil (every call site guards).
+//
+// The control-plane handles are ALIASED, not owned: the reconciler reads whatever
+// s.kea/s.dns/... pointed at when it was built, for the process lifetime. Nothing in
+// production rebinds them after NewServer, so there is one appliance and one guard.
+// Code that does rebind one must rebuild the reconciler, or the two halves diverge -
+// the converge tests swap in an httptest Kea and re-call this for exactly that reason.
 func (s *Server) newReconciler() *reconciler {
 	return &reconciler{
 		cfg:            s.cfg,
@@ -146,7 +152,7 @@ func (s *Server) newReconciler() *reconciler {
 		kea:            s.kea,
 		dns:            s.dns,
 		net:            s.net,
-		mon:            s.mon,
+		mon:            &s.mon,
 		startGgoScan:   s.startGgoScan,
 		startNetmon:    s.startNetmon,
 		startArpProber: s.startArpProber,

@@ -7,6 +7,11 @@ import "ggo-kea-dhcp/internal/netmon"
 // field is nil-safe so a dev sandbox (no CAP_NET_RAW) or a bare test Server can
 // start/stop without special-casing. The stop discipline lives here so a
 // lifecycle fix cannot land in one exit path and strand the others.
+//
+// Fields are written once (NewServer) and only read after, which is what lets
+// Server hold this by value: the zero value is a usable empty set. The stop
+// methods additionally tolerate a nil receiver, for the hand-built reconcilers in
+// tests that never populate one.
 type monitorSet struct {
 	// netmon is the passive network-health monitor. It runs only while ACTIVE, is
 	// a read-only observer that never touches Kea, and feeds the dashboard's

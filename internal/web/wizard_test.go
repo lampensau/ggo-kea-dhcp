@@ -165,7 +165,7 @@ func (f *fakeRogueProbe) Server() (string, string, bool) {
 // reports the honest Unverified rather than a false all-clear; a live quiet probe
 // yields Active; and a foreign DHCP answer flips to Detected naming the server's IP.
 func TestShieldStatus(t *testing.T) {
-	s := &Server{mon: &monitorSet{}}
+	s := &Server{}
 
 	if st, d := s.shieldStatus("Suspended"); st != "Suspended" || d != "" {
 		t.Errorf("no carrier: got %q/%q, want Suspended with no detail", st, d)

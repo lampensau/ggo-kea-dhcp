@@ -61,8 +61,11 @@ type Server struct {
 	live *liveHub
 	// mon owns the background network observers (passive monitor, ARP prober,
 	// Green-GO scanner, and the onboarding trunk/rogue probes). The reconciler
-	// drives their lifecycle; the web layer reads their snapshots. See monitorSet.
-	mon *monitorSet
+	// drives their lifecycle; the web layer reads their snapshots. A value, not a
+	// pointer: its fields are written once in NewServer and only read afterwards,
+	// so the zero value is a usable empty set and a bare &Server{} test double
+	// reads through it without a nil check. See monitorSet.
+	mon monitorSet
 	// reservationMu serializes the reservation conflict-check + insert (single add and
 	// bulk import) so two concurrent writes can't both pass the check for the same IP
 	// and both insert - the hosts unique key does not include ipv4_address, so the DB
@@ -197,7 +200,7 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// than both as free-text "warning". The ARP prober + Green-GO scanner are the
 	// ACTIVE-only counterparts; the trunk + rogue-DHCP probes are onboarding-only
 	// (started in reconcileOnboarding, stopped on entering ACTIVE).
-	s.mon = &monitorSet{
+	s.mon = monitorSet{
 		netmon: netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
 			_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
 		}),
