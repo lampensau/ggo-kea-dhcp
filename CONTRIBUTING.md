@@ -44,7 +44,6 @@ Read `internal/web/DESIGN.md` first; every page is held to it. The stack is temp
 - Plain hyphens, never em-dashes, in comments, strings and docs
 - Small, focused PRs over large mixed ones
 - Commit messages: short and precise, no prose
-- Files named `_preview_*.html` under `internal/web/static/` are throwaway render-preview artifacts; never commit them
 
 ## Packaging and releases
 

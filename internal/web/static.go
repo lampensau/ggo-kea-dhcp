@@ -18,8 +18,8 @@ import (
 // brand green - attribution is retained in the SVG's leading comment.
 //
 // A bare-directory embed (not `static/*`): Go excludes `_`- and `.`-prefixed files
-// from a directory tree, so the throwaway `static/_preview_*.html` a preview harness
-// leaves behind can never ship inside the binary, while every real asset still embeds.
+// from a directory tree, so a `.`-prefixed editor swapfile or a `_`-prefixed scratch
+// artifact in static/ can never ship inside the binary, while every real asset embeds.
 //
 //go:embed static
 var staticFS embed.FS
