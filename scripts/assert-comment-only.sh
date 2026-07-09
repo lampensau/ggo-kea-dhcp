@@ -39,9 +39,12 @@ strip() { go run "$root/scripts/stripcomments.go"; }
 # rewording a doc comment above a var never disturbs the binding. A directive trailing
 # a code line is emitted with that whole line.
 #
-# ponytail: a `//go:` or `//nolint` appearing inside prose or a raw string binds like a
-# real directive. It compares to itself on both sides, so it only ever costs a false
-# FAIL (loud, never silent) if a sweep rewords that exact line. No such line exists here.
+# ponytail: only `//` comments are skipped when looking for the declaration, so a `/* */`
+# block comment between a directive and its declaration binds in the declaration's place,
+# as does a `//go:` or `//nolint` inside prose or a raw string. Each compares to itself on
+# both sides, so the cost is at worst a false FAIL (loud, never silent) when a sweep rewords
+# that exact line. The repo has no block comments and no such string; add a block-comment
+# skip here if one appears.
 directives() {
     awk '
         function isdir(s) { return s ~ /\/\/(go:|nolint)/ }
@@ -67,10 +70,13 @@ selftest() {
     git init -q . && git config user.email s@s && git config user.name s
 
     fails=0
-    # want: "ok" = script must exit 0, "fail" = script must exit non-zero.
+    # want: "ok" = script must exit 0, "fail" = script must exit non-zero. Run through `sh`,
+    # not the exec bit: a copy that lost its +x would make every "want fail" case pass for
+    # the wrong reason, and a selftest whose failure mode is "everything passes" is the very
+    # thing this file exists to prevent.
     case_run() {
         want=$1; label=$2
-        if scripts/assert-comment-only.sh >/dev/null 2>&1; then got=ok; else got=fail; fi
+        if sh scripts/assert-comment-only.sh >/dev/null 2>&1; then got=ok; else got=fail; fi
         if [ "$got" = "$want" ]; then
             echo "  PASS  $label (want $want)"
         else
@@ -87,14 +93,17 @@ selftest() {
     printf 'package p\n\n// reworded doc\nfunc F() int { return 2 }\n' > a.go
     git commit -aqm x && case_run fail "code change (1 -> 2)"
 
-    # The same code change with a broken toolchain must still FAIL, never pass silently.
-    printf 'package p\n\n// doc\nfunc F() int { return 3 }\n' > a.go
+    # A broken toolchain must FAIL even on a commit that IS comment-only: the checks never
+    # ran, so the script must not claim they passed. Asserting this on a code change would
+    # prove nothing, since that fails either way. GOCACHE below /dev/null cannot be created
+    # even by root, so this holds in a root CI container too.
+    printf 'package p\n\n// reworded twice\nfunc F() int { return 2 }\n' > a.go
     git commit -aqm x
-    if GOCACHE=/nonexistent-selftest scripts/assert-comment-only.sh >/dev/null 2>&1; then
-        echo "  BROKEN  broken toolchain reported OK on a code change" >&2
+    if GOCACHE=/dev/null/cache sh scripts/assert-comment-only.sh >/dev/null 2>&1; then
+        echo "  BROKEN  broken toolchain reported OK; the checks never ran" >&2
         fails=$((fails + 1))
     else
-        echo "  PASS  broken toolchain (want fail)"
+        echo "  PASS  broken toolchain on a comment-only commit (want fail)"
     fi
 
     printf 'package p\n\nimport "embed"\n\n//go:embed migrations\nvar mig embed.FS\n\nvar other embed.FS\n' > e.go
