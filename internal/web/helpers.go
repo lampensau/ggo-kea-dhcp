@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"ggo-kea-dhcp/internal/appliance"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 )
@@ -174,7 +175,7 @@ func parseRangeCapacity(rangeStr string) int {
 	if !ok {
 		return 0
 	}
-	return capacityOf(lo, hi)
+	return appliance.CapacityOf(lo, hi)
 }
 
 // opCtx bounds one background IO operation (live ticker, samplers, memoized

@@ -94,15 +94,15 @@ func renderIDPart(b []byte) (ascii, hexStr string) {
 	if len(b) == 0 {
 		return "", ""
 	}
-	hexStr = ColonHex(b)
+	hexStr = colonHex(b)
 	if s := string(bytes.TrimRight(b, "\x00")); s != "" && isPrintableASCII(s) {
 		return s, hexStr
 	}
 	return hexStr, hexStr
 }
 
-// ColonHex renders bytes as lowercase colon-separated hex ("00:47:4f").
-func ColonHex(b []byte) string {
+// colonHex renders bytes as lowercase colon-separated hex ("00:47:4f").
+func colonHex(b []byte) string {
 	parts := make([]string, len(b))
 	for i, x := range b {
 		parts[i] = fmt.Sprintf("%02x", x)
@@ -202,6 +202,13 @@ func FlexIDToBytes(portIdentity string) []byte {
 	return []byte(portIdentity)
 }
 
-// IsColonHex reports whether s is already in the canonical colon-hex port-identity
-// form, so a caller can tell a stored key from a legacy printable label.
-func IsColonHex(s string) bool { return colonHexRe.MatchString(s) }
+// CanonicalPortID re-encodes a legacy port-identity key as colon-hex. Before the key
+// became always-hex a printable flex-id was stored as its own text, whose raw bytes
+// are that ASCII (the FlexIDToBytes contract above), so re-encoding it on read keeps
+// old labels attached to their ports without a migration.
+func CanonicalPortID(portID string) string {
+	if colonHexRe.MatchString(portID) {
+		return portID
+	}
+	return colonHex([]byte(portID))
+}

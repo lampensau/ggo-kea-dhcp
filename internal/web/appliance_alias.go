@@ -21,7 +21,6 @@ type (
 	PresenceProber    = appliance.PresenceProber
 	DeviceScanner     = appliance.DeviceScanner
 	RogueProber       = appliance.RogueProber
-	portIdent         = appliance.PortIdent
 )
 
 const (
@@ -33,15 +32,13 @@ const (
 	PoolKindReserve = appliance.PoolKindReserve
 )
 
-// Leaf helpers, wrapped so their many web call sites stay as they were.
+// Leaf helpers, wrapped so their many web call sites stay as they were. A helper with
+// a lone call site does not earn a wrapper; that site says appliance.X outright.
 func normalizeMAC(mac string) string      { return appliance.NormalizeMAC(mac) }
-func colonHex(b []byte) string            { return appliance.ColonHex(b) }
-func capacityOf(lo, hi uint32) int        { return appliance.CapacityOf(lo, hi) }
 func bytesToPortIdentity(b []byte) string { return appliance.BytesToPortIdentity(b) }
-func decodePortIdentity(clientID string) (portIdent, bool) {
+func decodePortIdentity(clientID string) (appliance.PortIdent, bool) {
 	return appliance.DecodePortIdentity(clientID)
 }
-func portIdentFromFlex(flex []byte) portIdent { return appliance.PortIdentFromFlex(flex) }
 func seedDefaultPlan(sc ScopeConfig) PoolPlan { return appliance.SeedDefaultPlan(sc) }
 func uplinkState(enabled bool, ssid, pass string) map[string]string {
 	return appliance.UplinkState(enabled, ssid, pass)
@@ -56,7 +53,3 @@ func seedPlan(sc ScopeConfig) PoolPlan    { return appliance.SeedPlan(sc) }
 func parseScopeServices(gateway, dns, lease, localDNS string, optNames, optData []string) (ScopeServices, error) {
 	return appliance.ParseScopeServices(gateway, dns, lease, localDNS, optNames, optData)
 }
-
-const defaultSizePreset = appliance.DefaultSizePreset
-
-var goSizePresets = appliance.GoSizePresets
