@@ -190,16 +190,11 @@ func (s *Server) Start() error {
 // below are idempotent, matching the reconciler's own teardown paths.
 func (s *Server) stopBackground() {
 	s.bg.stop()
-	// The ACTIVE monitors share the single stopActiveMonitors teardown, so a new one
-	// added there is torn down on shutdown too (rather than stranded in this copy).
-	// The onboarding probes are not part of that set - stop them here.
+	// Both teardowns are the same ones the reconciler's lifecycle paths use, so a
+	// monitor added to either set is torn down on shutdown too (rather than
+	// stranded in a copy here).
 	s.stopActiveMonitors()
-	if s.mon.trunkProbe != nil {
-		s.mon.trunkProbe.Stop()
-	}
-	if s.mon.rogueProbe != nil {
-		s.mon.rogueProbe.Stop()
-	}
+	s.mon.stopOnboarding()
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
