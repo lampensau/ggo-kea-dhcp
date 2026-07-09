@@ -46,6 +46,11 @@ func (b *bgRunner) add() (done func(), ok bool) {
 	return b.wg.Done, true
 }
 
+// wait joins the currently registered goroutines WITHOUT signalling shutdown, so a
+// test can await a dispatched background check and then keep using the runner. Not
+// a shutdown path: production always joins through stop.
+func (b *bgRunner) wait() { b.wg.Wait() }
+
 // stop signals shutdown and joins every registered goroutine. Closing done ends
 // the loops at their next select; the Wait joins them - a loop already mid-body
 // finishes it first (each body is bounded: opCtx on the Kea/DB calls, the
