@@ -113,16 +113,20 @@ type reconciler struct {
 	uplink uplinkAudit
 
 	// --- web-side edges (nil-tolerant), wired by NewServer; nil in test Servers ---
-	// notifyBackend re-renders the always-on backend-alert banner (uplink up/down).
-	notifyBackend func()
+	// announceUplink records the uplink's up/down state in backend-health AND
+	// re-renders the always-on #backend-alert banner. One edge, not two, because
+	// they are only ever right together: flipping the state without the push leaves
+	// a stale banner on the page the operator has open, and pushing without the
+	// state flip renders the old one.
+	announceUplink func(down bool, detail string)
 	// primeZone rebuilds the DNS device zone from the freshly-served leases.
 	primeZone func()
 	// kickUpdate fires an out-of-band release check when the box gains uplink.
 	kickUpdate func()
-	// setUplinkDown flips the backend-health uplink state behind the banner.
-	setUplinkDown func(down bool, detail string)
 	// startGgoScan/startNetmon/startArpProber start the ACTIVE observers; they stay
-	// in web because their spec builders read the web-owned lease providers.
+	// in web because their spec builders read the web-owned lease providers. Unlike
+	// the edges above these are set by newReconciler itself, so they are never nil
+	// and their call sites do not guard.
 	startGgoScan   func(scopes []ScopeConfig)
 	startNetmon    func(scopes []ScopeConfig)
 	startArpProber func(scopes []ScopeConfig)
@@ -132,12 +136,13 @@ type reconciler struct {
 }
 
 // newReconciler builds the lifecycle reconciler from the Server's shared control-
-// plane handles and wires the monitor-start edges. Those three are always safe
-// (each early-returns when its monitor is absent and touches no SSE/network), so
-// a converge in a unit test starts a faked monitor exactly as production does. The
-// remaining edges - backend alert, DNS-zone prime, update kick, uplink health,
-// pinned-port reads - are production-only side effects that NewServer wires on top;
-// a bare test reconciler leaves them nil (every call site guards).
+// plane handles and wires the monitor-start edges. Those three are wired here, not
+// in NewServer, because they are always safe (each early-returns when its monitor is
+// absent and touches no SSE/network): a converge in a unit test starts a faked
+// monitor exactly as production does, and reconcileActive can call them unguarded.
+// The remaining edges - uplink announce, DNS-zone prime, update kick, pinned-port
+// reads - are production-only side effects that NewServer wires on top; a bare test
+// reconciler leaves them nil (every call site guards).
 //
 // The control-plane handles are ALIASED, not owned: the reconciler reads whatever
 // s.kea/s.dns/... pointed at when it was built, for the process lifetime. Nothing in
@@ -546,15 +551,9 @@ func (r *reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// ACTIVE: this is their sole Start site, reached once the served interfaces are up.
 	// Best-effort - both launch goroutines, never error, and so cannot affect the
 	// reconcile outcome (errs above), keeping the core apply path isolated.
-	if r.startNetmon != nil {
-		r.startNetmon(scopes)
-	}
-	if r.startArpProber != nil {
-		r.startArpProber(scopes)
-	}
-	if r.startGgoScan != nil {
-		r.startGgoScan(scopes)
-	}
+	r.startNetmon(scopes)
+	r.startArpProber(scopes)
+	r.startGgoScan(scopes)
 	// ACTIVE-only: the port-53 owner serves the device zones, one socket per served
 	// scope's own address (never wlan0) so each apex answer names the address that
 	// segment can reach. Best-effort like the monitors; the zone primes in the
@@ -632,11 +631,8 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 		// Log): the connect runs in a background goroutine, so the Settings save that
 		// triggered it already returned "saved". The always-on #backend-alert banner
 		// carries nmcli's reason so "the SSID or password is wrong" reaches the UI.
-		if r.setUplinkDown != nil {
-			r.setUplinkDown(true, "Wi-Fi uplink: "+e.Error())
-		}
-		if r.notifyBackend != nil {
-			r.notifyBackend()
+		if r.announceUplink != nil {
+			r.announceUplink(true, "Wi-Fi uplink: "+e.Error())
 		}
 		return
 	}
@@ -646,11 +642,8 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 		// Deliberate teardown (not a failure), so it is not audited - but mark the link
 		// down so a genuine re-connect after the box returns to ACTIVE audits UPLINK_UP.
 		r.uplink.observe(false)
-		if r.setUplinkDown != nil {
-			r.setUplinkDown(false, "") // not a failure - clear any prior alert
-		}
-		if r.notifyBackend != nil {
-			r.notifyBackend()
+		if r.announceUplink != nil {
+			r.announceUplink(false, "") // not a failure - clear any prior alert
 		}
 		return
 	}
@@ -664,11 +657,8 @@ func (r *reconciler) connectUplink(ssid, pwd string) {
 	if r.kickUpdate != nil {
 		r.kickUpdate()
 	}
-	if r.setUplinkDown != nil {
-		r.setUplinkDown(false, "") // connected - clear the banner
-	}
-	if r.notifyBackend != nil {
-		r.notifyBackend()
+	if r.announceUplink != nil {
+		r.announceUplink(false, "") // connected - clear the banner
 	}
 }
 
