@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"context"
@@ -8,6 +8,10 @@ import (
 
 	"ggo-kea-dhcp/internal/kea"
 )
+
+// leasePageSize bounds the lease fetch the rebalancer makes; it mirrors the web
+// lease-cache page size (leasecache.go).
+const leasePageSize = 1000
 
 // rebalanceMove is one lease the sweep wants to release so its device migrates into
 // its own device-class pool: the address to free, the device, and the from/to classes
@@ -92,7 +96,7 @@ func rebalanceTargets(scopes []ScopeConfig, leases []kea.ActiveLease, fixed map[
 			if own < 0 || cur < 0 || cur == own {
 				continue // no own pool (catch-all is correct), or already placed right
 			}
-			capacity := capacityOf(pools[own].lo, pools[own].hi)
+			capacity := CapacityOf(pools[own].lo, pools[own].hi)
 			if occ[own] >= capacity {
 				continue // own pool full - keep the device in its overflow pool
 			}
@@ -109,7 +113,7 @@ func rebalanceTargets(scopes []ScopeConfig, leases []kea.ActiveLease, fixed map[
 // alone. Such a device would only be re-granted the same IP on re-request, so deleting
 // its lease just makes it disappear from the table until its next renewal. Empty (nothing
 // fixed) when MariaDB is absent, which also disables rebalance migration of those rows.
-func (r *reconciler) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease) map[string]bool {
+func (r *Reconciler) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease) map[string]bool {
 	fixed := map[string]bool{}
 	if r.mariadb == nil {
 		return fixed
@@ -117,22 +121,19 @@ func (r *reconciler) fixedLeaseIPs(ctx context.Context, leases []kea.ActiveLease
 	resMACs := map[string]bool{}
 	if list, err := r.mariadb.HWReservations(ctx); err == nil {
 		for _, rsv := range list {
-			resMACs[normalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
+			resMACs[NormalizeMAC(net.HardwareAddr(rsv.Identifier).String())] = true
 		}
 	} else {
 		log.Printf("[Rebalance] reservation read failed: %v", err)
 	}
-	var pinnedKeys map[string]bool
-	if r.pinnedPortKeys != nil {
-		pinnedKeys = r.pinnedPortKeys(ctx)
-	}
+	pinnedKeys := r.PinnedPortKeys(ctx)
 	for _, l := range leases {
-		if resMACs[normalizeMAC(l.HWAddress)] {
+		if resMACs[NormalizeMAC(l.HWAddress)] {
 			fixed[l.IPAddress] = true
 			continue
 		}
 		if len(pinnedKeys) > 0 {
-			if id, ok := decodePortIdentity(l.ClientID); ok && pinnedKeys[id.Key] {
+			if id, ok := DecodePortIdentity(l.ClientID); ok && pinnedKeys[id.Key] {
 				fixed[l.IPAddress] = true
 			}
 		}
@@ -165,11 +166,11 @@ func classIndex(pools []poolBound, class string) int {
 // deletes are logged/audited but never fail a reconcile. Run after a successful Kea
 // reload (the new, exclusive class guards must be live first - otherwise a released
 // device could be re-granted its old address).
-func (r *reconciler) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
+func (r *Reconciler) rebalanceLeases(ctx context.Context, scopes []ScopeConfig) {
 	if r.kea == nil {
 		return
 	}
-	leases, err := r.kea.GetLeases(ctx, defaultLeasePageSize)
+	leases, err := r.kea.GetLeases(ctx, leasePageSize)
 	if err != nil {
 		log.Printf("[Rebalance] lease fetch failed: %v", err)
 		return

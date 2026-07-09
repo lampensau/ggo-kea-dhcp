@@ -17,7 +17,7 @@ import (
 func (s *Server) Start() error {
 	// One-shot: lift any legacy per-scope WiFi uplink up to the box-level keys before
 	// the boot reconcile reads them.
-	s.recon.migrateUplinkToBoxLevel()
+	s.recon.MigrateUplinkToBoxLevel()
 
 	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
 	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.
@@ -194,7 +194,7 @@ func (s *Server) stopBackground() {
 	// monitor added to either set is torn down on shutdown too (rather than
 	// stranded in a copy here).
 	s.stopActiveMonitors()
-	s.mon.stopOnboarding()
+	s.mon.StopOnboarding()
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {

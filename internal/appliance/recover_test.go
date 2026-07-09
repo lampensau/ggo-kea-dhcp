@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"strings"
@@ -14,22 +14,22 @@ import (
 // before the recover - the mutation guard is released so the next apply is not
 // locked out forever.
 func TestRunRecoveredAuditedAbsorbsPanicAndReleasesGuard(t *testing.T) {
-	s, _ := newTestServer(t)
+	r, _ := newTestReconciler(t)
 
-	if !s.beginReconcile() {
+	if !r.BeginReconcile() {
 		t.Fatal("beginReconcile should succeed")
 	}
-	s.runRecoveredAudited("test-panic", func() {
-		defer s.endReconcile()
+	r.RunRecoveredAudited("test-panic", func() {
+		defer r.EndReconcile()
 		panic("boom in reconcile")
 	})
 
-	if !s.beginReconcile() {
+	if !r.BeginReconcile() {
 		t.Fatal("mutation guard still held after a recovered panic - endReconcile did not run")
 	}
-	s.endReconcile()
+	r.EndReconcile()
 
-	rows, err := s.sqlite.Query("SELECT action, target, after_json, result FROM audit_log WHERE action = 'PANIC_RECOVERED'")
+	rows, err := r.sqlite.Query("SELECT action, target, after_json, result FROM audit_log WHERE action = 'PANIC_RECOVERED'")
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
 	}
@@ -48,15 +48,15 @@ func TestRunRecoveredAuditedAbsorbsPanicAndReleasesGuard(t *testing.T) {
 
 // The non-panicking path must run fn exactly once and write no audit row.
 func TestRunRecoveredAuditedCleanRun(t *testing.T) {
-	s, _ := newTestServer(t)
+	r, _ := newTestReconciler(t)
 
 	ran := 0
-	s.runRecoveredAudited("clean", func() { ran++ })
+	r.RunRecoveredAudited("clean", func() { ran++ })
 	if ran != 1 {
 		t.Fatalf("fn ran %d times, want 1", ran)
 	}
 
-	rows, err := s.sqlite.Query("SELECT COUNT(*) FROM audit_log WHERE action = 'PANIC_RECOVERED'")
+	rows, err := r.sqlite.Query("SELECT COUNT(*) FROM audit_log WHERE action = 'PANIC_RECOVERED'")
 	if err != nil {
 		t.Fatalf("query audit_log: %v", err)
 	}
@@ -75,30 +75,30 @@ func TestRunRecoveredAuditedCleanRun(t *testing.T) {
 // into resumeInterruptedApply, which (with nothing to complete here) reverts
 // to ONBOARDING - the self-healing a process crash used to get from systemd.
 func TestRunRecoveredReconcileKicksConverge(t *testing.T) {
-	s, _ := newTestServer(t)
+	r, _ := newTestReconciler(t)
 	defer withResumeBackoff(0)()
-	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
+	if err := r.sqlite.SetState(db.LifecycleStateKey, db.StateConfiguring); err != nil {
 		t.Fatal(err)
 	}
 
-	s.runRecoveredReconcile("finish-apply", func() {
-		defer s.endReconcile() // finishApply's own defer shape
+	r.RunRecoveredReconcile("finish-apply", func() {
+		defer r.EndReconcile() // finishApply's own defer shape
 		panic("boom mid-apply")
 	})
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if st, _ := s.sqlite.GetState(db.LifecycleStateKey); st == db.StateOnboarding {
+		if st, _ := r.sqlite.GetState(db.LifecycleStateKey); st == db.StateOnboarding {
 			break
 		}
 		if time.Now().After(deadline) {
-			st, _ := s.sqlite.GetState(db.LifecycleStateKey)
+			st, _ := r.sqlite.GetState(db.LifecycleStateKey)
 			t.Fatalf("state = %q after recovery kick, want ONBOARDING via resumeInterruptedApply", st)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	var n int
-	_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'PANIC_RECOVERED'").Scan(&n)
+	_ = r.sqlite.QueryRow("SELECT COUNT(*) FROM audit_log WHERE action = 'PANIC_RECOVERED'").Scan(&n)
 	if n != 1 {
 		t.Errorf("PANIC_RECOVERED rows = %d, want 1", n)
 	}

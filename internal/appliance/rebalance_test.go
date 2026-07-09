@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"fmt"

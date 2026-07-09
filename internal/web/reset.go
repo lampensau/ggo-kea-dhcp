@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net/http"
 	"os"
@@ -55,7 +56,7 @@ func (s *Server) handleResetRoutine(w http.ResponseWriter, r *http.Request) {
 	// Claim the mutation guard before touching state, so a reset can't race a
 	// profile apply/switch (or another reconcile) writing the same kea.conf.
 	if !s.beginReconcile() {
-		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		s.handleError(w, r, appliance.ReconcileBusyMsg, http.StatusConflict)
 		return
 	}
 	log.Println("[Reset] Routine end-of-job reset to ONBOARDING...")
@@ -69,7 +70,7 @@ func (s *Server) handleResetRoutine(w http.ResponseWriter, r *http.Request) {
 
 	s.scheduleReconcileHeld("reset-routine", 1*time.Second, ModeApply, 0)
 
-	s.respondInterstitial(w, ipOnly(s.onboardingCIDR()))
+	s.respondInterstitial(w, appliance.IPOnly(s.onboardingCIDR()))
 }
 
 // routineResetDB performs the routine end-of-job reset's persistent mutations: keep
@@ -103,7 +104,7 @@ func (s *Server) routineResetDB() error {
 	_, e3 := tx.Exec(`DELETE FROM app_state WHERE key LIKE 'update\_%' ESCAPE '\'`)
 	// Clear any DHCP stand-down: it's per-job serving state. Inheriting it into the next
 	// job's apply would render the holdoff config - ACTIVE but serving no leases.
-	_, e5 := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey)
+	_, e5 := tx.Exec("DELETE FROM app_state WHERE key = ?", appliance.DHCPStandDownKey)
 	_, e4 := tx.Exec(lifecycleUpsertSQL, db.LifecycleStateKey, db.StateOnboarding)
 	if err := errors.Join(e1, e2, e3, e4, e5); err != nil {
 		return err
@@ -127,7 +128,7 @@ func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.beginReconcile() {
-		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		s.handleError(w, r, appliance.ReconcileBusyMsg, http.StatusConflict)
 		return
 	}
 	log.Println("[Reset] Hard factory reset...")
@@ -143,7 +144,7 @@ func (s *Server) handleResetFactory(w http.ResponseWriter, r *http.Request) {
 
 	s.scheduleReconcileHeld("reset-factory", 1*time.Second, ModeApply, 0)
 
-	s.respondInterstitial(w, ipOnly(s.onboardingCIDR()))
+	s.respondInterstitial(w, appliance.IPOnly(s.onboardingCIDR()))
 }
 
 // factoryWipeDB performs the hard factory reset's persistent mutations: purge the Kea

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net"
 	"os"
@@ -112,7 +113,7 @@ type applyPlan struct {
 // (TestBeginApplyValidatesBeforeClaimingGuard pins this). The guard is claimed before any
 // persistent artifact so every irreversible step is serialized by one apply/switch.
 func (s *Server) prepareReconcile(renderScopes []kea.ScopeInput, snapLabel string) (string, error) {
-	in := s.recon.baseRenderInput()
+	in := s.recon.BaseRenderInput()
 	in.Scopes = renderScopes
 	// Validate on "*": a scope's eth0.<vid> interface isn't created until the reconcile,
 	// so a per-interface kea -t here would wrongly fail "interface doesn't exist"; the
@@ -133,7 +134,7 @@ func (s *Server) prepareReconcile(renderScopes []kea.ScopeInput, snapLabel strin
 	if !s.beginReconcile() {
 		return "", fmt.Errorf("Another profile change is already in progress.")
 	}
-	snapPath, err := s.recon.snapshotKeaConf(snapLabel)
+	snapPath, err := s.recon.SnapshotKeaConf(snapLabel)
 	if err != nil {
 		s.endReconcile()
 		return "", fmt.Errorf("Failed to snapshot the current configuration: %w", err)
@@ -169,8 +170,8 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 	// the guard is held. A read error aborts the apply: proceeding would capture "" and a
 	// later rollback would then "restore" empty credentials over the real ones - only the
 	// snapshot has been written so far, so aborting here leaves the box untouched.
-	prevUplink := make(map[string]string, len(uplinkStateKeys))
-	for _, k := range uplinkStateKeys {
+	prevUplink := make(map[string]string, len(appliance.UplinkStateKeys))
+	for _, k := range appliance.UplinkStateKeys {
 		v, err := s.sqlite.GetState(k)
 		if err != nil {
 			s.endReconcile()
@@ -191,19 +192,6 @@ func (s *Server) beginApply(profileName string, scopes []ScopeConfig, uplink Upl
 		return applyPlan{}, err
 	}
 	return plan, nil
-}
-
-// uplinkStateKeys / uplinkState are the single definition of the box-level WiFi
-// uplink app_state keys: the rollback capture iterates the keys and every writer
-// builds its map through uplinkState, so the two cannot drift apart.
-var uplinkStateKeys = []string{"uplink_enabled", "uplink_ssid", "uplink_pass"}
-
-func uplinkState(enabled bool, ssid, pass string) map[string]string {
-	en := "0"
-	if enabled {
-		en = "1"
-	}
-	return map[string]string{uplinkStateKeys[0]: en, uplinkStateKeys[1]: ssid, uplinkStateKeys[2]: pass}
 }
 
 // restoreUplinkState puts the pre-apply box-level uplink keys back after a failed
@@ -258,10 +246,10 @@ func (s *Server) persistProfile(profileName string, scopes []ScopeConfig, uplink
 	plan.newProfileID = int(id64)
 
 	for _, sc := range scopes {
-		poolSpec, perr := sc.poolSpecJSON()
-		uplinkSpec, uerr := sc.uplinkJSON()
-		planJSON, plerr := sc.planJSON()
-		servicesSpec, serr := sc.servicesJSON()
+		poolSpec, perr := sc.PoolSpecJSON()
+		uplinkSpec, uerr := sc.UplinkJSON()
+		planJSON, plerr := sc.PlanJSON()
+		servicesSpec, serr := sc.ServicesJSON()
 		if encErr := errors.Join(perr, uerr, plerr, serr); encErr != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("Failed to encode scope: %w", encErr)
@@ -393,7 +381,7 @@ func (s *Server) rollbackFailed(p rollbackSpec) {
 	if p.snapPath != "" {
 		if data, e := os.ReadFile(p.snapPath); e == nil {
 			live := filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf")
-			if e := writeFileSync(live, data, 0660); e != nil {
+			if e := appliance.WriteFileSync(live, data, 0660); e != nil {
 				log.Printf("[%s] rollback: restore snapshot conf: %v", p.tag, e)
 			} else if e := s.kea.ReloadConfig(context.Background()); e != nil {
 				log.Printf("[%s] rollback: Kea reload after restore: %v", p.tag, e)

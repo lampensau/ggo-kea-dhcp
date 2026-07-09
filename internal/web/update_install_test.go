@@ -112,7 +112,7 @@ func TestUpdateInstallGuardChain(t *testing.T) {
 	okForm := url.Values{"current_password": {"correct horse battery staple"}, "version": {"2.0.0"}}
 	guardsFree := func(t *testing.T, s *Server) {
 		t.Helper()
-		if s.updating.Load() || s.recon.applying.Load() {
+		if s.updating.Load() || s.recon.IsApplying() {
 			t.Fatal("a refused install must not leave a guard held")
 		}
 	}
@@ -160,7 +160,7 @@ func TestUpdateInstallGuardChain(t *testing.T) {
 		s := newInstallServer(t)
 		s.updating.Store(true)
 		installForm(s, okForm)
-		if s.recon.applying.Load() {
+		if s.recon.IsApplying() {
 			t.Fatal("the loser of the updating CAS must not claim the apply guard")
 		}
 		s.updating.Store(false)
@@ -184,7 +184,7 @@ func TestUpdateInstallGuardChain(t *testing.T) {
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Installing update") {
 			t.Fatalf("expected the polling interstitial, got %d: %.120s", w.Code, w.Body.String())
 		}
-		if !s.updating.Load() || !s.recon.applying.Load() {
+		if !s.updating.Load() || !s.recon.IsApplying() {
 			t.Fatal("a triggered install must hold both guards")
 		}
 		if _, err := os.Stat(filepath.Join(s.updateDir, updateStagedDeb)); err != nil {

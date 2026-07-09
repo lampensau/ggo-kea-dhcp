@@ -1,6 +1,7 @@
 package web
 
 import (
+	"ggo-kea-dhcp/internal/appliance"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,7 +110,7 @@ func TestResumeReloadFailureReArmsStandDown(t *testing.T) {
 		t.Fatalf("set state: %v", err)
 	}
 	// Start stood down, then resume. The reload fails against the unreachable dev Kea.
-	if err := s.sqlite.SetState(dhcpStandDownKey, "1"); err != nil {
+	if err := s.sqlite.SetState(appliance.DHCPStandDownKey, "1"); err != nil {
 		t.Fatalf("set flag: %v", err)
 	}
 
@@ -178,7 +179,7 @@ func TestKeaConfigForStateHoldoffVsProfile(t *testing.T) {
 		t.Fatalf("load scopes: %v (n=%d)", err, len(scopes))
 	}
 
-	_ = s.sqlite.SetState(dhcpStandDownKey, "1")
+	_ = s.sqlite.SetState(appliance.DHCPStandDownKey, "1")
 	holdoff, err := s.keaConfigForState(scopes)
 	if err != nil {
 		t.Fatalf("holdoff render: %v", err)
@@ -190,7 +191,7 @@ func TestKeaConfigForStateHoldoffVsProfile(t *testing.T) {
 		t.Errorf("holdoff config must not carry the profile subnet:\n%s", holdoff)
 	}
 
-	_ = s.sqlite.SetState(dhcpStandDownKey, "0")
+	_ = s.sqlite.SetState(appliance.DHCPStandDownKey, "0")
 	serving, err := s.keaConfigForState(scopes)
 	if err != nil {
 		t.Fatalf("profile render: %v", err)
@@ -210,12 +211,12 @@ func TestReconcileActiveHonorsStandDown(t *testing.T) {
 	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
-	if err := s.sqlite.SetState(dhcpStandDownKey, "1"); err != nil {
+	if err := s.sqlite.SetState(appliance.DHCPStandDownKey, "1"); err != nil {
 		t.Fatalf("set flag: %v", err)
 	}
 
 	// Reload fails against the dev Kea (expected); the written conf is the assertion.
-	_ = s.recon.reconcileActive(ModeConverge, 0)
+	_ = s.ReconcileApplianceState(ModeConverge, 0)
 
 	conf, err := os.ReadFile(filepath.Join(s.cfg.KeaConfDir, "kea-dhcp4.conf"))
 	if err != nil {
@@ -336,7 +337,7 @@ func auditActions(t *testing.T, s *Server) map[string]bool {
 func waitGuardReleased(t *testing.T, s *Server) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
-		if !s.recon.applying.Load() {
+		if !s.recon.IsApplying() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

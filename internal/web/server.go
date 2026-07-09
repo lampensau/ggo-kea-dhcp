@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net/http"
 	"os"
@@ -20,26 +21,6 @@ import (
 	"ggo-kea-dhcp/internal/network"
 	"ggo-kea-dhcp/internal/preflight"
 )
-
-// deviceScanner is the subset of *ggoscan.Scanner the web layer drives. Declaring the
-// field as an interface lets a test inject a fake inventory and capture the reboot send
-// without opening a real socket. *ggoscan.Scanner satisfies it.
-type deviceScanner interface {
-	Start([]ggoscan.Spec)
-	Stop()
-	Snapshot() ggoscan.Snapshot
-	SendReboot(ip string) error
-}
-
-// presenceProber is the subset of *arpscan.Prober the web layer drives, seamed for the
-// same reason: a test can report presence and the live MAC at an IP. *arpscan.Prober
-// satisfies it.
-type presenceProber interface {
-	Start([]arpscan.Spec)
-	Stop()
-	Snapshot() arpscan.Snapshot
-	ProbeHost(ip string) (mac string, alive bool)
-}
 
 type Server struct {
 	cfg     *config.Config
@@ -65,7 +46,7 @@ type Server struct {
 	// pointer: its fields are written once in NewServer and only read afterwards,
 	// so the zero value is a usable empty set and a bare &Server{} test double
 	// reads through it without a nil check. See monitorSet.
-	mon monitorSet
+	mon appliance.MonitorSet
 	// reservationMu serializes the reservation conflict-check + insert (single add and
 	// bulk import) so two concurrent writes can't both pass the check for the same IP
 	// and both insert - the hosts unique key does not include ipv4_address, so the DB
@@ -110,7 +91,7 @@ type Server struct {
 	// NewServer from the shared control-plane handles; the handlers drive it
 	// through the thin forwarders in reconcile_forward.go, and it reaches back
 	// into the web layer only through its nil-tolerant edges (wired in NewServer).
-	recon *reconciler
+	recon *appliance.Reconciler
 	// updating guards the self-update install path: claimed by POST /update/install
 	// (alongside the applying guard) and held until the updater reports a result or
 	// the control plane restarts onto the new binary.
@@ -153,17 +134,6 @@ type Server struct {
 	hwResFetch func(context.Context) map[string]db.HostReservation
 }
 
-// rogueProber is the onboarding rogue-DHCP probe surface (*netmon.RogueProbe in
-// production; faked in wizard tests).
-type rogueProber interface {
-	Start(iface string)
-	Stop()
-	// Watching is false when the probe is stopped or blind (no CAP_NET_RAW), so
-	// the shield can report "unverified" instead of a false all-clear.
-	Watching() bool
-	Server() (ip, mac string, ok bool)
-}
-
 // SetPreflight stores the latest preflight result.
 func (s *Server) SetPreflight(r preflight.Result) {
 	s.preflightMu.Lock()
@@ -200,14 +170,14 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// than both as free-text "warning". The ARP prober + Green-GO scanner are the
 	// ACTIVE-only counterparts; the trunk + rogue-DHCP probes are onboarding-only
 	// (started in reconcileOnboarding, stopped on entering ACTIVE).
-	s.mon = monitorSet{
-		netmon: netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
+	s.mon = appliance.MonitorSet{
+		Netmon: netmon.NewMonitorManager(sqlite.GetState, func(e netmon.Event) {
 			_ = s.sqlite.LogAudit("SYSTEM", e.Action, e.Target, e.Before, e.After, auditResult(e.Severity))
 		}),
-		arp:        arpscan.NewProber(),
-		ggoscan:    ggoscan.NewScanner(),
-		trunkProbe: netmon.NewTrunkProbe(),
-		rogueProbe: netmon.NewRogueProbe(),
+		Arp:        arpscan.NewProber(),
+		Ggoscan:    ggoscan.NewScanner(),
+		TrunkProbe: netmon.NewTrunkProbe(),
+		RogueProbe: netmon.NewRogueProbe(),
 	}
 	// The shared lease provider (leasecache.go); every read-through consumer
 	// below funnels into this one fetcher.
@@ -251,15 +221,14 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	// update subsystem, the monitor starts, backend-health, and pinning - and arm
 	// the boot-only zero-scopes rescue. A nil-tolerant edge fails silently if left
 	// unwired, so TestNewServerWiresReconcilerEdges asserts every one is set.
-	s.recon = s.newReconciler()
-	s.recon.announceUplink = func(down bool, detail string) {
+	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, s.startNetmon, s.startArpProber, s.startGgoScan)
+	s.recon.AnnounceUplink = func(down bool, detail string) {
 		s.health.setUplinkDown(down, detail)
 		s.publishBackendAlert()
 	}
-	s.recon.primeZone = s.primeDNSZone
-	s.recon.kickUpdate = s.kickUpdateCheck
-	s.recon.pinnedPortKeys = s.pinnedPortKeys
-	s.recon.rescueArmed.Store(true)
+	s.recon.PrimeZone = s.primeDNSZone
+	s.recon.KickUpdate = s.kickUpdateCheck
+	s.recon.ArmRescue()
 	// Prime the last-seen tracker from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.
 	s.lastSeen = newLastSeenTracker()

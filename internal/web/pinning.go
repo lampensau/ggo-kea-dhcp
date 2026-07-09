@@ -2,14 +2,12 @@ package web
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net"
 	"net/http"
-	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"ggo-kea-dhcp/internal/db"
@@ -18,43 +16,6 @@ import (
 
 	"github.com/starfederation/datastar-go/datastar"
 )
-
-// colonHexRe matches a lowercase/uppercase colon-separated hex octet string like
-// "00:47:4f" (a single bare octet like "1f" included) - the form
-// bytesToPortIdentity renders every key in.
-var colonHexRe = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2})*$`)
-
-// flexIDToBytes converts a port-identity key back to the RAW flex-id bytes Kea
-// stores in (and matches against) dhcp_identifier. Every key bytesToPortIdentity
-// produces is colon-hex, so the hex decode is the whole contract; the ASCII
-// fallback only catches a malformed hand-posted value. This is the crux of port
-// pinning: Kea matches the reservation against the raw flex-id bytes, so a key
-// that decodes to the wrong bytes never matches and the device keeps getting a
-// dynamic lease.
-func flexIDToBytes(portIdentity string) []byte {
-	if colonHexRe.MatchString(portIdentity) {
-		if b, err := hex.DecodeString(strings.ReplaceAll(portIdentity, ":", "")); err == nil {
-			return b
-		}
-	}
-	return []byte(portIdentity)
-}
-
-// bytesToPortIdentity renders raw flex-id bytes as the opaque port-identity KEY
-// (the value posted in pin/unpin/label forms and used to match reservations and
-// labels): ALWAYS lowercase colon-hex, so flexIDToBytes round-trips every byte
-// shape exactly. The key is deliberately not the printable text even when the
-// flex-id is printable - a printable identifier that happens to look like
-// colon-hex (an ASCII-text MAC remote-id, "aa:bb:cc:dd:ee:ff") would otherwise
-// decode to the wrong bytes, and a lone binary octet ("1f") would collide with
-// the two-char ASCII string. Humans never see the key: the UI shows the decoded
-// remote/circuit halves (portIdent.RemoteID/CircuitID).
-func bytesToPortIdentity(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	return colonHex(b)
-}
 
 func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 	pinningErr := func(msg string) {
@@ -72,7 +33,7 @@ func (s *Server) handlePinning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pinned, err := s.fetchPinnedPorts(r.Context())
+	pinned, err := s.recon.FetchPinnedPorts(r.Context())
 	if err != nil {
 		log.Printf("MariaDB hosts query failed: %v", err)
 		pinningErr(fmt.Sprintf("Failed to query port reservations from MariaDB: %v", err))
@@ -142,34 +103,13 @@ func (s *Server) fetchPortLabels() (map[string]string, error) {
 			// printable flex-id was stored as its own text, whose raw bytes are that
 			// ASCII (the old flexIDToBytes contract). Re-encoding on read keeps old
 			// labels attached to their ports without a migration.
-			if !colonHexRe.MatchString(portID) {
+			if !appliance.IsColonHex(portID) {
 				portID = colonHex([]byte(portID))
 			}
 			labels[portID] = lbl
 		}
 	}
 	return labels, rows.Err()
-}
-
-// fetchPinnedPorts reads the Kea host reservations (flex-id pins) from MariaDB,
-// keyed by port identity.
-func (s *Server) fetchPinnedPorts(ctx context.Context) (map[string]db.HostReservation, error) {
-	rows, err := s.mariadb.QueryContext(ctx, "SELECT dhcp_identifier, dhcp4_subnet_id, ipv4_address, hostname FROM hosts WHERE dhcp_identifier_type = 4")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	pinned := make(map[string]db.HostReservation)
-	for rows.Next() {
-		var res db.HostReservation
-		var ipVal uint32
-		if rows.Scan(&res.Identifier, &res.SubnetID, &ipVal, &res.Hostname) == nil {
-			res.IdentifierType = 4
-			res.IPv4Address = ipVal
-			pinned[bytesToPortIdentity(res.Identifier)] = res
-		}
-	}
-	return pinned, rows.Err()
 }
 
 // mergePortRows folds pinned reservations, active leases, and labels into the

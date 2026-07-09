@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net/http"
 	"sort"
@@ -176,7 +177,7 @@ func dashboardPresetLabel(scopes []ScopeConfig) string {
 	case len(scopes) == 0:
 		return "None"
 	case len(scopes) == 1:
-		return PresetLabel(scopes[0].Preset)
+		return appliance.PresetLabel(scopes[0].Preset)
 	default:
 		return "Multi-VLAN Trunk"
 	}

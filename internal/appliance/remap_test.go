@@ -1,4 +1,4 @@
-package web
+package appliance
 
 import (
 	"net"
@@ -38,7 +38,7 @@ func TestPlanSubnetRemapsScopeRemoved(t *testing.T) {
 		hostRow("00:1f:80:00:00:02", 4, 2, "10.8.0.51"),
 	}
 	// Profile edited: scope A (10.7.0.0/24) deleted, scope B is now subnet 1.
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.8.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.8.0.0/24")))
 	if len(orphans) != 0 || len(skipped) != 0 {
 		t.Fatalf("orphans=%d skipped=%d, want none", len(orphans), len(skipped))
 	}
@@ -59,7 +59,7 @@ func TestPlanSubnetRemapsNoChange(t *testing.T) {
 		hostRow("00:1f:80:00:00:01", 0, 1, "10.7.0.50"),
 		hostRow("00:1f:80:00:00:02", 0, 2, "10.8.0.50"),
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.7.0.0/24", "10.8.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.7.0.0/24", "10.8.0.0/24")))
 	if len(moves) != 0 || len(orphans) != 0 || len(skipped) != 0 {
 		t.Fatalf("moves=%d orphans=%d skipped=%d, want all zero", len(moves), len(orphans), len(skipped))
 	}
@@ -71,7 +71,7 @@ func TestPlanSubnetRemapsOrphan(t *testing.T) {
 	rows := []db.HostReservation{
 		hostRow("00:1f:80:00:00:01", 0, 2, "192.168.99.50"),
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.8.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.8.0.0/24")))
 	if len(moves) != 0 || len(skipped) != 0 {
 		t.Fatalf("moves=%d skipped=%d, want none", len(moves), len(skipped))
 	}
@@ -88,7 +88,7 @@ func TestPlanSubnetRemapsCollisionSkipped(t *testing.T) {
 		hostRow("00:1f:80:00:00:01", 0, 1, "10.8.0.50"), // already correct at subnet 1
 		hostRow("00:1f:80:00:00:01", 0, 2, "10.8.0.60"), // wants subnet 1 too -> occupied
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.8.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.8.0.0/24")))
 	if len(moves) != 0 || len(orphans) != 0 {
 		t.Fatalf("moves=%d orphans=%d, want none", len(moves), len(orphans))
 	}
@@ -106,7 +106,7 @@ func TestPlanSubnetRemapsSwap(t *testing.T) {
 		hostRow("00:1f:80:00:00:01", 0, 1, "10.8.0.50"), // moves 1 -> 2
 		hostRow("00:1f:80:00:00:01", 0, 2, "10.7.0.50"), // moves 2 -> 1
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.7.0.0/24", "10.8.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.7.0.0/24", "10.8.0.0/24")))
 	if len(orphans) != 0 || len(skipped) != 0 {
 		t.Fatalf("orphans=%d skipped=%d, want none", len(orphans), len(skipped))
 	}
@@ -125,7 +125,7 @@ func TestPlanSubnetRemapsDemotionCascades(t *testing.T) {
 		hostRow("00:1f:80:00:00:01", 0, 3, "10.1.0.5"),    // wants 1 - blocked by the orphan
 		hostRow("00:1f:80:00:00:01", 0, 2, "10.3.0.5"),    // wants 3 - blocked by the demoted row above
 	}
-	moves, orphans, skipped := planSubnetRemaps(rows, subnetMatcherForScopes(remapScopes("10.1.0.0/24", "10.2.0.0/24", "10.3.0.0/24")))
+	moves, orphans, skipped := planSubnetRemaps(rows, SubnetMatcherForScopes(remapScopes("10.1.0.0/24", "10.2.0.0/24", "10.3.0.0/24")))
 	if len(orphans) != 1 {
 		t.Fatalf("orphans=%d, want 1", len(orphans))
 	}
@@ -140,7 +140,7 @@ func TestPlanSubnetRemapsDemotionCascades(t *testing.T) {
 // TestSubnetMatcherForScopesBadCIDR: an unparseable stored CIDR matches nothing
 // but must not shift the positional ids of the scopes after it.
 func TestSubnetMatcherForScopesBadCIDR(t *testing.T) {
-	match := subnetMatcherForScopes(remapScopes("not-a-cidr", "10.8.0.0/24"))
+	match := SubnetMatcherForScopes(remapScopes("not-a-cidr", "10.8.0.0/24"))
 	if id, ok := match(net.ParseIP("10.8.0.50")); !ok || id != 2 {
 		t.Errorf("10.8.0.50 = (%d,%v), want (2,true) - bad CIDR must keep its slot", id, ok)
 	}
@@ -152,6 +152,6 @@ func TestSubnetMatcherForScopesBadCIDR(t *testing.T) {
 // TestRemapReservationSubnetsNoMariaDB: the reconcile-time remap is a silent no-op
 // without the optional MariaDB backend.
 func TestRemapReservationSubnetsNoMariaDB(t *testing.T) {
-	s, _ := newTestServer(t)
-	s.remapReservationSubnets(t.Context(), remapScopes("10.8.0.0/24"), ModeApply)
+	r, _ := newTestReconciler(t)
+	r.RemapReservationSubnets(t.Context(), remapScopes("10.8.0.0/24"), ModeApply)
 }

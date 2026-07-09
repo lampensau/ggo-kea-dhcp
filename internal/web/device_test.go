@@ -12,7 +12,7 @@ import (
 	"ggo-kea-dhcp/internal/ggoscan"
 )
 
-// fakeScanner is an injectable deviceScanner: a fixed inventory and a capture of the
+// fakeScanner is an injectable DeviceScanner: a fixed inventory and a capture of the
 // reboot sends, so a handler test never opens a real socket.
 type fakeScanner struct {
 	devices []ggoscan.Device
@@ -30,7 +30,7 @@ func (f *fakeScanner) SendReboot(ip string) error {
 	return f.sendErr
 }
 
-// fakeProber is an injectable presenceProber: a fixed reachable set and per-IP MAC,
+// fakeProber is an injectable PresenceProber: a fixed reachable set and per-IP MAC,
 // so a test can put a device at an address and answer an on-demand probe.
 type fakeProber struct {
 	reachable map[string]bool
@@ -170,8 +170,8 @@ func rebootServerWithDevice(t *testing.T, ip, mac, name string) (*Server, *fakeS
 	t.Helper()
 	s, _ := newTestServer(t)
 	sc := &fakeScanner{devices: []ggoscan.Device{{MAC: mac, Name: name, IP: ip, Firmware: "BPX 5.2.2.25270"}}}
-	s.mon.ggoscan = sc
-	s.mon.arp = &fakeProber{
+	s.mon.Ggoscan = sc
+	s.mon.Arp = &fakeProber{
 		reachable: map[string]bool{ip: true},
 		macAt:     map[string]string{ip: mac},
 	}

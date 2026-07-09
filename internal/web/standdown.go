@@ -3,27 +3,15 @@ package web
 import (
 	"context"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/netmon"
 	"ggo-kea-dhcp/internal/web/views"
 )
-
-// dhcpStandDownKey is the app_state flag that, while "1", holds the appliance in a
-// deliberate DHCP stand-down: it stays in the ACTIVE lifecycle but serves no
-// address (a holdoff Kea config). Persisted so a reboot/reconcile mid-conflict
-// does not silently resume serving - only an explicit operator Resume clears it.
-const dhcpStandDownKey = "dhcp_standdown"
-
-// dhcpStoodDown reports whether the operator has stood DHCP down.
-func (r *reconciler) dhcpStoodDown() bool {
-	v, _ := r.sqlite.GetState(dhcpStandDownKey)
-	return v == "1"
-}
 
 // rogueSighting is one foreign DHCP server the passive monitor currently sees.
 // Count is how many foreign servers that interface's detector saw; the snapshot
@@ -45,11 +33,11 @@ type rogueSighting struct {
 // error severity, across every served interface. Empty when netmon is absent
 // (dev sandbox) or nothing rogue is visible.
 func (s *Server) activeRogues() []rogueSighting {
-	if s.mon.netmon == nil {
+	if s.mon.Netmon == nil {
 		return nil
 	}
 	var out []rogueSighting
-	for _, snap := range s.mon.netmon.SnapshotAll() {
+	for _, snap := range s.mon.Netmon.SnapshotAll() {
 		for _, d := range snap.Detectors {
 			if d.Kind == "rogue_dhcp" && d.Severity == netmon.SevError {
 				count := 1
@@ -230,40 +218,6 @@ func rogueAuditDetail(rogues []rogueSighting) string {
 	return detail
 }
 
-// renderHoldoffConfig renders the stand-down Kea config for the active profile's
-// served interfaces: Kea stays reachable but serves no subnet on any of them.
-func (r *reconciler) renderHoldoffConfig(scopes []ScopeConfig) (string, error) {
-	ifaces := make([]string, 0, len(scopes))
-	seen := map[string]bool{}
-	for _, sc := range scopes {
-		iface := "eth0"
-		if sc.VlanID != 0 {
-			iface = fmt.Sprintf("eth0.%d", sc.VlanID)
-		}
-		if seen[iface] {
-			continue
-		}
-		seen[iface] = true
-		ifaces = append(ifaces, iface)
-	}
-	return kea.RenderHoldoff(kea.HoldoffInput{
-		Interfaces:    ifaces,
-		KeaSecretPath: r.cfg.KeaSecretPath,
-	})
-}
-
-// keaConfigForState renders the Kea config the current lifecycle intends: the
-// holdoff (no subnets) when DHCP is stood down, else the active profile config.
-// reconcileActive and the stand-down/resume handlers both go through here, so a
-// reboot honors a persisted stand-down instead of silently resuming service.
-func (r *reconciler) keaConfigForState(scopes []ScopeConfig) (string, error) {
-	if r.dhcpStoodDown() {
-		return r.renderHoldoffConfig(scopes)
-	}
-	cfg, _, err := r.renderKeaForScopes(scopes)
-	return cfg, err
-}
-
 // setStandDown persists the stand-down flag and audits the transition. Split from
 // the handlers so the DB effects (flag + audit) are unit-testable without the async
 // Kea reload, mirroring routineResetDB. rogueDetail names the server(s) that prompted
@@ -273,7 +227,7 @@ func (s *Server) setStandDown(actor string, down bool, rogueDetail string) error
 	if down {
 		v = "1"
 	}
-	if err := s.sqlite.SetState(dhcpStandDownKey, v); err != nil {
+	if err := s.sqlite.SetState(appliance.DHCPStandDownKey, v); err != nil {
 		return err
 	}
 	if down {
@@ -302,9 +256,9 @@ func (s *Server) applyDHCPServingState() error {
 	}
 	// Same per-pass bound as the reconciler: writeAndReloadKea's dead-socket
 	// fallback (service restart + reachability probe) can take well over opCtx.
-	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), appliance.ReconcilePassDeadline)
 	defer cancel()
-	return s.recon.writeAndReloadKea(ctx, cfg)
+	return s.recon.WriteAndReloadKea(ctx, cfg)
 }
 
 // scheduleServingReloadHeld applies the current serving state (holdoff or profile) to
@@ -332,10 +286,10 @@ func (s *Server) scheduleServingReloadHeld(label string, resuming bool) {
 			log.Printf("[%s] applying DHCP serving state: %v", label, err)
 			_ = s.sqlite.LogAudit("SYSTEM", "RECONCILE_FAILED", label, "", err.Error(), "WARNING")
 			if resuming {
-				_ = s.sqlite.SetState(dhcpStandDownKey, "1")
+				_ = s.sqlite.SetState(appliance.DHCPStandDownKey, "1")
 				s.publishBackendAlert()
 			} else {
-				_ = s.sqlite.SetState(dhcpStandDownKey, "0")
+				_ = s.sqlite.SetState(appliance.DHCPStandDownKey, "0")
 				s.publishBackendAlert()
 				s.publishStandDownFailToast()
 			}
@@ -364,7 +318,7 @@ func (s *Server) handleStandDown(w http.ResponseWriter, r *http.Request) {
 	detail := rogueAuditDetail(s.activeRogues())
 
 	if !s.beginReconcile() {
-		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		s.handleError(w, r, appliance.ReconcileBusyMsg, http.StatusConflict)
 		return
 	}
 	if err := s.setStandDown(s.getActor(r), true, detail); err != nil {
@@ -384,7 +338,7 @@ func (s *Server) handleStandDown(w http.ResponseWriter, r *http.Request) {
 // enforced by lifecycleMiddleware.
 func (s *Server) handleResumeDHCP(w http.ResponseWriter, r *http.Request) {
 	if !s.beginReconcile() {
-		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		s.handleError(w, r, appliance.ReconcileBusyMsg, http.StatusConflict)
 		return
 	}
 	if err := s.setStandDown(s.getActor(r), false, ""); err != nil {

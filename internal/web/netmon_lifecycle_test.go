@@ -62,24 +62,26 @@ func fakeNetmon(s *Server) {
 	openFn := func(string, bool, []bpf.RawInstruction) (netmon.Sniffer, error) {
 		return netmon.NewFakeSniffer(), nil
 	}
-	s.mon.netmon = netmon.NewMonitorManagerWithSniffer(openFn, s.sqlite.GetState, nil)
+	s.mon.Netmon = netmon.NewMonitorManagerWithSniffer(openFn, s.sqlite.GetState, nil)
 }
 
 func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 	s, _ := newTestServer(t)
 	fakeNetmon(s)
-	defer s.mon.netmon.Stop()
+	defer s.mon.Netmon.Stop()
 	_ = seedActiveProfile(t, s)
 
 	// reconcileActive starts a monitor for the served eth0 scope.
-	_ = s.recon.reconcileActive(ModeConverge, 0)
-	if got := s.mon.netmon.Running(); len(got) != 1 || got[0] != "eth0" {
+	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	_ = s.ReconcileApplianceState(ModeConverge, 0)
+	if got := s.mon.Netmon.Running(); len(got) != 1 || got[0] != "eth0" {
 		t.Fatalf("after reconcileActive, monitors = %v, want [eth0]", got)
 	}
 
 	// reconcileOnboarding stops monitoring (left ACTIVE).
-	_ = s.recon.reconcileOnboarding(ModeConverge)
-	if got := s.mon.netmon.Running(); len(got) != 0 {
+	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding)
+	_ = s.ReconcileApplianceState(ModeConverge, 0)
+	if got := s.mon.Netmon.Running(); len(got) != 0 {
 		t.Fatalf("after reconcileOnboarding, monitors = %v, want none", got)
 	}
 
@@ -87,16 +89,17 @@ func TestNetmon_ACTIVEOnlyStateGate(t *testing.T) {
 	// must NOT tear down monitoring - the box stays ACTIVE and monitoring must
 	// keep running. Teardown happens in finishApply, which runs only on a
 	// committed apply.
-	_ = s.recon.reconcileActive(ModeConverge, 0)
-	if len(s.mon.netmon.Running()) == 0 {
+	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateActive)
+	_ = s.ReconcileApplianceState(ModeConverge, 0)
+	if len(s.mon.Netmon.Running()) == 0 {
 		t.Fatal("expected monitors running before beginApply")
 	}
 	_ = s.sqlite.SetState(db.LifecycleStateKey, db.StateOnboarding) // beginApply needs a sane origin
 	if _, err := s.beginApply("test2", []ScopeConfig{{Preset: "greengo", CIDR: "10.0.0.0/24"}}, UplinkConfig{}); err == nil {
 		t.Fatal("expected beginApply to fail on a scope with no pool plan")
 	}
-	s.recon.applying.Store(false) // release the guard the failed apply took
-	if got := s.mon.netmon.Running(); len(got) == 0 {
+	s.recon.EndReconcile() // release the guard the failed apply took
+	if got := s.mon.Netmon.Running(); len(got) == 0 {
 		t.Fatal("a FAILED beginApply must leave monitoring running (it stays ACTIVE)")
 	}
 }

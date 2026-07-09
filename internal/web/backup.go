@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"ggo-kea-dhcp/internal/appliance"
 	"io"
 	"log"
 	"net/http"
@@ -308,7 +309,7 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	// have the post-restore reconcile render the holdoff config - ACTIVE but serving no
 	// leases, with no rogue in sight to explain it. Cleared regardless of which sections
 	// were selected, since the flag belongs to no backup section.
-	if _, err := tx.Exec("DELETE FROM app_state WHERE key = ?", dhcpStandDownKey); err != nil {
+	if _, err := tx.Exec("DELETE FROM app_state WHERE key = ?", appliance.DHCPStandDownKey); err != nil {
 		return "", fmt.Errorf("clear stand-down: %w", err)
 	}
 
@@ -353,10 +354,10 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 			}
 			pid64, _ := res.LastInsertId()
 			for _, sc := range p.Scopes {
-				poolSpec, _ := sc.poolSpecJSON()
-				uplinkSpec, _ := sc.uplinkJSON()
-				planJSON, _ := sc.planJSON()
-				servicesSpec, _ := sc.servicesJSON()
+				poolSpec, _ := sc.PoolSpecJSON()
+				uplinkSpec, _ := sc.UplinkJSON()
+				planJSON, _ := sc.PlanJSON()
+				servicesSpec, _ := sc.ServicesJSON()
 				if _, err := tx.Exec(`
 					INSERT INTO scopes (profile_id, vlan_id, cidr, preset, pool_spec, uplink_json, pool_plan, services_json, name)
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -626,7 +627,7 @@ func (s *Server) handleSettingsRestore(w http.ResponseWriter, r *http.Request) {
 	// reconciling, and that half's ACTIVE write would then clobber the restored
 	// lifecycle. Refuse instead (the route is reachable during CONFIGURING).
 	if !s.beginReconcile() {
-		s.handleError(w, r, reconcileBusyMsg, http.StatusConflict)
+		s.handleError(w, r, appliance.ReconcileBusyMsg, http.StatusConflict)
 		return
 	}
 	lifecycle, rerr := s.restore(b, selectedSections(r))
