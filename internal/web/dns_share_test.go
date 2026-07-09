@@ -77,11 +77,12 @@ func TestDNSZoneGenerationGuard(t *testing.T) {
 	if s.zone.appliedGen != 12 {
 		t.Errorf("applied generation = %d, want 12", s.zone.appliedGen)
 	}
-	// Generation 0 (unversioned callers/tests) always applies.
-	if !s.rebuildDNSZoneWith(leases, res, 0) {
-		t.Error("gen 0 should always report applied")
+	// The current generation re-applies: only a STRICTLY older dispatch loses, so a
+	// caller that re-runs its own rebuild is not silently dropped.
+	if !s.rebuildDNSZoneWith(leases, res, 12) {
+		t.Error("re-applying the current generation 12 should report applied")
 	}
-	if s.zone.appliedGen != 0 {
-		t.Errorf("gen 0 must always apply, applied generation = %d", s.zone.appliedGen)
+	if s.zone.appliedGen != 12 {
+		t.Errorf("applied generation = %d, want 12", s.zone.appliedGen)
 	}
 }

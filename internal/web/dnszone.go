@@ -33,14 +33,14 @@ type zoneGate struct {
 // nextGen stamps a zone-rebuild dispatch with the next monotonic generation.
 func (g *zoneGate) nextGen() uint64 { return g.seq.Add(1) }
 
-// tryApply runs install (the SetZone) as last-writer-by-generation: gen 0
-// (unversioned callers/tests) always applies; otherwise a gen below the last applied
-// is refused so a stale detached rebuild cannot clobber a fresher zone. Reports whether
-// install ran, so a signature-tracking caller latches its sig only on a win.
+// tryApply runs install (the SetZone) as last-writer-by-generation: a gen below the
+// last applied is refused, so a stale detached rebuild cannot clobber a fresher zone.
+// Reports whether install ran, so a signature-tracking caller latches its sig only on
+// a win. Every caller stamps its dispatch with nextGen, which counts from 1.
 func (g *zoneGate) tryApply(gen uint64, install func()) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if gen != 0 && gen < g.appliedGen {
+	if gen < g.appliedGen {
 		return false
 	}
 	g.appliedGen = gen

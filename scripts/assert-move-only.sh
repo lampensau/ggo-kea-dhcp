@@ -12,17 +12,20 @@
 #   1. Conservation - the sorted multiset of code lines is unchanged (nothing
 #      added, removed, or edited).
 #   2. Order - each destination file decomposes into CONTIGUOUS runs of the
-#      pre-image whose start positions ASCEND through it. Conservation is blind to
-#      reordering: a swapped pair of statements, or a moved mu.Unlock(), conserves
-#      the multiset exactly. In a lifecycle refactor, ordering IS the behavior. A
-#      split carves the source into ordered chunks, so a destination file reads its
-#      chunks front-to-back; a swap makes one run start behind its predecessor.
+#      pre-image, and the runs it takes FROM ANY ONE SOURCE FILE ascend through
+#      that file. Conservation is blind to reordering: a swapped pair of
+#      statements, or a moved mu.Unlock(), conserves the multiset exactly. In a
+#      lifecycle refactor, ordering IS the behavior. Runs may jump freely BETWEEN
+#      source files (a destination legitimately interleaves chunks from several),
+#      which is why ordering is tracked per source file rather than across the
+#      concatenated union - the latter reports a false REORDER whenever a chunk
+#      moves into a file that sorts earlier by name.
 #   3. Imports - the import set (paths and aliases) is unchanged in both
 #      directions. The stripper discards import lines, so without this a changed
 #      alias or an added blank import (`_ "net/http/pprof"`, a side effect) rides
 #      through silently.
 #
-# Usage: scripts/assert-move-only.sh [commit]   (default HEAD)
+# Usage: scripts/assert-move-only.sh [commit]   (default HEAD)   |   make move-check
 #   ALLOW_NONGO=1     permit non-.go files in the same commit (they are NOT checked)
 # Exit 0 = move-only; non-zero + a diff = logic changed.
 set -e
@@ -75,15 +78,23 @@ files=$(git diff-tree --no-commit-id --name-only -r "$commit" -- '*.go')
 
 before=$(mktemp); after=$(mktemp)
 impbefore=$(mktemp); impafter=$(mktemp)
-src=$(mktemp); dst=$(mktemp)
-trap 'rm -f "$before" "$after" "$impbefore" "$impafter" "$src" "$dst"' EXIT
+srcraw=$(mktemp); srcidx=$(mktemp); dst=$(mktemp)
+trap 'rm -f "$before" "$after" "$impbefore" "$impafter" "$srcraw" "$srcidx" "$dst"' EXIT
 
 # Missing pre-image (added file) or post-image (deleted file) is expected in a
 # split; `|| true` lets the concatenation continue so the union still balances.
-for f in $files; do git show "$commit^:$f" 2>/dev/null || true; done > "$src"
+for f in $files; do git show "$commit^:$f" 2>/dev/null || true; done > "$srcraw"
 for f in $files; do git show "$commit:$f"  2>/dev/null || true; done > "$dst"
 
-strip < "$src" | sort > "$before"
+# The pre-image again, but tagged with which source file each line came from, so the
+# order check can require monotonicity within a file while allowing jumps between.
+i=0
+for f in $files; do
+    i=$((i + 1))
+    git show "$commit^:$f" 2>/dev/null | strip | awk -v k="$i" '{ print k "\t" $0 }' || true
+done > "$srcidx"
+
+cut -f2- < "$srcidx" | sort > "$before"
 strip < "$dst" | sort > "$after"
 
 # --- 1. conservation --------------------------------------------------------
@@ -93,7 +104,7 @@ if ! diff -u "$before" "$after"; then
 fi
 
 # --- 3. imports (cheap, do it before the expensive run check) ---------------
-imports < "$src" | sort -u > "$impbefore"
+imports < "$srcraw" | sort -u > "$impbefore"
 imports < "$dst" | sort -u > "$impafter"
 if ! diff -u "$impbefore" "$impafter"; then
     echo "FAIL: $commit changed the import set (alias, or an added side-effect import)" >&2
@@ -101,22 +112,21 @@ if ! diff -u "$impbefore" "$impafter"; then
 fi
 
 # --- 2. order ---------------------------------------------------------------
-# Each destination file must be a concatenation of contiguous slices of the
-# pre-image union, taken front-to-back. Runs are matched greedily from the
-# occurrence that extends furthest (so duplicate lines like "}" do not fragment
-# them), preferring a candidate that keeps the starts ascending. A start that
-# lands behind its predecessor means the code was reordered, not relocated.
+# Runs are matched greedily from the occurrence that extends furthest (so duplicate
+# lines like "}" do not fragment them), preferring a candidate that keeps that source
+# file's starts ascending. A start behind its predecessor IN THE SAME SOURCE FILE
+# means the code was reordered, not relocated.
 runs_total=0
 for f in $files; do
     git show "$commit:$f" >/dev/null 2>&1 || continue   # deleted by the split
-    result=$(git show "$commit:$f" | strip | awk -v src="$src" '
+    result=$(git show "$commit:$f" | strip | awk -v src="$srcidx" '
         BEGIN {
+            FS = "\t"
             while ((getline line < src) > 0) {
-                if (line ~ /^import \(/) { imp = 1; continue }
-                if (imp && line ~ /^\)/) { imp = 0; continue }
-                if (imp || line ~ /^package / || line ~ /^import "/) continue
-                if (line ~ /^[ \t]*$/) continue
-                S[++m] = line
+                tab = index(line, "\t")
+                ++m
+                FID[m] = substr(line, 1, tab - 1) + 0
+                S[m]   = substr(line, tab + 1)
             }
         }
         { D[++n] = $0 }
@@ -127,28 +137,23 @@ for f in $files; do
             return len
         }
         END {
-            pos = 0; runs = 0; lastStart = 0
+            pos = 0; runs = 0
             for (i = 1; i <= n; i++) {
                 if (pos > 0 && pos < m && S[pos + 1] == D[i]) { pos++; continue }
-                # Prefer the longest run starting at or after the previous run, so a
-                # duplicate line does not fake a backwards jump; fall back to the
-                # longest run anywhere, which is then reported as the violation.
+                # Longest run that respects its own source file order...
                 best = 0; bestlen = -1
-                for (p = lastStart + 1; p <= m; p++) {
-                    if (S[p] != D[i]) continue
+                for (p = 1; p <= m; p++) {
+                    if (S[p] != D[i] || p <= lastStart[FID[p]]) continue
                     len = runLen(p, i)
                     if (len > bestlen) { bestlen = len; best = p }
                 }
                 if (best == 0) {
-                    for (p = 1; p <= m; p++) {
-                        if (S[p] != D[i]) continue
-                        len = runLen(p, i)
-                        if (len > bestlen) { bestlen = len; best = p }
-                    }
-                    if (best == 0) { print "MISSING\t" D[i]; exit }
-                    print "REORDER\t" D[i]; exit
+                    # ...else the line exists but only behind an already-taken run:
+                    # that is a reorder. Absent entirely means conservation lied.
+                    for (p = 1; p <= m; p++) if (S[p] == D[i]) { print "REORDER\t" D[i]; exit }
+                    print "MISSING\t" D[i]; exit
                 }
-                pos = best; lastStart = best; runs++
+                pos = best; lastStart[FID[best]] = best; runs++
             }
             print "OK\t" runs
         }

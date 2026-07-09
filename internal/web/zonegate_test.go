@@ -38,31 +38,23 @@ func TestZoneGateRefusesStaleGeneration(t *testing.T) {
 	}
 }
 
-// TestZoneGateUnversionedAlwaysApplies covers the gen-0 escape hatch used by the
-// unversioned callers and tests: it always installs AND resets appliedGen, so a later
-// versioned dispatch is measured from a clean slate rather than against a generation
-// the gen-0 caller never had.
-func TestZoneGateUnversionedAlwaysApplies(t *testing.T) {
+// TestZoneGateFirstDispatchApplies covers the zero value: appliedGen starts at 0 and
+// nextGen counts from 1, so the very first rebuild installs without a special case.
+// (There is deliberately no unversioned escape hatch: a gen-0 apply used to reset
+// appliedGen, re-opening the staleness window this gate exists to close.)
+func TestZoneGateFirstDispatchApplies(t *testing.T) {
 	var g zoneGate
 
-	g.nextGen()
-	high := g.nextGen()
-	if !g.tryApply(high, func() {}) {
-		t.Fatal("fresh generation must apply")
-	}
-
 	installed := 0
-	if !g.tryApply(0, func() { installed++ }) {
-		t.Fatal("gen 0 must always apply, even under a higher applied generation")
+	first := g.nextGen()
+	if first != 1 {
+		t.Fatalf("nextGen must count from 1, got %d", first)
+	}
+	if !g.tryApply(first, func() { installed++ }) {
+		t.Fatal("the first dispatch must apply against a zero-value gate")
 	}
 	if installed != 1 {
-		t.Fatal("gen 0 did not install")
-	}
-
-	// appliedGen is now 0, so a generation older than `high` wins again. This is the
-	// documented consequence of the escape hatch, not an accident.
-	if !g.tryApply(1, func() {}) {
-		t.Fatal("after a gen-0 apply, appliedGen resets so any later dispatch applies")
+		t.Fatal("the first dispatch did not install")
 	}
 }
 

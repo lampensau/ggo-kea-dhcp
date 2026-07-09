@@ -88,12 +88,18 @@ func TestNewServerWiresReconcilerEdges(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 
+	// A non-nil MariaDB sentinel: NewServer only stores the handle, and asserting
+	// identity against nil would be vacuous. Passing nil here is what let the
+	// reconciler's mariadb go unchecked - and a nil recon.mariadb beside a live
+	// s.mariadb degrades silently (fixedLeaseIPs treats every lease as movable,
+	// remapReservationSubnets returns early), it never errors.
+	mariadb := &db.MariaDB{}
 	s := NewServer(&config.Config{
 		KeaConfDir:    dir,
 		KeaSecretPath: filepath.Join(dir, "secret"),
 		DBPath:        filepath.Join(dir, "test.db"),
 		KeaAPIURL:     "http://127.0.0.1:1/",
-	}, sqlite, nil)
+	}, sqlite, mariadb)
 
 	rv := reflect.ValueOf(s.recon).Elem()
 	rt := rv.Type()
@@ -121,6 +127,9 @@ func TestNewServerWiresReconcilerEdges(t *testing.T) {
 	}
 	if s.recon.sqlite != s.sqlite || s.recon.cfg != s.cfg {
 		t.Error("reconciler does not share the Server's sqlite/cfg handles")
+	}
+	if s.recon.mariadb != s.mariadb {
+		t.Error("reconciler does not share the Server's mariadb handle - a nil one degrades silently, it does not error")
 	}
 	if s.recon.mon != &s.mon {
 		t.Error("reconciler does not point at the Server's monitorSet - monitor starts and reads would diverge")

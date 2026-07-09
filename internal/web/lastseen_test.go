@@ -86,7 +86,9 @@ func TestLastSeenTrackerSnapshotIsACopy(t *testing.T) {
 }
 
 // TestLastSeenTrackerConcurrentRecordAndSnapshot runs the sampler's write path against
-// the render read path under -race, the interleaving the mutex exists for.
+// the render read path, the interleaving the mutex exists for. It asserts nothing
+// directly: the race detector is the assertion, so this test only earns its keep under
+// `go test -race` (which CI and the make gate both run).
 func TestLastSeenTrackerConcurrentRecordAndSnapshot(t *testing.T) {
 	tr := newLastSeenTracker()
 

@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+// wait joins the currently registered goroutines without signalling shutdown, so a
+// test can await a dispatched background check and keep using the runner. Test-only:
+// production always joins through stop, which is why this lives here and not in bg.go.
+func (b *bgRunner) wait() { b.wg.Wait() }
+
 // TestBgRunnerRefusesAddAfterStop pins the gate every background dispatcher relies
 // on: once stop has begun, add must refuse rather than register a goroutine the
 // join has already waited for. Callers act on ok to decide whether to spawn at all,
@@ -42,9 +47,10 @@ func TestBgRunnerStopIsIdempotent(t *testing.T) {
 // TestBgRunnerAddStopRace hammers registration against shutdown under -race. The
 // invariant the type exists for: a registration either lands before stop's Wait or
 // is refused, never Add-ing onto a zero-counter WaitGroup that Wait already passed
-// (the documented misuse). A spawned goroutine must also always outlive its Add, so
-// stop's join is real - each accepted registration sleeps behind a channel that only
-// closes after stop has been entered.
+// (the documented misuse). Registered work must also outlive the start of stop, so
+// the join is real rather than a Wait on an already-drained counter: the accepted
+// goroutines block on release, which is closed only after stop() has been entered
+// (from a separate goroutine, since stop blocks in Wait until they finish).
 func TestBgRunnerAddStopRace(t *testing.T) {
 	for range 50 { // repeat: the race window is narrow, one pass proves little
 		b := newBgRunner()
@@ -79,10 +85,15 @@ func TestBgRunnerAddStopRace(t *testing.T) {
 		}
 
 		stopped := make(chan struct{})
+		entered := make(chan struct{})
 		go func() {
 			defer close(stopped)
-			close(release) // let any accepted work finish, then join it
-			b.stop()
+			close(entered)
+			b.stop() // blocks in Wait until the accepted goroutines return
+		}()
+		go func() {
+			<-entered      // stop is now running (or about to): its Wait must cover them
+			close(release) // only now may the registered work finish
 		}()
 
 		spawned.Wait()
