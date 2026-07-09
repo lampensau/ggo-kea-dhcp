@@ -14,11 +14,10 @@ import (
 
 // --- Kea config JSON shape (marshalled, not string-templated) ---
 //
-// These private structs mirror the `Dhcp4` configuration object. Building the
-// config as typed values and letting encoding/json emit it means commas,
-// nesting, and value escaping are the encoder's job - a MariaDB password or an
-// SSID containing a quote or backslash can no longer produce invalid JSON, and
-// adding an optional field never reopens hand-managed comma logic.
+// These private structs mirror the `Dhcp4` configuration object. Emitting them through
+// encoding/json makes commas, nesting and value escaping the encoder's job: a MariaDB
+// password or SSID holding a quote or backslash can no longer produce invalid JSON, and
+// an added optional field never reopens hand-managed comma logic.
 
 type keaConfig struct {
 	Dhcp4 dhcp4Config `json:"Dhcp4"`
@@ -27,11 +26,8 @@ type keaConfig struct {
 type dhcp4Config struct {
 	InterfacesConfig interfacesConfig `json:"interfaces-config"`
 	Authoritative    bool             `json:"authoritative"`
-	// Lease timers (seconds). Zero → omitted → Kea defaults (used by the transient
-	// onboarding config). The active profile sets them SHORT on purpose: a device
-	// re-DHCPs at renew-timer (T1), and that renewal is when it adopts a new host
-	// reservation or migrates into its correct device-class pool after a class/pool
-	// change - not at the full lifetime. See RenderProfile.
+	// Lease timers (seconds). Zero → omitted → Kea defaults (the transient onboarding
+	// config). The active profile sets them SHORT on purpose; see defaultLeaseLifetime.
 	ValidLifetime              int             `json:"valid-lifetime,omitempty"`
 	RenewTimer                 int             `json:"renew-timer,omitempty"`
 	RebindTimer                int             `json:"rebind-timer,omitempty"`
@@ -181,26 +177,23 @@ type TemplateData struct {
 	KeaSecretPath string
 	ClientClasses []ClientClassConfig
 	Subnets       []SubnetConfig
-	// Lease timers (seconds); zero leaves them unset (Kea defaults). RenderProfile
-	// sets short values for the active profile so reservation adoption / pool
-	// migration takes effect within minutes; onboarding leaves them zero.
+	// Lease timers (seconds); zero leaves them unset (Kea defaults). See
+	// defaultLeaseLifetime; onboarding leaves them zero.
 	ValidLifetime int
 	RenewTimer    int
 	RebindTimer   int
-	// Debug raises Kea logging to DEBUG/debuglevel 99. Default (false) renders
-	// INFO so production boxes don't hammer the SD card / fill the disk.
+	// Debug raises Kea logging to DEBUG/debuglevel 99. Default (false) renders INFO so
+	// production boxes don't hammer the SD card / fill the disk.
 	Debug bool
 }
 
 // RenderConfig generates the Kea configuration string by marshalling typed
 // structs to JSON.
 func RenderConfig(data TemplateData) (string, error) {
-	// Auto-detect hooks directory if empty
 	if data.HooksDir == "" {
 		data.HooksDir = detectHooksDir()
 	}
 
-	// Default to INFO logging; only raise to DEBUG when explicitly requested.
 	severity, debugLevel := "INFO", 0
 	if data.Debug {
 		severity, debugLevel = "DEBUG", 99
@@ -272,11 +265,8 @@ func hostsDB(data TemplateData) *hostsDatabase {
 	}
 }
 
-// buildHooks lists the hooks libraries. flex_id (port-pinning identifier
-// expression) is prepended only when port pinning is enabled; the MySQL host
-// backend hooks (host_cmds + the mysql connector) are appended only when a DB is
-// configured (hasDB) so the onboarding config loads without MariaDB present. The
-// memfile-only lease_cmds/stat_cmds are always loaded.
+// buildHooks lists the hooks libraries in load order. The MySQL host-backend hooks are
+// conditional (hasDB) so the onboarding config loads without MariaDB present.
 func buildHooks(hooksDir string, portPinning, hasDB bool) []hookLibrary {
 	var hooks []hookLibrary
 	if portPinning {
@@ -382,7 +372,6 @@ func buildSubnets(in []SubnetConfig) []subnet4 {
 }
 
 func detectHooksDir() string {
-	// Try standard Raspberry Pi OS (Debian arm64) path first
 	paths := []string{
 		"/usr/lib/aarch64-linux-gnu/kea/hooks/",
 		"/usr/lib/x86_64-linux-gnu/kea/hooks/",
