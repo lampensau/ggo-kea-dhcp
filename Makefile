@@ -51,15 +51,15 @@ test: generate
 
 all: generate build vet test
 
-# Mirror every CI gate locally so `make release` (and you) can confirm the tree
-# is clean and green before tagging: templ output committed, gofmt, vendor in
-# sync, vet, test, native + arm64 build, golangci-lint, govulncheck, shellcheck.
 # Assert a commit relocates code without changing or reordering it. Not part of
 # `check` - it only means something on a commit that is meant to be a pure move
 # (the refactor series isolates those). Usage: make move-check [COMMIT=<sha>]
 move-check:
 	@scripts/assert-move-only.sh $(or $(COMMIT),HEAD)
 
+# Mirror every CI gate locally so `make release` (and you) can confirm the tree
+# is clean and green before tagging: templ output committed, gofmt, vendor in
+# sync, vet, test, native + arm64 build, golangci-lint, govulncheck, shellcheck.
 check: generate
 	@[ -z "$$(git status --porcelain -- '*_templ.go')" ] || { echo "stale or untracked templ output - run 'templ generate' and commit *_templ.go"; git status --porcelain -- '*_templ.go'; exit 1; }
 	@files=$$(git ls-files --cached --others --exclude-standard '*.go' | grep -vE '^vendor/|_templ\.go$$'); \
@@ -78,7 +78,7 @@ check: generate
 	@[ -x "$(GOVULNCHECK)" ] || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$(GOVULNCHECK) ./...
 	@if command -v shellcheck >/dev/null; then \
-		shellcheck -S error install.sh packaging/scripts/*.sh; \
+		shellcheck -S error install.sh packaging/scripts/*.sh scripts/*.sh; \
 	else \
 		echo "shellcheck not installed - skipping (CI still runs it)"; \
 	fi

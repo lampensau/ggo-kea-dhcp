@@ -84,11 +84,16 @@ const reconcileBusyMsg = "A configuration change is already in progress - try ag
 // state match the persisted lifecycle state and runs the apply/switch converges.
 // It holds only control-plane primitives (config, the two databases, the Kea
 // client, DNS, the network manager, the monitor set) plus the mutation guards; it
-// reaches the web layer (SSE, DNS-zone prime, update checks, monitor starts,
-// backend-health alert, pinned-port reads) ONLY through the nil-tolerant func
-// edges below, which NewServer wires. A nil edge is a no-op, so a test can drive a
-// converge without a full Server. Those edges are the one seam that will become a
-// package boundary when this type moves to internal/appliance.
+// reaches the web layer (uplink announce, DNS-zone prime, update checks, monitor
+// starts, pinned-port reads) ONLY through the func edges below. Those edges are the
+// one seam that will become a package boundary when this type moves to
+// internal/appliance.
+//
+// The edges come in two kinds. NewServer wires the production-only side effects,
+// and each of those is nil-tolerant: a nil edge is a no-op, so a converge in a test
+// never reaches SSE, the DNS zone or the update path. newReconciler itself wires the
+// three monitor starts, which are therefore never nil and are called unguarded - a
+// hand-built &reconciler{} that skips newReconciler must not drive reconcileActive.
 type reconciler struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB

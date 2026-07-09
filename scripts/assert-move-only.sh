@@ -25,6 +25,12 @@
 #      alias or an added blank import (`_ "net/http/pprof"`, a side effect) rides
 #      through silently.
 #
+# Known constraint, deliberate: property 2 is stricter than Go's semantics. Go does
+# not care about the order of top-level declarations, but this refuses a commit that
+# swaps two funcs within a file, because it cannot tell that apart from a reordered
+# statement. A move commit must therefore keep each destination file's declarations
+# in source order; regroup them in a separate, non-move commit.
+#
 # Usage: scripts/assert-move-only.sh [commit]   (default HEAD)   |   make move-check
 #   ALLOW_NONGO=1     permit non-.go files in the same commit (they are NOT checked)
 # Exit 0 = move-only; non-zero + a diff = logic changed.
@@ -139,7 +145,10 @@ for f in $files; do
         END {
             pos = 0; runs = 0
             for (i = 1; i <= n; i++) {
-                if (pos > 0 && pos < m && S[pos + 1] == D[i]) { pos++; continue }
+                # Continue the current run only WITHIN one source file: the pre-image is
+                # a concatenation, so S[pos+1] can be the first line of the NEXT file,
+                # extending a run across a boundary without consulting its lastStart.
+                if (pos > 0 && pos < m && FID[pos + 1] == FID[pos] && S[pos + 1] == D[i]) { pos++; continue }
                 # Longest run that respects its own source file order...
                 best = 0; bestlen = -1
                 for (p = 1; p <= m; p++) {
@@ -153,7 +162,10 @@ for f in $files; do
                     for (p = 1; p <= m; p++) if (S[p] == D[i]) { print "REORDER\t" D[i]; exit }
                     print "MISSING\t" D[i]; exit
                 }
-                pos = best; lastStart[FID[best]] = best; runs++
+                pos = best; runs++
+                # Record where this run ENDS, not where it starts, so a later chunk from
+                # the same source file cannot legally begin inside one already consumed.
+                lastStart[FID[best]] = best + bestlen - 1
             }
             print "OK\t" runs
         }
