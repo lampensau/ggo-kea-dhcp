@@ -5,6 +5,26 @@ import (
 	"time"
 )
 
+// serverHooks is the Server's side of appliance.Hooks: the reconciler's only path
+// back into the web layer, and so the only place the SSE hub, the DNS zone, the
+// update subsystem and the monitors are reachable from a converge.
+type serverHooks struct{ s *Server }
+
+func (h serverHooks) AnnounceUplink(down bool, detail string) {
+	h.s.health.setUplinkDown(down, detail)
+	h.s.publishBackendAlert()
+}
+
+func (h serverHooks) PrimeZone() { h.s.primeDNSZone() }
+
+func (h serverHooks) KickUpdate() { h.s.kickUpdateCheck() }
+
+func (h serverHooks) StartNetmon(scopes []ScopeConfig) { h.s.startNetmon(scopes) }
+
+func (h serverHooks) StartArpProber(scopes []ScopeConfig) { h.s.startArpProber(scopes) }
+
+func (h serverHooks) StartGgoScan(scopes []ScopeConfig) { h.s.startGgoScan(scopes) }
+
 // Thin Server -> Reconciler forwarders. The lifecycle state machine lives in
 // internal/appliance; these keep the handler and background call sites that speak to
 // *Server compiling unchanged while the appliance owns the logic. They carry no
