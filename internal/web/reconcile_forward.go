@@ -3,14 +3,15 @@ package web
 import (
 	"context"
 	"time"
-
-	"ggo-kea-dhcp/internal/kea"
 )
 
 // Thin Server -> reconciler forwarders. The lifecycle state machine lives on
 // *reconciler (see reconciler.go); these keep the handler and background call
 // sites that still speak to *Server compiling unchanged while the reconciler owns
 // the logic. They carry no behavior of their own - each is a one-line delegate.
+//
+// Only names with several callers (or callers in tests) earn a forwarder; a lone
+// call site says s.recon.X() outright rather than paying for one here.
 
 func (s *Server) beginReconcile() bool { return s.recon.beginReconcile() }
 
@@ -34,29 +35,11 @@ func (s *Server) runRecoveredReconcile(name string, fn func()) {
 	s.recon.runRecoveredReconcile(name, fn)
 }
 
-func (s *Server) baseRenderInput() kea.ProfileRenderInput { return s.recon.baseRenderInput() }
-
-func (s *Server) renderKeaForScopes(scopes []ScopeConfig) (string, []string, error) {
-	return s.recon.renderKeaForScopes(scopes)
-}
-
-func (s *Server) snapshotKeaConf(reason string) (string, error) {
-	return s.recon.snapshotKeaConf(reason)
-}
-
-func (s *Server) writeAndReloadKea(ctx context.Context, configStr string) error {
-	return s.recon.writeAndReloadKea(ctx, configStr)
-}
-
 func (s *Server) onboardingCIDR() string { return s.recon.onboardingCIDR() }
-
-func (s *Server) softAPSettings() (ssid, pass string) { return s.recon.softAPSettings() }
 
 func (s *Server) uplinkSettings() (enabled bool, ssid, pass string) {
 	return s.recon.uplinkSettings()
 }
-
-func (s *Server) migrateUplinkToBoxLevel() { s.recon.migrateUplinkToBoxLevel() }
 
 func (s *Server) leaseLifetime() int { return s.recon.leaseLifetime() }
 
@@ -73,5 +56,3 @@ func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
 	s.recon.remapReservationSubnets(ctx, scopes, mode)
 }
-
-func (s *Server) globalDHCPOptions() GlobalDHCPOptions { return s.recon.globalDHCPOptions() }

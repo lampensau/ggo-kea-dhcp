@@ -17,7 +17,7 @@ import (
 func (s *Server) Start() error {
 	// One-shot: lift any legacy per-scope WiFi uplink up to the box-level keys before
 	// the boot reconcile reads them.
-	s.migrateUplinkToBoxLevel()
+	s.recon.migrateUplinkToBoxLevel()
 
 	// Fold any pending self-update outcome into the audit log (UPDATE_APPLIED /
 	// UPDATE_FAILED / needs_system) and clear stale staging leftovers.

@@ -304,7 +304,7 @@ func (s *Server) applyDHCPServingState() error {
 	// fallback (service restart + reachability probe) can take well over opCtx.
 	ctx, cancel := context.WithTimeout(context.Background(), reconcilePassDeadline)
 	defer cancel()
-	return s.writeAndReloadKea(ctx, cfg)
+	return s.recon.writeAndReloadKea(ctx, cfg)
 }
 
 // scheduleServingReloadHeld applies the current serving state (holdoff or profile) to

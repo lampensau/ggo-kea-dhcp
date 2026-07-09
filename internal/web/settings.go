@@ -33,12 +33,12 @@ func (r *reconciler) globalDHCPOptions() GlobalDHCPOptions {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	g := s.globalDHCPOptions()
+	g := s.recon.globalDHCPOptions()
 	gOpts := make([]views.ScopeOptionRow, 0, len(g.Options))
 	for _, o := range g.Options {
 		gOpts = append(gOpts, views.ScopeOptionRow{Name: o.Name, Data: o.Data})
 	}
-	ssid, pass := s.softAPSettings()
+	ssid, pass := s.recon.softAPSettings()
 
 	// WiFi uplink is editable only in ACTIVE (before that wlan0 hosts the
 	// onboarding SoftAP). The credentials are box-level (one wlan0); which scopes route
