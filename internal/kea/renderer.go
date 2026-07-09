@@ -177,7 +177,8 @@ type TemplateData struct {
 	KeaSecretPath string
 	ClientClasses []ClientClassConfig
 	Subnets       []SubnetConfig
-	// Lease timers (seconds); zero leaves them unset (onboarding). See defaultLeaseLifetime.
+	// Lease timers (seconds); zero leaves them unset (onboarding).
+	// See defaultLeaseLifetime.
 	ValidLifetime int
 	RenewTimer    int
 	RebindTimer   int
@@ -264,8 +265,9 @@ func hostsDB(data TemplateData) *hostsDatabase {
 	}
 }
 
-// buildHooks lists the hooks libraries in load order. Each conditional block below says why
-// it is conditional.
+// buildHooks lists the hooks libraries in load order: flex_id only when port pinning
+// is enabled, the memfile lease_cmds/stat_cmds always, and the MySQL host-backend
+// hooks only when a DB is configured, so onboarding loads without MariaDB present.
 func buildHooks(hooksDir string, portPinning, hasDB bool) []hookLibrary {
 	var hooks []hookLibrary
 	if portPinning {
