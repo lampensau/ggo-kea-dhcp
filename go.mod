@@ -6,8 +6,8 @@ require (
 	github.com/a-h/templ v0.3.1020
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/starfederation/datastar-go v1.2.2
-	golang.org/x/net v0.56.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/net v0.57.0
+	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.53.0
 )
 
