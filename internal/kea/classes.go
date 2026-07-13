@@ -9,8 +9,8 @@ import (
 // for the Kea client-class `test` expressions, lease/dashboard classification, and
 // pool sizing (PRD §16 / D7: maintained here, never re-implemented per call site).
 //
-// Prefixes match at offset 6 of hexstring(pkt4.mac,”), the device-type digits
-// following the `001f80` OUI. BPX takes 2 digits ("20") because its serial blocks
+// Prefixes match at offset 6 of the MAC hexstring (classPrefixExpr builds the exact
+// Kea expression), the device-type digits following the `001f80` OUI. BPX takes 2 digits ("20") because its serial blocks
 // span 0x200xxx-0x202xxx; every other type takes 3.
 type DeviceClass struct {
 	Name     string   // Kea class name, e.g. "GGO-BPX"

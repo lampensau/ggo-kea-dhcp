@@ -50,6 +50,7 @@ const onboardingLeaseLifetime = 90
 // leaseTimers derives (valid, renew, rebind) from a lease lifetime in seconds using the
 // conventional T1 = 1/2 and T2 = 7/8 of the lifetime. A non-positive lifetime falls back
 // to the default.
+//
 // T1, not the lifetime, is the latency of every change that only lands on renewal, because a
 // device re-DHCPs then: adopting a freshly-created host reservation, or migrating into its
 // correct device-class pool after a class/pool change (its old, now-disallowed lease is NAKed).

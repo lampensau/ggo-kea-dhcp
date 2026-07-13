@@ -178,7 +178,7 @@ type TemplateData struct {
 	ClientClasses []ClientClassConfig
 	Subnets       []SubnetConfig
 	// Lease timers (seconds); zero leaves them unset (onboarding).
-	// See defaultLeaseLifetime.
+	// See leaseTimers.
 	ValidLifetime int
 	RenewTimer    int
 	RebindTimer   int
