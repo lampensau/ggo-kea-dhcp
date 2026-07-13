@@ -28,14 +28,14 @@ func NewManagerWithCommander(c Commander) *Manager {
 	return &Manager{cmd: c}
 }
 
-// RestartService restarts a systemd unit (sudo systemctl restart <name>) through
-// the Commander seam. Used to recover Kea when its HTTP control socket is
-// unreachable: a config-reload cannot bootstrap the :8004 listener, so only a
-// restart - which makes Kea re-read its on-disk config - brings it back. No-ops in
-// dev when systemctl is absent. Only the Kea unit is permitted: the sudoers rule
-// is exact-argument, so any other unit would be refused by sudo on the Pi anyway
-// - rejecting it here keeps the Run argv literal (verified against the sudoers
-// drop-in by sudoers_test.go) and closes the seam against arbitrary restarts.
+// RestartService restarts a systemd unit (sudo systemctl restart <name>) through the
+// Commander seam. Used to recover Kea when its HTTP control socket is unreachable: a
+// config-reload cannot bootstrap the :8004 listener, so only a restart, which makes Kea
+// re-read its on-disk config, brings it back. No-ops in dev when systemctl is absent.
+// Only the Kea unit is permitted; the sudoers rule is exact-argument so sudo on the Pi
+// would refuse any other, and rejecting it here keeps the Run argv literal (verified
+// against the sudoers drop-in by sudoers_test.go) and closes the seam against
+// arbitrary restarts.
 func (m *Manager) RestartService(name string) error {
 	// keaUnit mirrors the web layer's keaServiceName; a single shared constant
 	// would couple the packages for one string, so the sudoers cross-check test
@@ -140,11 +140,10 @@ func (m *Manager) DeleteApplianceConnections() error {
 
 	// List all connections, not just --active: an inactive ggo- connection (carrier
 	// down, or not yet autoconnected) would otherwise survive the teardown and later
-	// autoconnect with stale addressing. Every caller runs this on a ModeApply
-	// "tear down then rebuild" pass, so evicting inactive ones too is the intent.
-	// -t -f NAME: terse output, one connection NAME per line (a colon inside a name is
-	// backslash-escaped). splitNmcliTerse unescapes it - so a ggo- name containing a
-	// space no longer mis-splits the way the old columnar strings.Fields[0] did.
+	// autoconnect with stale addressing. Every caller runs this on a ModeApply "tear
+	// down then rebuild" pass, so evicting inactive ones too is the intent. `-t -f NAME`
+	// gives one NAME per line with any colon backslash-escaped; splitNmcliTerse
+	// unescapes it, so a ggo- name containing a space cannot mis-split.
 	output, err := m.cmd.Run("nmcli", "-t", "-f", "NAME", "connection", "show")
 	if err != nil {
 		return err
@@ -242,16 +241,15 @@ func (m *Manager) DisconnectWifiUplink() error {
 	return err
 }
 
-// IsWifiUplinkActive reports whether the ggo-wifi-uplink NM connection is
-// genuinely connected (STATE == "activated"), so the reconciler can skip the slow
-// (re)connect. Crucially it does NOT count a profile that merely exists or is still
-// "activating" - NetworkManager lists a saved autoconnect profile in --active the
-// moment it starts trying, and keeps it there while an association/auth retry
-// churns. Treating that as "up" is what let a boot whose saved profile never
-// actually associated skip the explicit connect silently: no attempt, so no
-// success and no error ever reached the log. Requiring "activated" makes the
-// reconciler fall through and run SetWifiUplink (which retries and surfaces the
-// real failure reason) whenever the link is not truly established.
+// IsWifiUplinkActive reports whether the ggo-wifi-uplink NM connection is genuinely
+// connected (STATE == "activated"), so the reconciler can skip the slow (re)connect. It
+// deliberately does NOT count a profile that merely exists or is still "activating":
+// NetworkManager lists a saved autoconnect profile in --active the moment it starts
+// trying and keeps it there while an association/auth retry churns. Treating that as
+// "up" let a boot whose saved profile never associated skip the explicit connect
+// silently, with no attempt, so neither success nor error ever reached the log.
+// Requiring "activated" makes the reconciler fall through to SetWifiUplink, which
+// retries and surfaces the real failure reason, whenever the link is not established.
 func (m *Manager) IsWifiUplinkActive() bool {
 	out, err := m.cmd.Run("nmcli", "-t", "-f", "NAME,STATE", "connection", "show", "--active")
 	if err != nil {

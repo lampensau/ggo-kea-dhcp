@@ -33,9 +33,10 @@ const (
 	StateFactory    = "FACTORY"
 	StateOnboarding = "ONBOARDING"
 	// StateConfiguring is a persisted transient state held for the duration of a
-	// profile apply. Persisting it (rather than relying on an in-memory flag)
-	// makes a crash mid-apply recoverable: a box found in CONFIGURING at boot had
-	// its apply interrupted and is reverted to ONBOARDING by the reconciler.
+	// profile apply. Persisting it (rather than relying on an in-memory flag) makes
+	// a crash mid-apply recoverable: a box found in CONFIGURING at boot had its apply
+	// interrupted, and the reconciler resumes and completes it, reverting to
+	// ONBOARDING only if that fails.
 	StateConfiguring = "CONFIGURING"
 	StateActive      = "ACTIVE"
 )
@@ -52,13 +53,12 @@ const (
 	sqliteNotADB  = 26 // SQLITE_NOTADB  - file opened that is not a database file
 )
 
-// OpenSQLite opens the control-plane database and runs migrations. If the file is
-// corrupt it self-heals: the bad file is moved aside (appliance.db.corrupt-<ts>)
-// and a fresh database is created, so a headless box boots into FACTORY rather
-// than bricking. Prior control-plane data is lost on self-heal - the operator
-// restores it from a backup (see the full-stack backup/restore). The recovery is
-// recorded in app_state (db_recovered_at / db_recovered_from) for a one-time UI
-// banner.
+// OpenSQLite opens the control-plane database and runs migrations. A corrupt file
+// self-heals: it is moved aside (appliance.db.corrupt-<ts>) and a fresh database
+// created, so a headless box boots into FACTORY rather than bricking. Prior data is
+// lost; the operator restores it from a backup (see the full-stack backup/restore).
+// The recovery is recorded in app_state (db_recovered_at / db_recovered_from) for a
+// one-time UI banner.
 func OpenSQLite(dbPath string) (*SQLiteDB, error) {
 	sdb, err := openAndMigrate(dbPath)
 	if err == nil {
@@ -246,7 +246,6 @@ func (db *SQLiteDB) runMigrations() error {
 		})
 	}
 
-	// Sort migrations by version ascending
 	sort.Slice(migrations, func(i, j int) bool {
 		return migrations[i].version < migrations[j].version
 	})
@@ -275,10 +274,8 @@ func (db *SQLiteDB) runMigrations() error {
 			return fmt.Errorf("failed to start migration transaction: %w", err)
 		}
 
-		// Split migration SQL into individual statements
-		// This is a simple parser that splits by semicolon.
-		// For migrations containing triggers/stored procedures with semicolons, we'd need a more advanced parser,
-		// but simple semicolon splitting is perfect for our control plane schema.
+		// Splitting on semicolons is enough for the control-plane schema; a migration
+		// carrying triggers or stored-procedure bodies would need a real parser.
 		for query := range strings.SplitSeq(m.sql, ";") {
 			trimmed := strings.TrimSpace(query)
 			if trimmed == "" {
@@ -290,7 +287,6 @@ func (db *SQLiteDB) runMigrations() error {
 			}
 		}
 
-		// Update user_version
 		pragmaCmd := fmt.Sprintf("PRAGMA user_version = %d;", m.version)
 		if _, err := tx.Exec(pragmaCmd); err != nil {
 			_ = tx.Rollback()

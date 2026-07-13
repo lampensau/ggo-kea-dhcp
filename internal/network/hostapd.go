@@ -76,10 +76,11 @@ func (m *Manager) StartSoftAP(ssid, passphrase string) error {
 	_ = m.StopSoftAP()
 
 	// Clear any pre-existing IPv4 on wlan0 (e.g. a leftover WiFi-uplink address from a
-	// prior ACTIVE state) so the interface carries ONLY the SoftAP IP. Otherwise wlan0 is
-	// dual-homed and Kea - reloaded moments later against that interface - binds stale
-	// sockets and silently never answers the SoftAP's DHCP. Mirror of StopSoftAP's flush;
-	// the two together keep wlan0's role transitions clean.
+	// prior ACTIVE state) so the interface carries ONLY the SoftAP IP. Otherwise wlan0
+	// is dual-homed and Kea - reloaded moments later against that interface - binds
+	// stale sockets and silently never answers the SoftAP's DHCP. A full flush is right
+	// on the way in; StopSoftAP deletes only the SoftAP CIDR on the way out, so a
+	// WiFi-uplink address survives. Together they keep wlan0's role transitions clean.
 	_, _ = m.cmd.Run("ip", "-4", "addr", "flush", "dev", "wlan0")
 
 	// Assign a static IP to wlan0 and bring it up. These are best-effort (warn,

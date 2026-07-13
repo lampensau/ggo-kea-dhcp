@@ -1,24 +1,21 @@
-// Package dns is the appliance's single owner of UDP port 53 in ACTIVE: the
-// authoritative server for the device zones inv.greengo.digital and
-// dhcp.greengo.digital plus a deliberately dumb forwarder to the uplink's
-// resolver. One component, never two servers racing for the socket. Outside
-// ACTIVE the listeners are simply stopped (no DNS during FACTORY/ONBOARDING).
+// Package dns is the appliance's single owner of UDP port 53 in ACTIVE: authoritative
+// for the device zones inv.greengo.digital and dhcp.greengo.digital, plus a
+// deliberately dumb forwarder to the uplink's resolver. One component, never two
+// racing for the socket. Outside ACTIVE the listeners are stopped (no DNS during
+// FACTORY/ONBOARDING).
 //
-// Transport: UDP plus a TCP fallback (RFC 7766). The server's own answers are
-// minimal single-record responses that always fit the classic 512-byte payload,
-// but a forwarded upstream answer can exceed any UDP size (a large TXT or DNSSEC
-// reply), and such an answer is only reachable over TCP - so the box listens on
-// TCP/53 as well and forwards over TCP when a client retries there. Over UDP a
-// reply larger than 512 bytes to a client that did not signal EDNS0 is still
-// truncated with TC rather than reflected; TCP carries the full answer without
-// truncation. A completed TCP handshake cannot be source-spoofed, so the TCP
-// path is not a reflection vector; together with the global forward-rate ceiling
-// and a bounded pool of concurrent TCP connections, the LAN-only forwarder still
-// cannot be turned into an amplifier.
+// Transport is UDP with a TCP fallback (RFC 7766). Our own answers are minimal single
+// records that fit the classic 512-byte payload, but a forwarded upstream answer (a
+// large TXT or DNSSEC reply) can exceed any UDP size and is reachable only over TCP,
+// so the box listens on TCP/53 too and forwards over TCP when a client retries there.
+// Over UDP an oversized reply to a client that did not signal EDNS0 is truncated with
+// TC rather than reflected. A completed TCP handshake cannot be source-spoofed, so
+// that path is no reflection vector; with the global forward-rate ceiling and a
+// bounded pool of concurrent TCP connections, this LAN-only forwarder cannot be turned
+// into an amplifier.
 //
-// Isolation matches internal/netmon: this package imports neither web nor kea;
-// the zone contents are pushed in by the owner (SetZone) and everything else is
-// self-contained.
+// Isolation matches internal/netmon: imports neither web nor kea, and the zone
+// contents are pushed in by their owner (SetZone).
 package dns
 
 import (
@@ -30,10 +27,9 @@ import (
 	"time"
 )
 
-// forwardTimeout bounds one upstream exchange; queryLimitPerSec is the
-// per-source response rate limit; maxInflightForwards bounds the forward
-// worker pool - beyond it the server sheds with SERVFAIL instead of spawning
-// per packet.
+// forwardTimeout bounds one upstream exchange; queryLimitPerSec is the per-source
+// response rate limit; maxInflightForwards bounds the forward worker pool, beyond
+// which the server sheds with SERVFAIL instead of spawning a goroutine per packet.
 const (
 	forwardTimeout      = 3 * time.Second
 	queryLimitPerSec    = 100
@@ -165,14 +161,13 @@ func (s *Server) start(bindIPs []string) []string {
 }
 
 // RebindMissing re-attempts a bind for every desired address that is not currently
-// listening - the self-heal for an address that was not yet present when StartZone
-// ran (its single bind attempt failed) but has since appeared on the interface.
-// Without this a scope whose bind lost the post-re-IP race stays dark until the next
-// full reconcile, even though the address is now up and the zone content refreshes
-// every sampler tick. One attempt per address (the caller's sampler cadence is the
-// retry interval, so no inner sleep); a still-absent address just fails ListenUDP and
-// is left for the next call. Returns the addresses that newly bound, so the caller can
-// audit the recovery. Inert when the server is stopped (no desired set).
+// listening: the self-heal for one that was absent when StartZone made its single
+// attempt and has since appeared. Without it a scope whose bind lost the post-re-IP
+// race stays dark until the next full reconcile, though the address is up and the zone
+// content refreshes every sampler tick. One attempt per address - the sampler cadence
+// IS the retry interval, so no inner sleep - and a still-absent address just fails
+// ListenUDP and waits for the next call. Returns the newly bound addresses so the
+// caller can audit the recovery. Inert when stopped (no desired set).
 func (s *Server) RebindMissing() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -456,7 +451,6 @@ func (l *listener) handle(req []byte) (resp, forward []byte) {
 		}
 	}
 
-	// Everything else goes upstream on the bounded forward path.
 	cp := make([]byte, len(req))
 	copy(cp, req)
 	return nil, cp
@@ -511,12 +505,12 @@ func (s *Server) forward(req []byte, q question) []byte {
 }
 
 // raceUpstreams probes every upstream concurrently and returns the first non-nil
-// (verified) reply, or nil when there are none / all fail. Parallel rather than
-// serial so a dead upstream adds no latency: the total budget is one upstream
-// timeout, not the sum over a serially-tried list. This costs one query per
-// upstream (typically 2-3 from resolv.conf) instead of stopping at the first
-// success - acceptable for a LAN forwarder already bounded by the global forward
-// ceiling. The losing goroutines drain into the buffered channel and exit.
+// (verified) reply, nil when there are none or all fail. Parallel rather than serial
+// so a dead upstream adds no latency: the budget is one upstream timeout, not the sum
+// over a serially-tried list. The cost is one query per upstream (typically 2-3 from
+// resolv.conf) instead of stopping at the first success, acceptable for a LAN
+// forwarder already bounded by the global forward ceiling. Losers drain into the
+// buffered channel and exit.
 func raceUpstreams(ups []string, probe func(upstream string) []byte) []byte {
 	if len(ups) == 0 {
 		return nil
@@ -729,12 +723,12 @@ func writeTCPMessage(w io.Writer, msg []byte) bool {
 	return err == nil
 }
 
-// arCount reads the ARCOUNT header field. arCount==0 means the request carried no
-// additional records at all - a cheap proxy for "no EDNS0 OPT record", not a true
-// OPT-record parse (a request could in principle carry a non-OPT additional
-// record). It only gates whether an oversized upstream reply is truncated to 512
-// bytes; the global forward ceiling is the actual anti-amplification defense. req
-// is always at least a full header here (parseQuestion ran).
+// arCount reads the ARCOUNT header field. Zero means the request carried no additional
+// records at all: a cheap proxy for "no EDNS0 OPT record", not a true OPT-record parse
+// (a request could in principle carry a non-OPT additional record). It only gates
+// whether an oversized upstream reply is truncated to 512 bytes; the global forward
+// ceiling is the actual anti-amplification defense. req is always at least a full
+// header here (parseQuestion ran).
 func arCount(req []byte) int {
 	return int(req[10])<<8 | int(req[11])
 }
@@ -765,19 +759,17 @@ func (g *forwardGate) allow(now time.Time) bool {
 // Sized generously above any real client population on a served LAN segment.
 const maxTrackedSources = 512
 
-// rateLimiter is a per-source fixed-window counter: cheap, deterministic, and
-// bounded - the map resets every window and is capped within one. When the cap
-// is hit, sources not already tracked are refused for the remainder of that
-// window. Fail-closed is deliberate (fail-open would make the authoritative
-// path a reflector), and honestly: under a SUSTAINED spoofed flood the slots
-// refill with fakes at every window rollover, so legitimate clients that lose
-// the race - device-name resolution included - are starved for the flood's
-// whole duration, not one second. That is the accepted cost; the flood itself
-// is already an outage condition on the segment. The cap budget is global
-// across all listeners/VLANs, not per segment. capLogged edge-triggers one log
-// line per capped WINDOW - it resets with the per-second rollover, so a
-// sustained flood logs roughly once a second for its duration - keeping the
-// starvation diagnosable without per-packet spam.
+// rateLimiter is a per-source fixed-window counter: cheap, deterministic and bounded,
+// the map resetting every window and capped within one. At the cap, sources not
+// already tracked are refused for the rest of that window. Fail-closed is deliberate
+// (fail-open would make the authoritative path a reflector), and under a SUSTAINED
+// spoofed flood the slots refill with fakes at every rollover, so legitimate clients
+// that lose the race, device-name resolution included, are starved for the flood's
+// whole duration rather than one second. That is the accepted cost; the flood is
+// already an outage condition on the segment. The cap budget is global across all
+// listeners/VLANs, not per segment. capLogged edge-triggers one log line per capped
+// WINDOW (it resets with the per-second rollover, so a sustained flood logs roughly
+// once a second), keeping the starvation diagnosable without per-packet spam.
 type rateLimiter struct {
 	mu        sync.Mutex
 	window    int64

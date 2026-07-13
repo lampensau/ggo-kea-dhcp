@@ -203,13 +203,12 @@ func mariadbStatus(dsn string, connectErr, schemaErr error) Check {
 	return Check{name, OK, "connected, hosts table present (" + config.RedactedMariaDSN(dsn) + ")"}
 }
 
-// checkKeaConfDir verifies the app can write kea-dhcp4.conf - a hard requirement for
-// applying any profile. The app OVERWRITES that file in place (it owns it, mode 0660); it
-// never creates new files in /etc/kea, which the package deliberately keeps 0750 root:_kea.
-// So when the conf already exists we probe THAT file's writability (open for write, no
-// truncate) rather than creating a temp file in the dir - the old dir-create probe was a
-// false negative on a correctly-installed box. Only when the conf doesn't exist yet (so the
-// app would have to create it) do we fall back to the dir-create probe.
+// checkKeaConfDir verifies the app can write kea-dhcp4.conf, a hard requirement for
+// applying any profile. The app OVERWRITES that file in place (it owns it, mode 0660)
+// and never creates files in /etc/kea, which the package deliberately keeps 0750
+// root:_kea. So an existing conf is probed for writability directly (open for write, no
+// truncate); a dir-create probe there is a false negative on a correctly-installed box.
+// Only when the conf is absent, so the app would have to create it, does that apply.
 func checkKeaConfDir(cfg *config.Config) Check {
 	const name = "Kea config dir writable"
 	dir := cfg.KeaConfDir
@@ -262,13 +261,12 @@ func capCheck(name string, eff uint64, bit uint) Check {
 	return Check{name, Warn, "not held - feature disabled (granted via systemd AmbientCapabilities)"}
 }
 
-// checkPort53 probes whether UDP port 53 is available for the local DNS server.
-// The appliance's own listeners bind per-scope addresses, never loopback, so a
-// loopback bind succeeding means no wildcard binder (systemd-resolved, dnsmasq)
-// is squatting the port; failing means one is, and device-name resolution will
-// not come up. Warn (not Fail): DNS is a feature, DHCP serves without it. A
-// permission error is folded into the CAP_NET_BIND_SERVICE story instead of
-// blamed on a conflicting service.
+// checkPort53 probes whether UDP port 53 is available for the local DNS server. The
+// appliance's own listeners bind per-scope addresses, never loopback, so a loopback
+// bind succeeding means no wildcard binder (systemd-resolved, dnsmasq) is squatting the
+// port; failing means one is, and device-name resolution will not come up. Warn, not
+// Fail: DNS is a feature and DHCP serves without it. A permission error is folded into
+// the CAP_NET_BIND_SERVICE story rather than blamed on a conflicting service.
 func checkPort53() Check {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 53})
 	if err == nil {
@@ -305,18 +303,17 @@ func port53Status(proto string, err error) Check {
 	return Check{name, Warn, fmt.Sprintf("port taken by another service - local DNS cannot bind %s/53: %v", proto, err)}
 }
 
-// checkClock reports the reliability of the time source, which lease expiry
-// depends on. The failure this guards against: an RTC-less box boots with a stale
-// clock, devices lease under that wrong time, and when the clock is later stepped
-// FORWARD (NTP syncs, or a late correction) every lease's expiry lands in the past
-// at once, so Kea reclaims them all - the whole active-lease table vanishes.
+// checkClock reports the reliability of the time source lease expiry depends on. The
+// failure it guards against: an RTC-less box boots with a stale clock, devices lease
+// under that wrong time, and a later FORWARD step (NTP syncs, or a late correction)
+// lands every lease's expiry in the past at once, so Kea reclaims them all and the
+// whole active-lease table vanishes.
 //
-// A hardware RTC removes the risk entirely: the kernel restores a correct time
-// before userspace, so nothing steps forward later - hence RTC-present is OK
-// regardless of NTP. Without an RTC we rely on fake-hwclock (restores the
-// last-known time at boot, and only ever forward) plus NTP; the one genuinely
-// risky state is no RTC AND an undisciplined clock, where the wall-clock may be
-// wrong and a later sync could trip the wipe.
+// A hardware RTC removes the risk entirely, the kernel restoring a correct time before
+// userspace so nothing steps forward later, hence RTC-present is OK regardless of NTP.
+// Without one we rely on fake-hwclock (restores the last-known time at boot, and only
+// ever forward) plus NTP. The one genuinely risky state is no RTC AND an undisciplined
+// clock, where the wall-clock may be wrong and a later sync could trip the wipe.
 func checkClock() Check {
 	return clockStatus(hasRTC(), clockSynced())
 }
