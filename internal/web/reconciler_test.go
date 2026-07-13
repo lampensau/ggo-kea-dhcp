@@ -15,7 +15,8 @@ import (
 // testHooks keeps the monitor starts (they no-op on their own when the monitors are
 // absent, and several tests drive the paths that call them) but silences the three
 // notification edges, so a converge in a unit test reaches no SSE hub, no DNS zone,
-// and no update path.
+// and no update path. The embedded serverHooks implements any hook added later, live -
+// a new notification hook must be re-silenced here by hand.
 type testHooks struct{ serverHooks }
 
 func (testHooks) AnnounceUplink(bool, string) {}
@@ -72,7 +73,7 @@ func TestNewServerBuildsReconciler(t *testing.T) {
 	// identity against nil would be vacuous. Passing nil here is what let the
 	// reconciler's mariadb go unchecked - and a nil recon.mariadb beside a live
 	// s.mariadb degrades silently (fixedLeaseIPs treats every lease as movable,
-	// remapReservationSubnets returns early), it never errors.
+	// RemapReservationSubnets returns early), it never errors.
 	mariadb := &db.MariaDB{}
 	s := NewServer(&config.Config{
 		KeaConfDir:    dir,
