@@ -55,10 +55,9 @@ const (
 	layoutCatchAll = 10 // floor for the GGO-OTHERS / OTHERS catch-all pools
 )
 
-// SizeForClass returns the auto-sized Fixed pool size for a device/catch-all
-// class: the forecast count itself, floored to the class minimum (FloorForClass).
-// No headroom is added - sizing is WYSIWYG, so the number the operator sets (or a
-// preset's count) is the pool size.
+// SizeForClass returns the auto-sized Fixed pool size for a device/catch-all class: the
+// forecast count itself, floored to the class minimum (FloorForClass). No headroom is
+// added - sizing is WYSIWYG, so the number the operator sets is the pool size.
 func SizeForClass(class string, count int) int {
 	return max(count, FloorForClass(class))
 }
@@ -87,7 +86,6 @@ func FitCIDR(cidr string, specs []PoolSpec) string {
 	if ip4 == nil {
 		return cidr
 	}
-	// Widen the mask one bit at a time, re-masking the network base each step.
 	start, _ := ipnet.Mask.Size()
 	for m := start - 1; m >= fitCIDRFloor; m-- {
 		base := ip4.Mask(net.CIDRMask(m, 32))

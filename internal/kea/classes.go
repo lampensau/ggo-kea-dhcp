@@ -5,15 +5,14 @@ import (
 	"strings"
 )
 
-// DeviceClass is a single Green-GO device-type band. It is the SINGLE source of
-// truth for (a) the Kea client-class `test` expressions, (b) lease/dashboard
-// classification, and (c) elastic pool sizing. PRD §16 / D7: this table must be
-// maintainable in one place rather than re-implemented per call site.
+// DeviceClass is a single Green-GO device-type band, and the SINGLE source of truth
+// for the Kea client-class `test` expressions, lease/dashboard classification, and
+// pool sizing (PRD §16 / D7: maintained here, never re-implemented per call site).
 //
-// Prefixes are matched at offset 6 of hexstring(pkt4.mac,”) - i.e. the low-24
-// device-type nibble that follows the `001f80` OUI. BPX is matched on 2 hex
-// digits ("20") because its serial blocks span 0x200xxx-0x202xxx; every other
-// type is matched on 3 digits.
+// Prefixes match at offset 6 of the MAC hexstring (classPrefixExpr builds the exact
+// Kea expression) - the device-type digits following the `001f80` OUI. BPX takes 2
+// digits ("20") because its serial blocks span 0x200xxx-0x202xxx; every other type
+// takes 3.
 type DeviceClass struct {
 	Name     string   // Kea class name, e.g. "GGO-BPX"
 	CountKey string   // wizard/pool_spec key, e.g. "count_bpx"
@@ -23,19 +22,14 @@ type DeviceClass struct {
 	Codes    string   // hardware codes, e.g. "BPX / BP2"
 }
 
-// DeviceClasses lists the mapped Green-GO bands in canonical order.
-// GGO-OTHERS (any Green-GO device without its own pool) and OTHERS (non-Green-GO /
-// universal backstop) are catch-alls handled by ClientClasses/ClassifyMAC and are
-// intentionally not in this slice. (Pool sizing is WYSIWYG via SizeForClass - the old
-// per-class "headroom" multiplier is gone from the live path; see layout.go.)
-// Order here is the canonical display order everywhere (Add-pool menu, wizard
-// device grid, dashboard breakdown): beltpacks first, then the rack/panel gear,
-// then the RF/antenna family, then interfaces and bridges, switches last.
+// DeviceClasses lists the mapped Green-GO bands. This order is the canonical display
+// order everywhere (Add-pool menu, wizard device grid, dashboard breakdown): beltpacks
+// first, then the rack/panel gear, then the RF/antenna family, then interfaces and
+// bridges, switches last. The catch-alls are intentionally absent - ClientClasses and
+// ClassifyMAC handle them.
 //
-// Prefixes are the manufacturer's 0x1000 MAC blocks per the vendor's allocation
-// table - each 3-hex prefix is exactly one allocated block base. We carry ONLY
-// allocated blocks; speculative
-// "high" guesses (22d/21d/23d/21e/222) were removed as they map to no real device.
+// Each 3-hex prefix is exactly one allocated MAC block base. Carry ONLY allocated
+// blocks: a speculative prefix maps to no real device and only widens a class's match.
 var DeviceClasses = []DeviceClass{
 	{Name: "GGO-BPX", CountKey: "count_bpx", Prefixes: []string{"20"}, Label: "Beltpacks", Icon: "bpx", Codes: "BPX / BP2"},
 	{Name: "GGO-MCX-D", CountKey: "count_mcx", Prefixes: []string{"220", "225"}, Label: "Multi-Channel", Icon: "mcx", Codes: "MCX / MCXD"},
@@ -53,22 +47,18 @@ const (
 	// greenGOOUI is registered to Lucas Holding BV - the parent of both Green-GO
 	// and ELC - so this OUI is shared by Green-GO intercom and (some) ELC gear.
 	greenGOOUI = "001f80"
-	// ClassNameGGOOthers: the single Green-GO catch-all - ANY Green-GO/ELC device not
-	// served by a specific model pool, whether genuinely unclassified (unmapped
-	// prefix) or a recognized type with no pool of its own (e.g. a STRIDE when no
-	// STRIDE pool is configured).
+	// ClassNameGGOOthers is the single Green-GO catch-all: any Green-GO/ELC device with
+	// no model pool of its own in the scope (see GGOOthersTest).
 	ClassNameGGOOthers = "GGO-OTHERS"
-	// ClassNameOthers: the NON-Green-GO pool. Its test excludes the Green-GO OUI, so a
-	// Green-GO device is never a member - that exclusivity is what lets a mis-placed
-	// Green-GO device migrate out instead of clinging to an OTHERS-pool address.
+	// ClassNameOthers is the non-Green-GO pool; its test excludes the Green-GO OUI
+	// (see ClientClasses for why that exclusivity matters).
 	ClassNameOthers = "OTHERS"
 	CountKeyOthers  = "count_others"
 )
 
-// IsCatchAll reports whether a class is one of the unmatched-device safety nets:
-// GGO-OTHERS (any Green-GO device without its own pool) or OTHERS (non-Green-GO /
-// universal backstop). Their pools are non-removable in the editor so no device is
-// ever left without a pool (and thus a lease).
+// IsCatchAll reports whether class is one of the two unmatched-device safety nets.
+// Their pools are non-removable in the editor, so no device is ever left without a
+// pool, and thus without a lease.
 func IsCatchAll(class string) bool {
 	return class == ClassNameGGOOthers || class == ClassNameOthers
 }
@@ -97,10 +87,9 @@ func ClassMetadata(class string) (label, icon, codes string) {
 // ouiMatch is the Kea expression fragment testing the Green-GO OUI.
 const ouiMatch = "substring(hexstring(pkt4.mac, ''), 0, 6) == '" + greenGOOUI + "'"
 
-// classPrefixExpr builds the device-type prefix fragment for one mapped class
-// (the offset-6 substring test, OR-ed across the class's prefixes and parenthesized
-// when there is more than one). It carries no OUI check - callers AND it with
-// ouiMatch. Reused by both classTest and the scope-relative GGO-OTHERS test.
+// classPrefixExpr builds the device-type prefix fragment for one mapped class: the
+// offset-6 substring test, OR-ed across the class's prefixes and parenthesized when
+// there is more than one. It carries no OUI check - callers AND it with ouiMatch.
 func classPrefixExpr(dc DeviceClass) string {
 	var terms []string
 	for _, p := range dc.Prefixes {
@@ -128,13 +117,12 @@ func deviceClassByName(name string) (DeviceClass, bool) {
 }
 
 // GGOOthersTest builds the SCOPE-RELATIVE GGO-OTHERS test: any Green-GO/ELC device
-// whose model is NOT one of the device classes that already has its own pool in this
-// scope. Excluding the pooled classes is what stops a classified device (e.g. a
-// beltpack in a scope that has a GGO-BPX pool) from being a member of - and therefore
-// sticking in - the catch-all pool when its own pool has room. A recognized type with
-// NO pool here (e.g. an MCXD when only a BPX pool is configured) is NOT excluded, so it
-// still falls into GGO-OTHERS as intended. With no specific GGO pools the test degrades
-// to the bare OUI match (every Green-GO device is a catch-all member).
+// whose model has no pool of its own in this scope. Excluding the pooled classes is
+// what stops a classified device (a beltpack in a scope that has a GGO-BPX pool) from
+// being a member of - and so sticking in - the catch-all while its own pool has room.
+// A recognized type with NO pool here (an MCXD where only BPX is pooled) is not
+// excluded and still lands in GGO-OTHERS. With no specific GGO pools the test degrades
+// to the bare OUI match: every Green-GO device is a catch-all member.
 func GGOOthersTest(pooled []DeviceClass) string {
 	if len(pooled) == 0 {
 		return ouiMatch
@@ -148,26 +136,23 @@ func GGOOthersTest(pooled []DeviceClass) string {
 
 // ClientClasses renders the GLOBAL ordered set of Kea client-classes: every mapped
 // device band, then OTHERS (the non-Green-GO pool). The Green-GO catch-all GGO-OTHERS
-// is NOT global - it is generated PER SCOPE in RenderProfile (GGO-OTHERS-<idx>) with a
-// scope-relative test (see GGOOthersTest) so a classified device is not a member of the
-// catch-all pool in a scope that already pools its type. This replaces the literals
-// previously inlined in the wizard and server render paths.
+// is NOT global - RenderProfile generates it PER SCOPE (GGO-OTHERS-<idx>) with a
+// scope-relative test; see GGOOthersTest for why.
 func ClientClasses() []ClientClassConfig {
 	classes := make([]ClientClassConfig, 0, len(DeviceClasses)+1)
 	for _, dc := range DeviceClasses {
 		classes = append(classes, ClientClassConfig{Name: dc.Name, Test: classTest(dc)})
 	}
 
-	// OTHERS: the NON-Green-GO pool (test excludes the Green-GO/ELC OUI). A Green-GO
-	// device is therefore NEVER a member of OTHERS - which is the whole point: a
-	// Green-GO device that ends up here (e.g. an old lease whose address a range repack
-	// shifted into this pool) is NAKed off it and re-DISCOVERs into its own pool,
-	// instead of clinging to the address forever (proven on the box: while OTHERS was
-	// member('ALL') the device re-requested and was re-granted its stale address). The
-	// tradeoff, chosen knowingly: a POOLED Green-GO type whose own pool is FULL no
-	// longer overflows here - it is NAKed (a clear "grow that pool" signal). Unpooled
-	// Green-GO types still never-NAK via the elastic GGO-OTHERS pool; non-Green-GO
-	// devices are OTHERS' occupants. Ordered last (profile.go precedence).
+	// OTHERS: the non-Green-GO pool, its test excluding the Green-GO/ELC OUI. A Green-GO
+	// device is therefore NEVER a member, which is the whole point - one that ends up
+	// here (an old lease whose address a range repack shifted into this pool) is NAKed
+	// off and re-DISCOVERs into its own pool instead of clinging to the address forever
+	// (proven on the box: while OTHERS was member('ALL') the device re-requested and was
+	// re-granted its stale address). The tradeoff, chosen knowingly: a POOLED Green-GO
+	// type whose own pool is FULL no longer overflows here, it is NAKed - a clear "grow
+	// that pool" signal. Unpooled Green-GO types still never-NAK via the elastic
+	// GGO-OTHERS pool. Ordered last (profile.go precedence).
 	classes = append(classes, ClientClassConfig{
 		Name: ClassNameOthers,
 		Test: "not (" + ouiMatch + ")",

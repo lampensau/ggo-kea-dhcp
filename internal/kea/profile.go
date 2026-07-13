@@ -15,23 +15,18 @@ import (
 type ScopeInput struct {
 	VlanID int    // 0 = untagged on eth0; otherwise eth0.<vid>
 	CIDR   string // e.g. "10.0.0.0/23"
-	// PoolPlan is the authoritative ordered pool plan (the per-pool model), rendered
-	// via LayoutPools. The web layer always seeds one - a fresh scope from the
-	// configured default size, a legacy row from its stored counts - so it is
-	// required; RenderProfile rejects a scope with no plan.
+	// PoolPlan is the authoritative ordered pool plan, rendered via LayoutPools.
+	// Required: RenderProfile rejects a scope without one.
 	PoolPlan []PoolSpec
 	Uplink   bool // hand out the DERIVED gateway + DNS fallback when true
-	// Gateway/DNS are explicit per-scope overrides (routers / domain-name-servers).
-	// When set they win regardless of Uplink, so a wired-uplink or local-resolver
-	// scope can hand them out without enabling the WiFi uplink. Empty falls back to
-	// the Uplink-driven defaults (derived gateway, global DNS fallback).
+	// Gateway/DNS are explicit per-scope overrides (routers / domain-name-servers) and
+	// win regardless of Uplink, so a wired-uplink or local-resolver scope can hand them
+	// out without the WiFi uplink. Empty falls back to the Uplink-driven defaults.
 	Gateway string
 	DNS     string
-	// LocalDNS opts the scope into the appliance's own name service: clients get
-	// the box's per-scope address as domain-name-servers (the same derived .1
-	// self-reference as the uplink gateway; an explicit DNS override still wins)
-	// plus a domain-search listing both device suffixes, so a bare `ping <name>`
-	// resolves via either.
+	// LocalDNS opts the scope into the appliance's own name service: the box's per-scope
+	// address as domain-name-servers (an explicit DNS override still wins) plus a
+	// domain-search over both device suffixes, so a bare `ping <name>` resolves via either.
 	LocalDNS bool
 	// LeaseLifetime overrides the profile-global lease lifetime for this scope (0 =
 	// inherit). Options are extra DHCP options (NTP, domain-name, ...) for this scope.
@@ -39,25 +34,26 @@ type ScopeInput struct {
 	Options       []OptionKV
 }
 
-// defaultLeaseLifetime is the active-profile lease lifetime (seconds) used when none is
-// configured. A device only re-DHCPs at the renew timer (T1), and that renewal is when it
-// adopts a freshly-created host reservation OR migrates into its correct device-class pool
-// after a class/pool change (its old, now-disallowed lease is NAKed). ~30 min keeps that
-// window reasonable while giving devices a comfortable ride-through if Kea restarts and
-// staying gentle on the Pi's SD card; override via --lease-lifetime (e.g. 30 for testing).
-// (The transient onboarding config uses onboardingLeaseLifetime, not this.)
+// defaultLeaseLifetime is the active-profile lease lifetime (seconds) when none is
+// configured. ~30 min keeps the T1 change-latency (see leaseTimers) reasonable while still
+// letting devices ride through a Kea restart and staying gentle on the SD card; override
+// via --lease-lifetime. Onboarding uses onboardingLeaseLifetime instead.
 const defaultLeaseLifetime = 1800
 
 // onboardingLeaseLifetime is the SHORT lease (seconds) the transient onboarding config hands
-// out. After a setup-apply re-IPs the box into a new subnet, the operator's device drops its
-// old lease - and the now-stale default gateway it carried - within ~T1 (~45s) and re-DHCPs
-// into the new subnet, so the reconnect interstitial lands quickly instead of waiting out
-// Kea's 2h default (the cause of the lingering-gateway / slow-reconnect behaviour).
+// out. After a setup-apply re-IPs the box, the operator's device drops its old lease - and
+// the now-stale default gateway it carried - at T1 (~45s) and re-DHCPs into the new subnet,
+// so the reconnect interstitial lands quickly rather than waiting out Kea's 2h default (the
+// cause of the lingering-gateway / slow-reconnect behaviour).
 const onboardingLeaseLifetime = 90
 
 // leaseTimers derives (valid, renew, rebind) from a lease lifetime in seconds using the
 // conventional T1 = 1/2 and T2 = 7/8 of the lifetime. A non-positive lifetime falls back
 // to the default.
+//
+// T1, not the lifetime, is the latency of every change that only lands on renewal, because a
+// device re-DHCPs then: adopting a freshly-created host reservation, or migrating into its
+// correct device-class pool after a class/pool change (its old, now-disallowed lease is NAKed).
 func leaseTimers(lifetime int) (valid, renew, rebind int) {
 	if lifetime <= 0 {
 		lifetime = defaultLeaseLifetime
@@ -84,12 +80,11 @@ type ProfileRenderInput struct {
 	LeaseLifetime int
 	Debug         bool
 	// IfaceWildcard renders interfaces-config as ["*"] instead of the per-scope
-	// eth0/eth0.<vid> list. Used for the pre-commit kea-dhcp4 -t validation in
-	// beginApply: a VLAN scope's eth0.<vid> interface is only created later (in
-	// finishApply's reconcile), so validating the real per-interface config first would
-	// fail "interface doesn't exist". "*" validates the subnets/pools/options without
-	// requiring the interfaces; the authoritative per-interface validation runs in
-	// writeAndReloadKea after the interfaces are up.
+	// eth0/eth0.<vid> list, for the pre-commit kea-dhcp4 -t validation in beginApply: a
+	// VLAN scope's eth0.<vid> does not exist until finishApply's reconcile creates it, so
+	// validating the real list first would fail "interface doesn't exist". "*" checks the
+	// subnets/pools/options without them; writeAndReloadKea does the authoritative
+	// per-interface validation once they are up.
 	IfaceWildcard bool
 }
 
@@ -132,12 +127,6 @@ func hasOption(opts []OptionKV, name string) bool {
 	return false
 }
 
-// RenderProfile is the SINGLE render path for an active profile, used by both the
-// wizard apply and the boot/converge reconciler (previously duplicated in
-// handleSetupApply and SyncActiveProfileToKea). DNS + extra options come from a
-// per-scope override or the site-wide global defaults; the GATEWAY is the isolation-
-// critical one - per-scope override or the uplink-derived .1, never global - so an
-// isolated scope still advertises no default route (PRD D5/D8).
 // rankScopePools orders one scope's placements into Kea pools by client-class match
 // precedence and returns the generated client classes the caller must register (vendor
 // pools and the per-scope GGO-OTHERS get generated names). Kea picks the first pool
@@ -184,13 +173,17 @@ func rankScopePools(placements []PoolPlacement, plan []PoolSpec, idx int, pooled
 	return pools, classes
 }
 
+// RenderProfile is the SINGLE render path for an active profile, used by both the
+// wizard apply and the boot/converge reconciler. DNS and extra options come from a
+// per-scope override or the site-wide global defaults; the GATEWAY is the isolation-
+// critical one - per-scope override or the uplink-derived .1, never global - so an
+// isolated scope still advertises no default route (PRD D5/D8).
 func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, err error) {
 	var subnets []SubnetConfig
-	// Per-pool vendor classes generated from custom pools' OUIs (appended to the
-	// built-in Green-GO classes). One pool with OUIs → one Kea client-class whose
-	// test OR-matches those OUIs; the pool is guarded by it so only those devices
-	// land in it. Devices match by OUI, so order the vendor pool BEFORE the OTHERS
-	// catch-all if you want vendor devices to prefer it.
+	// Per-pool vendor classes generated from custom pools' OUIs, appended to the built-in
+	// Green-GO classes. One pool with OUIs yields one client-class OR-matching them, and
+	// guards that pool. Devices match by OUI, so a vendor pool must be ordered BEFORE the
+	// OTHERS catch-all for its devices to prefer it.
 	var vendorClasses []ClientClassConfig
 
 	for idx, sc := range in.Scopes {
@@ -215,10 +208,8 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 		if lerr != nil {
 			return "", nil, fmt.Errorf("scope %d (%s): %w", idx, sc.CIDR, lerr)
 		}
-		// The Green-GO device classes that have their OWN pool in THIS scope. The
-		// scope's GGO-OTHERS catch-all excludes exactly these (GGOOthersTest), so a
-		// classified device with a pool is never a member of - and so never sticks in -
-		// the catch-all pool; a recognized type WITHOUT a pool here still falls into it.
+		// The Green-GO device classes with their OWN pool in THIS scope: exactly the set
+		// the scope's catch-all excludes (see GGOOthersTest).
 		var pooledGGO []DeviceClass
 		for _, p := range placements {
 			if p.Kind == PoolReserve || p.Range == "" {
@@ -247,17 +238,14 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 			}
 		}
 
-		// Order this scope's placements into Kea pools by client-class match precedence,
-		// collecting the generated vendor / per-scope GGO-OTHERS classes to register.
 		pools, scopeClasses := rankScopePools(placements, sc.PoolPlan, idx, pooledGGO)
 		vendorClasses = append(vendorClasses, scopeClasses...)
 
 		// DNS + extra options: a per-scope explicit value wins, then the local-DNS
-		// self-reference (the box's own per-scope address, mirroring the uplink
-		// gateway's derived .1), then the site-wide global default. Gateway has no
-		// global default - an explicit per-scope override, else the uplink-derived
-		// .1, else nothing (the PRD-D5/D8 isolation rule: never advertise a dead
-		// default route).
+		// self-reference (the box's own per-scope address, mirroring the uplink gateway's
+		// derived .1), then the site-wide global default. Gateway has no global default -
+		// per-scope override, else the uplink-derived .1, else nothing (the PRD-D5/D8
+		// isolation rule: never advertise a dead default route).
 		dns := sc.DNS
 		switch {
 		case dns != "":
@@ -292,9 +280,8 @@ func RenderProfile(in ProfileRenderInput) (configStr string, ifaces []string, er
 	}
 
 	valid, renew, rebind := leaseTimers(in.LeaseLifetime)
-	// For pre-commit validation, listen on "*" so kea -t doesn't require the per-scope
-	// VLAN interfaces (created later by the reconcile). The returned ifaces stay the real
-	// per-scope list - the caller still uses them to set up the interfaces.
+	// Only the rendered list becomes "*" (see IfaceWildcard); the returned ifaces stay
+	// the real per-scope list, which the caller still uses to set the interfaces up.
 	renderIfaces := ifaces
 	if in.IfaceWildcard {
 		renderIfaces = []string{"*"}
@@ -360,10 +347,9 @@ func RenderOnboarding(in OnboardingInput) (configStr string, ifaces []string, er
 		subnets = []SubnetConfig{sub}
 	}
 
-	// Onboarding is intentionally memfile-only: no MariaDB fields are set, so
-	// RenderConfig omits the hosts-database and the MySQL hooks. eth0 DHCP must come
-	// up for the operator to reach the box, and that must not depend on MariaDB
-	// being ready/initialized (onboarding serves only dynamic leases anyway).
+	// Onboarding is intentionally memfile-only: with no MariaDB fields, RenderConfig omits
+	// the hosts-database and MySQL hooks. eth0 DHCP must come up for the operator to reach
+	// the box, and cannot depend on MariaDB being ready (only dynamic leases are served).
 	valid, renew, rebind := leaseTimers(onboardingLeaseLifetime)
 	data := TemplateData{
 		Interfaces:    ifaces,
@@ -412,11 +398,11 @@ func RenderHoldoff(in HoldoffInput) (string, error) {
 }
 
 // onboardingSubnet derives a dynamic onboarding subnet from a host CIDR
-// (e.g. "10.0.0.1/24") with a .100-.250 pool clamped to the subnet size. It hands out
-// NO default gateway or DNS: onboarding clients only need to reach the box on its own
-// (same-subnet) address, and advertising the box as gateway/DNS made connected PCs
-// route their internet through an uplink-less box and triggered the OS captive-portal
-// assistant (which then looped on the self-signed cert). See reconcileOnboarding.
+// (e.g. "10.0.0.1/24") with a .100-.250 pool clamped to the subnet size. It hands out NO
+// default gateway or DNS: clients only need the box's own same-subnet address, and
+// advertising the box as gateway/DNS made connected PCs route their internet through an
+// uplink-less box and tripped the OS captive-portal assistant (which then looped on the
+// self-signed cert). See reconcileOnboarding.
 func onboardingSubnet(id int, hostCIDR string) (SubnetConfig, error) {
 	ip, ipnet, err := net.ParseCIDR(hostCIDR)
 	if err != nil {
