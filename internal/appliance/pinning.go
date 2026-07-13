@@ -20,7 +20,7 @@ func BytesToPortIdentity(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	return ColonHex(b)
+	return colonHex(b)
 }
 
 // FetchPinnedPorts reads the Kea host reservations (flex-id pins) from MariaDB,

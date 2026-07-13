@@ -285,7 +285,7 @@ func (s *Server) remapOnMariaDBRecovery() {
 		}()
 		ctx, cancel := opCtx()
 		defer cancel()
-		s.remapReservationSubnets(ctx, scopes, ModeConverge)
+		s.recon.RemapReservationSubnets(ctx, scopes, ModeConverge)
 	}()
 }
 

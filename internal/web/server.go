@@ -217,23 +217,11 @@ func NewServer(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB) *Se
 	s.health = newBackendHealth()
 	s.bg = newBgRunner()
 	s.ggoFw = newFwCensus()
-	// Build the lifecycle reconciler from the shared control-plane handles, then wire
-	// its web-side edges - the ONLY way it reaches SSE, the DNS zone, backend-health
-	// and the update subsystem - and arm the boot-only zero-scopes rescue. A
-	// nil-tolerant edge fails silently if left unwired, so
-	// TestNewServerWiresReconcilerEdges asserts every one is set. The monitor starts
-	// are not edges: appliance.New requires them.
-	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, appliance.Monitors{
-		Netmon:  s.startNetmon,
-		Arp:     s.startArpProber,
-		GgoScan: s.startGgoScan,
-	})
-	s.recon.AnnounceUplink = func(down bool, detail string) {
-		s.health.setUplinkDown(down, detail)
-		s.publishBackendAlert()
-	}
-	s.recon.PrimeZone = s.primeDNSZone
-	s.recon.KickUpdate = s.kickUpdateCheck
+	// Build the lifecycle reconciler from the shared control-plane handles, hand it the
+	// serverHooks that are its only way back into SSE, the DNS zone, backend-health,
+	// the update subsystem and the monitors, and arm the boot-only zero-scopes rescue.
+	// The hooks are a required parameter, so a forgotten wire is a compile error.
+	s.recon = appliance.New(s.cfg, s.sqlite, s.mariadb, s.kea, s.dns, s.net, &s.mon, serverHooks{s})
 	s.recon.ArmRescue()
 	// Prime the last-seen tracker from SQLite so a restart doesn't lose history or
 	// re-write every row on the first sample.

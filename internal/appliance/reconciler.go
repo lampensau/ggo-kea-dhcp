@@ -80,23 +80,33 @@ var (
 // switch, or reconcile already holds the guard.
 const ReconcileBusyMsg = "A configuration change is already in progress - try again in a moment."
 
+// Hooks is the Reconciler's only path back to its caller, and so IS the package
+// boundary: nothing in here may import the web layer. New takes it as a required
+// parameter and reconcileActive/connectUplink call through it unguarded. A test that
+// wants no side effects passes an explicit no-op implementation and says so.
+type Hooks interface {
+	// AnnounceUplink records the uplink's up/down state in backend-health AND
+	// re-renders the always-on #backend-alert banner. One method, not two, because
+	// they are only ever right together: flipping the state without the push leaves
+	// a stale banner on the page the operator has open, and pushing without the
+	// state flip renders the old one.
+	AnnounceUplink(down bool, detail string)
+	// PrimeZone rebuilds the DNS device zone from the freshly-served leases.
+	PrimeZone()
+	// KickUpdate fires an out-of-band release check when the box gains uplink.
+	KickUpdate()
+	// The ACTIVE-only observer starts stay with the caller because their spec
+	// builders read its lease providers.
+	StartNetmon(scopes []ScopeConfig)
+	StartArpProber(scopes []ScopeConfig)
+	StartGgoScan(scopes []ScopeConfig)
+}
+
 // Reconciler owns the lifecycle state machine: it makes runtime network + Kea
 // state match the persisted lifecycle state and runs the apply/switch converges.
 // It holds only control-plane primitives (config, the two databases, the Kea
-// client, DNS, the network manager, the monitor set) plus the mutation guards; it
-// reaches its caller (uplink announce, DNS-zone prime, update checks, monitor starts)
-// ONLY through the func edges below. Those edges ARE the package boundary: nothing in
-// here may import the web layer.
-//
-// The edges come in two kinds. The caller sets the production-only side effects after
-// construction, and each of those is nil-tolerant: a nil edge is a no-op, so a converge
-// in a test never reaches SSE, the DNS zone or the update path. New requires the three
-// monitor starts, which are therefore never nil and are called unguarded - a hand-built
-// &Reconciler{} that skips New must not drive reconcileActive.
-//
-// All six are written once, before any converge runs, and read afterwards from the
-// background goroutines a converge spawns. They are NOT synchronized: assigning one on
-// a running appliance is a data race.
+// client, DNS, the network manager, the monitor set) plus the mutation guards, and
+// reaches its caller only through Hooks.
 type Reconciler struct {
 	cfg     *config.Config
 	sqlite  *db.SQLiteDB
@@ -105,6 +115,9 @@ type Reconciler struct {
 	dns     *dns.Server
 	net     *network.Manager
 	mon     *MonitorSet
+	// hooks is set once by New and read afterwards from the background goroutines a
+	// converge spawns. It is never rebound, so it needs no synchronization.
+	hooks Hooks
 
 	// applying guards against concurrent profile applies (a double-submit would
 	// otherwise race two reconciles against the live Kea conf).
@@ -119,50 +132,21 @@ type Reconciler struct {
 	// re-applied uplink logs exactly one row per real up/down transition (zero value
 	// = unknown, so the first connect attempt always audits its outcome).
 	uplink uplinkAudit
-
-	// --- caller-side edges (nil-tolerant), set after New; nil in a bare test Reconciler ---
-	// AnnounceUplink records the uplink's up/down state in backend-health AND
-	// re-renders the always-on #backend-alert banner. One edge, not two, because
-	// they are only ever right together: flipping the state without the push leaves
-	// a stale banner on the page the operator has open, and pushing without the
-	// state flip renders the old one.
-	AnnounceUplink func(down bool, detail string)
-	// PrimeZone rebuilds the DNS device zone from the freshly-served leases.
-	PrimeZone func()
-	// KickUpdate fires an out-of-band release check when the box gains uplink.
-	KickUpdate func()
-	// StartGgoScan/StartNetmon/StartArpProber start the ACTIVE observers; they stay
-	// with the caller because their spec builders read its lease providers. Unlike the
-	// edges above, New requires them (see Monitors), so they are never nil and their
-	// call sites do not guard.
-	StartGgoScan   func(scopes []ScopeConfig)
-	StartNetmon    func(scopes []ScopeConfig)
-	StartArpProber func(scopes []ScopeConfig)
 }
 
 // New builds the lifecycle Reconciler from the caller's shared control-plane handles.
-// The monitor starts are required and are called unguarded by reconcileActive; the
-// remaining edges - uplink announce, DNS-zone prime, update kick - are production-only
-// side effects the caller sets on the returned value, and every call site guards them,
-// so a bare test Reconciler leaves them nil and reaches no SSE hub, zone, or updater.
+//
+// hooks is a parameter rather than a field set afterwards, and has no default: an
+// implicit no-op default would restore exactly the failure this design removes - a
+// forgotten wire that leaves a silently inert appliance, with the compiler happy. A
+// test that wants no side effects passes a no-op implementation on purpose.
 //
 // The control-plane handles are ALIASED, not owned: the Reconciler reads whatever
 // kea/dns/... pointed at when it was built, for the process lifetime. Nothing in
 // production rebinds them, so there is one appliance and one guard. Code that does
 // rebind one must rebuild the Reconciler, or the two halves diverge - the converge
 // tests swap in an httptest Kea and re-call New for exactly that reason.
-// Monitors carries the three ACTIVE-only observer starts. A struct rather than three
-// positional func parameters of the same type: transposing two of those compiles clean
-// and silently starts the wrong observer against the wrong spec set (netmon twice, the
-// ARP prober never), and each start early-returns when its monitor is absent, so the
-// mistake never surfaces. Named fields make it a compile error.
-type Monitors struct {
-	Netmon  func(scopes []ScopeConfig)
-	Arp     func(scopes []ScopeConfig)
-	GgoScan func(scopes []ScopeConfig)
-}
-
-func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *kea.Client, dnsSrv *dns.Server, netMgr *network.Manager, mon *MonitorSet, starts Monitors) *Reconciler {
+func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *kea.Client, dnsSrv *dns.Server, netMgr *network.Manager, mon *MonitorSet, hooks Hooks) *Reconciler {
 	// Fail fast rather than degrade: a caller that builds the Reconciler before it has
 	// set one of these handles would otherwise drive a different appliance than the one
 	// it renders from, silently. mariadb is the one legitimate nil (a documented
@@ -180,21 +164,20 @@ func New(cfg *config.Config, sqlite *db.SQLiteDB, mariadb *db.MariaDB, keaCli *k
 		panic("appliance.New: nil network manager")
 	case mon == nil:
 		panic("appliance.New: nil monitor set")
-	case starts.Netmon == nil || starts.Arp == nil || starts.GgoScan == nil:
-		// reconcileActive calls these unguarded, on the strength of this check.
-		panic("appliance.New: nil monitor start")
+	case hooks == nil:
+		// Catches a literal nil only; a typed-nil pointer in an interface is not nil
+		// here and would panic at the first call instead. Loudly, either way.
+		panic("appliance.New: nil hooks")
 	}
 	return &Reconciler{
-		cfg:            cfg,
-		sqlite:         sqlite,
-		mariadb:        mariadb,
-		kea:            keaCli,
-		dns:            dnsSrv,
-		net:            netMgr,
-		mon:            mon,
-		StartGgoScan:   starts.GgoScan,
-		StartNetmon:    starts.Netmon,
-		StartArpProber: starts.Arp,
+		cfg:     cfg,
+		sqlite:  sqlite,
+		mariadb: mariadb,
+		kea:     keaCli,
+		dns:     dnsSrv,
+		net:     netMgr,
+		mon:     mon,
+		hooks:   hooks,
 	}
 }
 
@@ -594,9 +577,9 @@ func (r *Reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 	// ACTIVE: this is their sole Start site, reached once the served interfaces are up.
 	// Best-effort - both launch goroutines, never error, and so cannot affect the
 	// reconcile outcome (errs above), keeping the core apply path isolated.
-	r.StartNetmon(scopes)
-	r.StartArpProber(scopes)
-	r.StartGgoScan(scopes)
+	r.hooks.StartNetmon(scopes)
+	r.hooks.StartArpProber(scopes)
+	r.hooks.StartGgoScan(scopes)
 	// ACTIVE-only: the port-53 owner serves the device zones, one socket per served
 	// scope's own address (never wlan0) so each apex answer names the address that
 	// segment can reach. Best-effort like the monitors; the zone primes in the
@@ -621,9 +604,7 @@ func (r *Reconciler) reconcileActive(mode ReconcileMode, profileID int) error {
 		for _, ip := range r.dns.StartZone(bindIPs) {
 			_ = r.sqlite.LogAudit("SYSTEM", "DNS_BIND_FAILED", ip, "", "port 53 bind failed, retrying on the sampler tick", "WARNING")
 		}
-		if r.PrimeZone != nil {
-			go r.RunRecoveredAudited("dns-zone-prime", r.PrimeZone)
-		}
+		go r.RunRecoveredAudited("dns-zone-prime", r.hooks.PrimeZone)
 	}
 
 	return errors.Join(errs...)
@@ -674,9 +655,7 @@ func (r *Reconciler) connectUplink(ssid, pwd string) {
 		// Log): the connect runs in a background goroutine, so the Settings save that
 		// triggered it already returned "saved". The always-on #backend-alert banner
 		// carries nmcli's reason so "the SSID or password is wrong" reaches the UI.
-		if r.AnnounceUplink != nil {
-			r.AnnounceUplink(true, "Wi-Fi uplink: "+e.Error())
-		}
+		r.hooks.AnnounceUplink(true, "Wi-Fi uplink: "+e.Error())
 		return
 	}
 	if st, _ := r.sqlite.GetState(db.LifecycleStateKey); st != db.StateActive && st != db.StateConfiguring {
@@ -685,9 +664,7 @@ func (r *Reconciler) connectUplink(ssid, pwd string) {
 		// Deliberate teardown (not a failure), so it is not audited - but mark the link
 		// down so a genuine re-connect after the box returns to ACTIVE audits UPLINK_UP.
 		r.uplink.observe(false)
-		if r.AnnounceUplink != nil {
-			r.AnnounceUplink(false, "") // not a failure - clear any prior alert
-		}
+		r.hooks.AnnounceUplink(false, "") // not a failure - clear any prior alert
 		return
 	}
 	// Debounced: log UPLINK_UP only on an actual down->up (or first) transition, so a
@@ -697,12 +674,8 @@ func (r *Reconciler) connectUplink(ssid, pwd string) {
 	}
 	// The box just gained internet - the one moment a release check is worth
 	// kicking rather than waiting out the 30-min ticker.
-	if r.KickUpdate != nil {
-		r.KickUpdate()
-	}
-	if r.AnnounceUplink != nil {
-		r.AnnounceUplink(false, "") // connected - clear the banner
-	}
+	r.hooks.KickUpdate()
+	r.hooks.AnnounceUplink(false, "") // connected - clear the banner
 }
 
 // applyNAT enables masquerade + forwarding when any scope has an uplink, and

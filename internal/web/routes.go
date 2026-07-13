@@ -27,7 +27,7 @@ func (s *Server) Start() error {
 	// Run it in the background so the web UI binds immediately - network/SoftAP
 	// bring-up is slow, and an ACTIVE box must re-establish NM links, nft
 	// masquerade, and ip_forward (not just Kea) which the old boot path skipped.
-	go s.runRecoveredAudited("boot-reconcile", func() {
+	go s.recon.RunRecoveredAudited("boot-reconcile", func() {
 		// Hold the mutation guard for the boot reconcile, like every other reconcile
 		// path, so a fast operator apply/switch arriving the instant the listener binds
 		// cannot run a second reconcile concurrently over the same NM connections and

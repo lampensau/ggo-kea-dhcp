@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ggo-kea-dhcp/internal/appliance"
 	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 
@@ -17,7 +18,7 @@ import (
 // dynamic pool, which is exactly what Flat represents (its only other tab is Custom).
 func defaultSeedSize(preset string) string {
 	if preset == "greengo" {
-		return defaultSizePreset
+		return appliance.DefaultSizePreset
 	}
 	return "flat"
 }
@@ -55,7 +56,7 @@ func (s *Server) handleWizardPoolEdit(w http.ResponseWriter, r *http.Request) {
 		case "custom":
 			sc.Plan = parsePoolFields(r, poolPrefix, sc.CIDR)
 		default:
-			if c, ok := goSizePresets[v]; ok {
+			if c, ok := appliance.GoSizePresets[v]; ok {
 				sc.Counts = c
 			}
 			sc.Plan = seedPlan(sc)

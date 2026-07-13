@@ -1,9 +1,26 @@
 package web
 
-import (
-	"context"
-	"time"
-)
+import "time"
+
+// serverHooks is the Server's side of appliance.Hooks: the reconciler's only path
+// back into the web layer, and so the only place the SSE hub, the DNS zone, the
+// update subsystem and the monitors are reachable from a converge.
+type serverHooks struct{ s *Server }
+
+func (h serverHooks) AnnounceUplink(down bool, detail string) {
+	h.s.health.setUplinkDown(down, detail)
+	h.s.publishBackendAlert()
+}
+
+func (h serverHooks) PrimeZone() { h.s.primeDNSZone() }
+
+func (h serverHooks) KickUpdate() { h.s.kickUpdateCheck() }
+
+func (h serverHooks) StartNetmon(scopes []ScopeConfig) { h.s.startNetmon(scopes) }
+
+func (h serverHooks) StartArpProber(scopes []ScopeConfig) { h.s.startArpProber(scopes) }
+
+func (h serverHooks) StartGgoScan(scopes []ScopeConfig) { h.s.startGgoScan(scopes) }
 
 // Thin Server -> Reconciler forwarders. The lifecycle state machine lives in
 // internal/appliance; these keep the handler and background call sites that speak to
@@ -27,10 +44,6 @@ func (s *Server) ReconcileApplianceState(mode ReconcileMode, targetProfileID int
 
 func (s *Server) stopActiveMonitors() { s.recon.StopActiveMonitors() }
 
-func (s *Server) runRecoveredAudited(name string, fn func()) {
-	s.recon.RunRecoveredAudited(name, fn)
-}
-
 func (s *Server) runRecoveredReconcile(name string, fn func()) {
 	s.recon.RunRecoveredReconcile(name, fn)
 }
@@ -51,8 +64,4 @@ func (s *Server) dhcpStoodDown() bool { return s.recon.DHCPStoodDown() }
 
 func (s *Server) loadScopeConfigs(profileID int) ([]ScopeConfig, error) {
 	return s.recon.LoadScopeConfigs(profileID)
-}
-
-func (s *Server) remapReservationSubnets(ctx context.Context, scopes []ScopeConfig, mode ReconcileMode) {
-	s.recon.RemapReservationSubnets(ctx, scopes, mode)
 }

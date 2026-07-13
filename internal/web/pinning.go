@@ -99,14 +99,7 @@ func (s *Server) fetchPortLabels() (map[string]string, error) {
 	for rows.Next() {
 		var portID, lbl string
 		if rows.Scan(&portID, &lbl) == nil {
-			// Translate a legacy key on read: before the key became always-hex, a
-			// printable flex-id was stored as its own text, whose raw bytes are that
-			// ASCII (the old flexIDToBytes contract). Re-encoding on read keeps old
-			// labels attached to their ports without a migration.
-			if !appliance.IsColonHex(portID) {
-				portID = colonHex([]byte(portID))
-			}
-			labels[portID] = lbl
+			labels[appliance.CanonicalPortID(portID)] = lbl
 		}
 	}
 	return labels, rows.Err()
@@ -127,7 +120,7 @@ func mergePortRows(labels map[string]string, pinned map[string]db.HostReservatio
 	for portID, pin := range pinned {
 		// portID is bytesToPortIdentity(pin.Identifier); decode the same bytes back
 		// so the remote/circuit split matches the lease-derived rows.
-		id := portIdentFromFlex(flexIDToBytes(portID))
+		id := appliance.PortIdentFromFlex(flexIDToBytes(portID))
 		delim[portID] = id.Delimited
 		portRows[portID] = views.PortRow{
 			PortIdentity: portID,
