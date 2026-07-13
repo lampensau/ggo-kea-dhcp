@@ -26,8 +26,8 @@ type keaConfig struct {
 type dhcp4Config struct {
 	InterfacesConfig interfacesConfig `json:"interfaces-config"`
 	Authoritative    bool             `json:"authoritative"`
-	// Lease timers (seconds). Zero → omitted → Kea defaults (the transient onboarding
-	// config). The active profile sets them SHORT on purpose; see defaultLeaseLifetime.
+	// Lease timers (seconds). Zero → omitted → Kea defaults (the holdoff config).
+	// The active profile sets them SHORT on purpose; see defaultLeaseLifetime.
 	ValidLifetime              int             `json:"valid-lifetime,omitempty"`
 	RenewTimer                 int             `json:"renew-timer,omitempty"`
 	RebindTimer                int             `json:"rebind-timer,omitempty"`
@@ -177,8 +177,7 @@ type TemplateData struct {
 	KeaSecretPath string
 	ClientClasses []ClientClassConfig
 	Subnets       []SubnetConfig
-	// Lease timers (seconds); zero leaves them unset (onboarding).
-	// See leaseTimers.
+	// Lease timers (seconds); zero leaves them unset (holdoff). See leaseTimers.
 	ValidLifetime int
 	RenewTimer    int
 	RebindTimer   int
