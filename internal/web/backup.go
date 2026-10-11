@@ -294,6 +294,14 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 		return "", fmt.Errorf("backup was made by a newer version (schema %d > %d); upgrade this appliance before restoring", b.AppSchema, current)
 	}
 
+	// The users section replaces every admin, so a bundle with no account anyone can
+	// sign in with (none at all, or only malformed hashes - a hand-edited or damaged
+	// file; an exported one always carries one) would lock the box out for good: the
+	// documented recovery is re-imaging the SD card.
+	if sel["users"] && !hasUsableAdmin(b.Users) {
+		return "", fmt.Errorf("the backup has no usable administrator account, so restoring its administrators would lock everyone out - restore without the administrator section")
+	}
+
 	// Read the pre-restore lifecycle BEFORE opening the transaction: the SQLite pool is
 	// pinned to one connection, so a query through s.sqlite while the tx holds that
 	// connection would deadlock. Used as the return value when profiles aren't restored.
@@ -450,6 +458,17 @@ func (s *Server) restore(b *Backup, sel map[string]bool) (string, error) {
 	}
 
 	return lifecycle, nil
+}
+
+// hasUsableAdmin reports whether users holds at least one account that can sign in:
+// a non-blank username with a hash verifyPassword will derive from.
+func hasUsableAdmin(users []BackupUser) bool {
+	for _, u := range users {
+		if _, _, _, ok := parsePasswordHash(u.PasswordHash); ok && strings.TrimSpace(u.Username) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // restoreHosts converts the bundle's hosts rows for insert, slugifying each

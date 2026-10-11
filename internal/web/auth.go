@@ -103,25 +103,8 @@ func hashPassword(pw string) (string, error) {
 // length pinned, since both multiply PBKDF2 cost. A hash outside these bounds
 // is corrupt or hostile and fails closed like any other malformed hash.
 func verifyPassword(stored, pw string) bool {
-	parts := strings.Split(stored, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2" {
-		return false
-	}
-	iter, err := strconv.Atoi(parts[1])
-	if err != nil || iter <= 0 || iter > pbkdf2Iter*4 {
-		return false
-	}
-	// Pin both hex fields to the only sizes ever written BEFORE decoding, so a
-	// hostile stored string can't make us allocate and decode megabytes either.
-	if len(parts[2]) != 2*pbkdf2SaltLen || len(parts[3]) != 2*sha256.Size {
-		return false
-	}
-	salt, err := hex.DecodeString(parts[2])
-	if err != nil {
-		return false
-	}
-	want, err := hex.DecodeString(parts[3])
-	if err != nil {
+	iter, salt, want, ok := parsePasswordHash(stored)
+	if !ok {
 		return false
 	}
 	got, err := pbkdf2.Key(sha256.New, pw, salt, iter, len(want))
@@ -129,6 +112,32 @@ func verifyPassword(stored, pw string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// parsePasswordHash decodes a stored pbkdf2 hash under verifyPassword's bounds,
+// ok=false for any string it must not derive from. Also the restore gate's test for
+// "an account that can sign in" (hasUsableAdmin), so the two can never disagree.
+func parsePasswordHash(stored string) (iter int, salt, want []byte, ok bool) {
+	parts := strings.Split(stored, "$")
+	if len(parts) != 4 || parts[0] != "pbkdf2" {
+		return 0, nil, nil, false
+	}
+	iter, err := strconv.Atoi(parts[1])
+	if err != nil || iter <= 0 || iter > pbkdf2Iter*4 {
+		return 0, nil, nil, false
+	}
+	// Pin both hex fields to the only sizes ever written BEFORE decoding, so a
+	// hostile stored string can't make us allocate and decode megabytes either.
+	if len(parts[2]) != 2*pbkdf2SaltLen || len(parts[3]) != 2*sha256.Size {
+		return 0, nil, nil, false
+	}
+	if salt, err = hex.DecodeString(parts[2]); err != nil {
+		return 0, nil, nil, false
+	}
+	if want, err = hex.DecodeString(parts[3]); err != nil {
+		return 0, nil, nil, false
+	}
+	return iter, salt, want, true
 }
 
 // reauthCurrentPassword verifies the request's "current_password" field against the

@@ -11,7 +11,7 @@ import (
 // ggo_session must not outlive its account.
 func TestRestoreClearsSessions(t *testing.T) {
 	s, _ := newTestServer(t)
-	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin','h')"); err != nil {
+	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', ?)", dummyPasswordHash); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	if _, err := s.sqlite.Exec("INSERT INTO profiles (name, active) VALUES ('p', 1)"); err != nil {
