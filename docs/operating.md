@@ -39,7 +39,7 @@ From a lease row you can:
 
 Both changes normally take effect when the device next renews its lease, which can be minutes away. When the device is a Green-GO client that is online right now, the appliance follows the change with an offer to reboot it, so the released or reserved address takes effect immediately: the reboot makes the device re-request DHCP straight away, at the cost of a few seconds of dropped audio and comms while it restarts. The dialog names the device and its address; declining leaves the change to apply at the next renewal as before.
 
-Reserve a Client IP creates a reservation by hand for a device that is not on the network yet, and Import CSV adds reservations in bulk; imports are additive and never delete existing entries.
+Reserve a Client IP creates a reservation by hand for a device that is not on the network yet, and Import CSV adds reservations in bulk; imports are additive and never delete existing entries. Three addresses in each subnet are refused for reservations and pins alike, because no device may hold them: the network address, the broadcast address, and the appliance's own address (the first host address, e.g. 10.0.0.1 in 10.0.0.0/24). An import skips such rows and names them in its summary.
 
 > [!NOTE]
 > A device pinned to a switch port shows its pin on the Leases page but is managed on the Port Pinning page; its address follows the port, not the MAC.

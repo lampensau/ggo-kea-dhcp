@@ -268,10 +268,10 @@ func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
 	// The operator may have edited the IP in the dialog, so derive the subnet from
 	// the chosen address rather than trusting the learned lease's subnet. Reject an
 	// IP outside every configured scope - a pin into a nonexistent Kea subnet is
-	// never served (matches handleReservationAdd).
-	subnetID, ok := s.subnetIDForIP(ip)
-	if !ok {
-		s.handleError(w, r, "IP is not inside any configured scope", http.StatusBadRequest)
+	// never served - or one no device may hold (matches handleReservationAdd).
+	subnetID, err := s.reservationTarget()(ip)
+	if err != nil {
+		s.handleError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -44,7 +44,7 @@ func validateProfileName(name string) error {
 //     gateway - one whole segment never serves, with no error surfaced. VlanID 0 is
 //     "untagged on eth0"; only one scope may hold it, so this also enforces the
 //     single-untagged rule (the wizard's parse-time check is now a UI-facing backstop).
-//   - Overlapping CIDRs: subnetIDForIP/subnetMatcherForScopes key a subnet by the
+//   - Overlapping CIDRs: reservationTarget/SubnetMatcherForScopes key a subnet by the
 //     FIRST scope whose CIDR contains an IP, so an address inside an overlap is filed
 //     under the wrong subnet-id and its reservation is permanently dead.
 //

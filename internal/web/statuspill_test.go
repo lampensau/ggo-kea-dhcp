@@ -1,7 +1,6 @@
 package web
 
 import (
-	"net"
 	"testing"
 
 	"ggo-kea-dhcp/internal/web/views"
@@ -80,26 +79,6 @@ func TestPresenceByIP_NoProber(t *testing.T) {
 	}
 	if reachable == nil || len(reachable) != 0 {
 		t.Errorf("reachable should be an empty (non-nil) map, got %v", reachable)
-	}
-}
-
-// TestSubnetIDForIP maps an IP to the active profile's Kea subnet-id (scope
-// index + 1), and fails closed for an out-of-subnet address or no active profile.
-func TestSubnetIDForIP(t *testing.T) {
-	s, _ := newTestServer(t)
-
-	// No active profile: fail closed.
-	if _, ok := s.subnetIDForIP(net.ParseIP("10.0.0.5")); ok {
-		t.Fatal("subnetIDForIP should fail closed with no active profile")
-	}
-
-	seedScopePreset(t, s, "greengo") // 10.0.0.0/24, the only scope -> subnet-id 1
-
-	if id, ok := s.subnetIDForIP(net.ParseIP("10.0.0.5")); !ok || id != 1 {
-		t.Errorf("in-subnet IP -> (%d,%v), want (1,true)", id, ok)
-	}
-	if _, ok := s.subnetIDForIP(net.ParseIP("192.168.1.1")); ok {
-		t.Error("out-of-subnet IP should not match any subnet")
 	}
 }
 
