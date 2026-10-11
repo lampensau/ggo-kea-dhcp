@@ -102,6 +102,52 @@ func TestOnboardingSubnetBadInput(t *testing.T) {
 	}
 }
 
+// TestOnboardingSubnetCarvesHostOutOfPool pins that the appliance's own address is
+// never inside the onboarding pool: a host inside .100-.250 splits the pool around
+// it, and a host at either edge just trims that edge.
+func TestOnboardingSubnetCarvesHostOutOfPool(t *testing.T) {
+	cases := []struct {
+		host string
+		want []string
+	}{
+		{"10.0.0.1/24", []string{"10.0.0.100 - 10.0.0.250"}},
+		{"10.0.0.150/24", []string{"10.0.0.100 - 10.0.0.149", "10.0.0.151 - 10.0.0.250"}},
+		{"10.0.0.100/24", []string{"10.0.0.101 - 10.0.0.250"}},
+		{"10.0.0.250/24", []string{"10.0.0.100 - 10.0.0.249"}},
+		{"10.0.0.254/24", []string{"10.0.0.100 - 10.0.0.250"}},
+	}
+	for _, c := range cases {
+		sub, err := onboardingSubnet(1, c.host)
+		if err != nil {
+			t.Fatalf("onboardingSubnet(%q): %v", c.host, err)
+		}
+		var got []string
+		for _, p := range sub.Pools {
+			assertPoolRangeValid(t, sub.Subnet, p.Range)
+			got = append(got, p.Range)
+		}
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("onboardingSubnet(%q) pools = %v, want %v", c.host, got, c.want)
+		}
+	}
+}
+
+// TestValidateOnboardingCIDR covers the Settings-side rule: a usable host address in a
+// /30-or-larger subnet passes; a too-small prefix, the network or broadcast address,
+// and a /30 whose only pool address is the host itself are refused.
+func TestValidateOnboardingCIDR(t *testing.T) {
+	for _, ok := range []string{"10.0.0.1/24", "192.168.50.200/24", "10.0.0.1/30", "172.20.0.1/16"} {
+		if err := ValidateOnboardingCIDR(ok); err != nil {
+			t.Errorf("ValidateOnboardingCIDR(%q) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []string{"10.0.0.1", "10.0.0.1/32", "10.0.0.1/31", "10.0.0.0/24", "10.0.0.255/24", "10.0.0.2/30", "fe80::1/64"} {
+		if err := ValidateOnboardingCIDR(bad); err == nil {
+			t.Errorf("ValidateOnboardingCIDR(%q) = nil, want an error", bad)
+		}
+	}
+}
+
 // TestRenderOnboardingTooSmallPropagates proves RenderOnboarding surfaces the
 // onboardingSubnet too-small error rather than swallowing it (the eth path).
 func TestRenderOnboardingTooSmallPropagates(t *testing.T) {

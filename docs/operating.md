@@ -67,7 +67,7 @@ The status pill in the page header is the shortcut in: it shows the appliance st
 Settings collects the appliance-wide knobs:
 
 - **WiFi Uplink** - the upstream WiFi credentials used for internet routing
-- **Onboarding Network** - the management address and access point name/passphrase the box will use after its next factory reset, so recovery comes up the way you want
+- **Onboarding Network** - the management address and access point name/passphrase the box will use after its next factory reset, so recovery comes up the way you want. The address needs a /30 or larger subnet and must be a host address, not the network or broadcast address; anything else is refused on save. It may sit anywhere in the subnet: the onboarding pool (.100 - .250 in a /24) is split around it, so no laptop is ever handed the appliance's own address.
 - **DHCP Defaults** - the default lease lifetime and DNS servers handed to every scope; individual scopes can override them. Shorter leases make pool changes and reservations take effect sooner, at the cost of more renewal traffic.
 - **Backup and Restore** - see [Backup, restore and reset](backup-restore.md)
 - **Software Update** - when the WiFi uplink has internet access, the appliance checks for new releases on its own and offers them here (and as a notice in the footer), with the release notes readable inline; installing one requires your password and never happens automatically. See [Installation](install.md) for the details of both update paths.

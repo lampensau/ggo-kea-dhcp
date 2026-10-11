@@ -231,3 +231,32 @@ func TestSettingsSaveConfiguringNamesDroppedUplink(t *testing.T) {
 		}
 	})
 }
+
+// An onboarding address the renderer can't use - here a /32, which would leave the
+// next onboarding without DHCP on eth0 AND the SoftAP - is refused on save with the
+// renderer's own reason, and nothing is persisted.
+func TestSettingsSaveRejectsUnusableOnboardingIP(t *testing.T) {
+	s, _ := newTestServer(t)
+	if err := s.sqlite.SetState(db.LifecycleStateKey, db.StateActive); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	form := url.Values{"onboarding_ip": {"10.0.0.1/32"}}
+	req := httptest.NewRequest("POST", "/settings/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	s.handleSettingsSave(rr, req)
+
+	c := flashCookie(rr)
+	if c == nil {
+		t.Fatal("no flash cookie set")
+	}
+	req2 := httptest.NewRequest("GET", "/settings", nil)
+	req2.AddCookie(&http.Cookie{Name: "ggo_flash", Value: c.Value})
+	f := s.getFlash(httptest.NewRecorder(), req2)
+	if f == nil || f.Type != "error" || !strings.Contains(f.Message, "too small") {
+		t.Fatalf("flash = %+v, want an error naming the too-small prefix", f)
+	}
+	if got, _ := s.sqlite.GetState("onboarding_ip"); got != "" {
+		t.Errorf("refused save persisted onboarding_ip=%q", got)
+	}
+}

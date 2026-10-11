@@ -3,13 +3,13 @@ package web
 import (
 	"encoding/json"
 	"ggo-kea-dhcp/internal/appliance"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"ggo-kea-dhcp/internal/db"
+	"ggo-kea-dhcp/internal/kea"
 	"ggo-kea-dhcp/internal/web/views"
 )
 
@@ -71,9 +71,10 @@ func (s *Server) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// --- Onboarding management IP/CIDR ---
 	newCIDR := strings.TrimSpace(r.FormValue("onboarding_ip"))
 	if newCIDR != "" {
-		ip, _, err := net.ParseCIDR(newCIDR)
-		if err != nil || ip.To4() == nil {
-			s.handleError(w, r, "Onboarding IP must be a valid IPv4 CIDR (e.g. 10.0.0.1/24)", http.StatusBadRequest)
+		// The renderer's own rule, so a value that would leave onboarding without DHCP
+		// (or hand the box's address to a client) is refused here, not at the next reset.
+		if err := kea.ValidateOnboardingCIDR(newCIDR); err != nil {
+			s.handleError(w, r, "Settings not saved: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		updates["onboarding_ip"] = newCIDR
