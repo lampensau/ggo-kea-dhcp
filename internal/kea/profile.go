@@ -397,6 +397,15 @@ func RenderHoldoff(in HoldoffInput) (string, error) {
 	})
 }
 
+// ValidateOnboardingCIDR reports whether hostCIDR is usable as the onboarding
+// management address, by the same rule the onboarding render applies - so the
+// Settings form refuses what the renderer would otherwise fail on later, when the
+// box drops to onboarding and the bad value takes eth0 and SoftAP DHCP down with it.
+func ValidateOnboardingCIDR(hostCIDR string) error {
+	_, err := onboardingSubnet(0, hostCIDR)
+	return err
+}
+
 // onboardingSubnet derives a dynamic onboarding subnet from a host CIDR
 // (e.g. "10.0.0.1/24") with a .100-.250 pool clamped to the subnet size. It hands out NO
 // default gateway or DNS: clients only need the box's own same-subnet address, and
@@ -405,19 +414,19 @@ func RenderHoldoff(in HoldoffInput) (string, error) {
 // self-signed cert). See reconcileOnboarding.
 func onboardingSubnet(id int, hostCIDR string) (SubnetConfig, error) {
 	ip, ipnet, err := net.ParseCIDR(hostCIDR)
-	if err != nil {
-		return SubnetConfig{}, fmt.Errorf("invalid onboarding CIDR %q: %w", hostCIDR, err)
-	}
-	hostIP := ip.To4()
-	if hostIP == nil {
-		return SubnetConfig{}, fmt.Errorf("onboarding CIDR %q is not IPv4", hostCIDR)
+	if err != nil || ip.To4() == nil {
+		return SubnetConfig{}, fmt.Errorf("onboarding address %q must be an IPv4 address with a prefix length, e.g. 10.0.0.1/24", hostCIDR)
 	}
 	maskSize, _ := ipnet.Mask.Size()
 	totalIPs := 1 << (32 - maskSize)
 	// A /31 or /32 has no room for a usable pool (network + broadcast leave nothing),
 	// and the offset math below would invert to first>last (an invalid Kea range).
 	if totalIPs < 4 {
-		return SubnetConfig{}, fmt.Errorf("onboarding CIDR %q is too small for a DHCP pool (need /30 or larger)", hostCIDR)
+		return SubnetConfig{}, fmt.Errorf("onboarding address %q is too small a network for a DHCP pool - use /30 or larger, e.g. 10.0.0.1/24", hostCIDR)
+	}
+	hostOff := int(IPToUint32(ip) - IPToUint32(ipnet.IP))
+	if hostOff == 0 || hostOff == totalIPs-1 {
+		return SubnetConfig{}, fmt.Errorf("onboarding address %q is the network or broadcast address of its subnet - use a host address, e.g. 10.0.0.1/24", hostCIDR)
 	}
 
 	firstOff, lastOff := 100, 250
@@ -431,14 +440,23 @@ func onboardingSubnet(id int, hostCIDR string) (SubnetConfig, error) {
 		}
 	}
 
-	first := IncIP(ipnet.IP, firstOff).String()
-	last := IncIP(ipnet.IP, lastOff).String()
+	// Split the pool around the box's own address: a host inside the window (e.g.
+	// 10.0.0.150/24) would otherwise let Kea lease the appliance's address to a client.
+	var pools []PoolConfig
+	for _, w := range [][2]int{{firstOff, min(lastOff, hostOff-1)}, {max(firstOff, hostOff+1), lastOff}} {
+		if w[0] <= w[1] {
+			pools = append(pools, PoolConfig{Range: fmt.Sprintf("%s - %s", IncIP(ipnet.IP, w[0]), IncIP(ipnet.IP, w[1]))})
+		}
+	}
+	if len(pools) == 0 {
+		return SubnetConfig{}, fmt.Errorf("onboarding address %q leaves no room for a DHCP pool - use a larger subnet, e.g. 10.0.0.1/24", hostCIDR)
+	}
 
 	return SubnetConfig{
 		ID:     id,
 		Subnet: ipnet.String(),
 		// No Gateway/DNS on purpose - see the doc comment. The renderer omits the
 		// routers/domain-name-servers options when these are empty.
-		Pools: []PoolConfig{{Range: fmt.Sprintf("%s - %s", first, last)}},
+		Pools: pools,
 	}, nil
 }

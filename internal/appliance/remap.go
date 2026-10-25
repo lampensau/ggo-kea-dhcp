@@ -42,6 +42,47 @@ func SubnetMatcherForScopes(scopes []ScopeConfig) func(net.IP) (int, bool) {
 	}
 }
 
+// ReservationTargetForScopes is SubnetMatcherForScopes for a NEW host reservation or
+// port pin: it also refuses the addresses no device may hold (unreservableReason).
+// The error is operator-facing. Existing rows are remapped with the plain matcher.
+func ReservationTargetForScopes(scopes []ScopeConfig) func(net.IP) (int, error) {
+	match := SubnetMatcherForScopes(scopes)
+	return func(ip net.IP) (int, error) {
+		id, ok := match(ip)
+		if !ok {
+			return 0, fmt.Errorf("%s is not inside any configured subnet", ip)
+		}
+		if reason := unreservableReason(scopes[id-1].CIDR, ip); reason != "" {
+			return 0, fmt.Errorf("%s is %s - choose another address", ip, reason)
+		}
+		return id, nil
+	}
+}
+
+// unreservableReason names why ip must not be handed to a device in the subnet cidr
+// (which contains it), or "" when it may be. Pools never cover these (LayoutPools
+// spans network+2 .. broadcast-1), but a reservation bypasses the pools, so without
+// this a typo or a spreadsheet row could give a device network+1 - the address
+// reconcileActive assigns the appliance itself on every scope.
+func unreservableReason(cidr string, ip net.IP) string {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	ip4 := ip.To4()
+	if err != nil || ip4 == nil || ipnet.IP.To4() == nil {
+		return ""
+	}
+	network := kea.IPToUint32(ipnet.IP)
+	broadcast := network | ^kea.IPToUint32(net.IP(ipnet.Mask))
+	switch kea.IPToUint32(ip4) {
+	case network:
+		return "the subnet's network address"
+	case broadcast:
+		return "the subnet's broadcast address"
+	case network + 1:
+		return "the appliance's own address on this subnet"
+	}
+	return ""
+}
+
 // subnetRemap is one host row that should move to a new positional subnet-id.
 type subnetRemap struct {
 	row   db.HostReservation

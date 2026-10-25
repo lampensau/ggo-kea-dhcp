@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -13,12 +14,12 @@ import (
 // IP is dropped, and a blank hostname is filled from the (stubbed) scan inventory.
 func TestBuildImportReservations(t *testing.T) {
 	// subnetFor: accept only 10.0.0.0/24 (subnet id 1).
-	subnetFor := func(ip net.IP) (int, bool) {
+	subnetFor := func(ip net.IP) (int, error) {
 		_, n, _ := net.ParseCIDR("10.0.0.0/24")
 		if n.Contains(ip) {
-			return 1, true
+			return 1, nil
 		}
-		return 0, false
+		return 0, errors.New(ip.String() + " is not inside any configured subnet")
 	}
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
 	hostnameFor := func(mac string) string {
@@ -65,7 +66,7 @@ func TestBuildImportReservations(t *testing.T) {
 // reservation must be skipped with the conflict reason propagated verbatim, while a
 // non-conflicting row in the same file still imports.
 func TestBuildImportReservations_DBConflict(t *testing.T) {
-	subnetFor := func(net.IP) (int, bool) { return 1, true }
+	subnetFor := func(net.IP) (int, error) { return 1, nil }
 	// Conflict only for 10.0.0.11; the reason string must surface in problems.
 	conflictFn := func(_ int, _ uint32, ipStr string, _ []byte, _ string) (string, bool) {
 		if ipStr == "10.0.0.11" {
@@ -97,16 +98,16 @@ func TestBuildImportReservations_DBConflict(t *testing.T) {
 // subnet under the same MAC, so both must import; only a repeat in the SAME subnet is
 // a file duplicate.
 func TestBuildImportReservations_TrunkedMACAcrossSubnets(t *testing.T) {
-	subnetFor := func(ip net.IP) (int, bool) {
+	subnetFor := func(ip net.IP) (int, error) {
 		if v4 := ip.To4(); v4 != nil {
 			switch v4[2] {
 			case 0:
-				return 1, true // 10.0.0.x -> subnet 1
+				return 1, nil // 10.0.0.x -> subnet 1
 			case 1:
-				return 2, true // 10.0.1.x -> subnet 2
+				return 2, nil // 10.0.1.x -> subnet 2
 			}
 		}
-		return 0, false
+		return 0, errors.New("not inside any configured subnet")
 	}
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
 	hostnameFor := func(string) string { return "" }
@@ -130,7 +131,7 @@ func TestBuildImportReservations_TrunkedMACAcrossSubnets(t *testing.T) {
 }
 
 func TestBuildImportReservations_TooFewColumns(t *testing.T) {
-	subnetFor := func(net.IP) (int, bool) { return 1, true }
+	subnetFor := func(net.IP) (int, error) { return 1, nil }
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
 	records := [][]string{{"00:1f:80:00:00:01"}} // mac only, no ip
 	toInsert, _, skipped, problems := buildImportReservations(records, subnetFor, noConflict, func(string) string { return "" })
@@ -146,7 +147,7 @@ func TestBuildImportReservations_TooFewColumns(t *testing.T) {
 // even when a blank leading line pushes it off row 0 (so it isn't mis-flagged as an
 // invalid-MAC data row).
 func TestBuildImportReservations_HeaderAfterBlankLine(t *testing.T) {
-	subnetFor := func(net.IP) (int, bool) { return 1, true }
+	subnetFor := func(net.IP) (int, error) { return 1, nil }
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
 	records := [][]string{
 		{""},                                   // blank leading line
@@ -164,7 +165,7 @@ func TestBuildImportReservations_HeaderAfterBlankLine(t *testing.T) {
 // one) must not break the first MAC parse, and a MAC repeated within the file is
 // skipped (a plain ON DUPLICATE KEY insert would otherwise silently collapse the two).
 func TestBuildImportReservations_BOMAndDupMAC(t *testing.T) {
-	subnetFor := func(net.IP) (int, bool) { return 1, true }
+	subnetFor := func(net.IP) (int, error) { return 1, nil }
 	noConflict := func(int, uint32, string, []byte, string) (string, bool) { return "", false }
 	hostnameFor := func(string) string { return "" }
 

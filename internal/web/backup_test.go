@@ -31,7 +31,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	// Seed: an admin, an active profile + scope, a port label, ACTIVE lifecycle.
-	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin','hash-123')"); err != nil {
+	if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('admin', ?)", dummyPasswordHash); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	res, err := s.sqlite.Exec("INSERT INTO profiles (name, description, active) VALUES ('Show A','main',1)")
@@ -67,7 +67,7 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildBackup: %v", err)
 	}
-	if len(b.Users) != 1 || b.Users[0].Username != "admin" || b.Users[0].PasswordHash != "hash-123" {
+	if len(b.Users) != 1 || b.Users[0].Username != "admin" || b.Users[0].PasswordHash != dummyPasswordHash {
 		t.Fatalf("backup users wrong: %+v", b.Users)
 	}
 	if len(b.Profiles) != 1 || b.Profiles[0].Name != "Show A" || !b.Profiles[0].Active || len(b.Profiles[0].Scopes) != 1 {
@@ -116,8 +116,8 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	if err := s.sqlite.QueryRow("SELECT username, password_hash FROM users").Scan(&uname, &phash); err != nil {
 		t.Fatalf("read restored user: %v", err)
 	}
-	if uname != "admin" || phash != "hash-123" {
-		t.Errorf("restored user = %s/%s, want admin/hash-123", uname, phash)
+	if uname != "admin" || phash != dummyPasswordHash {
+		t.Errorf("restored user = %s/%s, want admin/%s", uname, phash, dummyPasswordHash)
 	}
 	var pname string
 	var active int
@@ -166,7 +166,7 @@ func TestSettingsRestoreRefusedWhileBusy(t *testing.T) {
 	_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&schema)
 	raw, _ := json.Marshal(&Backup{
 		Format: backupFormat, AppSchema: schema, Lifecycle: db.StateActive,
-		Users:    []BackupUser{{Username: "restored", PasswordHash: "hash"}},
+		Users:    []BackupUser{{Username: "restored", PasswordHash: dummyPasswordHash}},
 		Profiles: []BackupProfile{{Name: "Restored", Active: true}},
 	})
 	var body bytes.Buffer
@@ -315,5 +315,42 @@ func TestBackupExportRequiresReauth(t *testing.T) {
 	}
 	if len(b.Users) != 1 || b.Users[0].Username != "admin" {
 		t.Fatalf("bundle users = %+v, want the seeded admin", b.Users)
+	}
+}
+
+// TestRestoreRefusesBundleWithoutUsableAdmin: a users restore replaces every admin, so
+// a bundle with no account anyone can sign in with is refused before anything changes -
+// otherwise the box is locked out with no recovery short of re-imaging. A restore that
+// leaves the administrator section out is unaffected.
+func TestRestoreRefusesBundleWithoutUsableAdmin(t *testing.T) {
+	var schema int
+	for name, users := range map[string][]BackupUser{
+		"no users":            nil,
+		"malformed hash only": {{Username: "admin", PasswordHash: "hash"}},
+		"blank username only": {{Username: "  ", PasswordHash: dummyPasswordHash}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&schema)
+			if _, err := s.sqlite.Exec("INSERT INTO users (username, password_hash) VALUES ('keep', ?)", dummyPasswordHash); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+			b := &Backup{Format: backupFormat, AppSchema: schema, Lifecycle: db.StateActive, Users: users}
+
+			lifecycle, err := s.restore(b, allSel())
+			if lifecycle != "" || err == nil || !strings.Contains(err.Error(), "no usable administrator") {
+				t.Fatalf("restore = (%q, %v), want a hard refusal", lifecycle, err)
+			}
+			var n int
+			_ = s.sqlite.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'keep'").Scan(&n)
+			if n != 1 {
+				t.Errorf("refused restore touched the admin set (keep rows = %d)", n)
+			}
+
+			// Without the administrator section the same bundle restores fine.
+			if lifecycle, err := s.restore(b, map[string]bool{"port_labels": true}); lifecycle == "" || err != nil {
+				t.Errorf("labels-only restore = (%q, %v), want success", lifecycle, err)
+			}
+		})
 	}
 }

@@ -54,7 +54,7 @@ func validBundle(t *testing.T, s *Server, withUsers bool) []byte {
 	_ = s.sqlite.QueryRow("PRAGMA user_version;").Scan(&schema)
 	b := &Backup{Format: backupFormat, AppSchema: schema, Lifecycle: db.StateOnboarding}
 	if withUsers {
-		b.Users = []BackupUser{{Username: "restored", PasswordHash: "hash"}}
+		b.Users = []BackupUser{{Username: "restored", PasswordHash: dummyPasswordHash}}
 	}
 	raw, err := json.Marshal(b)
 	if err != nil {

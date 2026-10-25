@@ -242,3 +242,24 @@ func TestZeroScopesRescueConsumedByAnyBoot(t *testing.T) {
 		t.Fatalf("post-boot converge must not rescue: state = %q, want ACTIVE", st)
 	}
 }
+
+// TestOnboardingCIDRFallsBackWhenUnusable: onboarding is the recovery path, so a
+// stored management address the renderer can't use (a restored or legacy value)
+// yields the documented default instead of an eth0/SoftAP with no DHCP.
+func TestOnboardingCIDRFallsBackWhenUnusable(t *testing.T) {
+	r, _ := newTestReconciler(t)
+	for stored, want := range map[string]string{
+		"":               defaultOnboardingCIDR,
+		"192.168.7.1/24": "192.168.7.1/24",
+		"10.0.0.1/32":    defaultOnboardingCIDR,
+		"10.0.0.0/24":    defaultOnboardingCIDR,
+		"garbage":        defaultOnboardingCIDR,
+	} {
+		if err := r.sqlite.SetState("onboarding_ip", stored); err != nil {
+			t.Fatalf("seed onboarding_ip: %v", err)
+		}
+		if got := r.OnboardingCIDR(); got != want {
+			t.Errorf("stored %q -> OnboardingCIDR() = %q, want %q", stored, got, want)
+		}
+	}
+}

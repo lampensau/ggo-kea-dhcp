@@ -855,8 +855,16 @@ func (r *Reconciler) waitKeaReachable(ctx context.Context, attempts int, delay t
 
 // --- app_state-backed settings with defaults ---
 
+// OnboardingCIDR returns the stored onboarding management address, or the default
+// when none is stored or the stored one is unusable. Settings validates on save, but a
+// restored bundle or an older build can still carry a bad value, and onboarding is the
+// recovery path: it must come up on the documented default rather than on nothing.
 func (r *Reconciler) OnboardingCIDR() string {
 	if v, _ := r.sqlite.GetState("onboarding_ip"); v != "" {
+		if err := kea.ValidateOnboardingCIDR(v); err != nil {
+			log.Printf("[settings] stored onboarding_ip unusable, using %s: %v", defaultOnboardingCIDR, err)
+			return defaultOnboardingCIDR
+		}
 		return v
 	}
 	return defaultOnboardingCIDR

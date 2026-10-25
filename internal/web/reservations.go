@@ -53,41 +53,21 @@ func (s *Server) reservationConflict(ctx context.Context, subnetID int, ip uint3
 	return "", false
 }
 
-// subnetIDForIP maps an IPv4 to the active profile's Kea subnet-id, which the
-// renderer assigns as (scope index + 1) over loadScopeConfigs order (see
-// renderKeaForScopes / RenderProfile). Returns false when no configured scope's
-// CIDR contains the address - so a reservation can't be filed against a subnet that
-// does not exist.
-func (s *Server) subnetIDForIP(ip net.IP) (int, bool) {
-	var profileID int
-	if err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err != nil {
-		return 0, false
-	}
-	scopes, err := s.loadScopeConfigs(profileID)
-	if err != nil {
-		return 0, false
-	}
-	for i, sc := range scopes {
-		if _, ipnet, err := net.ParseCIDR(sc.CIDR); err == nil && ipnet.Contains(ip) {
-			return i + 1, true
-		}
-	}
-	return 0, false
-}
-
-// importSubnetMatcher resolves the active profile's scopes once and returns a
-// matcher with the same (scope index + 1) -> Kea subnet-id mapping as
-// subnetIDForIP, so a bulk import doesn't re-query + re-decode scopes per row.
-// On any error it returns a matcher that matches nothing (rows are then skipped
-// as "not in any configured subnet"), matching subnetIDForIP's fail-closed shape.
-func (s *Server) importSubnetMatcher() func(net.IP) (int, bool) {
+// reservationTarget resolves the active profile's scopes once and returns the
+// IP -> Kea subnet-id mapping (scope index + 1, the numbering RenderProfile assigns)
+// for a new reservation or pin. It refuses, with an operator-facing error, an IP
+// outside every configured scope - a reservation filed against a subnet that does not
+// exist is never served - and one no device may hold, such as the appliance's own
+// address (appliance.ReservationTargetForScopes). A bulk import reuses one matcher
+// across its rows. With no active profile (or a load error) every IP is refused.
+func (s *Server) reservationTarget() func(net.IP) (int, error) {
 	var profileID int
 	if err := s.sqlite.QueryRow("SELECT id FROM profiles WHERE active = 1 LIMIT 1").Scan(&profileID); err == nil {
 		if scopes, err := s.loadScopeConfigs(profileID); err == nil {
-			return appliance.SubnetMatcherForScopes(scopes)
+			return appliance.ReservationTargetForScopes(scopes)
 		}
 	}
-	return func(net.IP) (int, bool) { return 0, false }
+	return appliance.ReservationTargetForScopes(nil)
 }
 
 // evictForReservations frees the addresses involved in one or more freshly-created
@@ -215,9 +195,9 @@ func (s *Server) handleReservationAdd(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, "Enter a valid IPv4 address.", http.StatusBadRequest)
 		return
 	}
-	subnetID, ok := s.subnetIDForIP(ip)
-	if !ok {
-		s.handleError(w, r, ipStr+" is not inside any configured subnet.", http.StatusBadRequest)
+	subnetID, err := s.reservationTarget()(ip)
+	if err != nil {
+		s.handleError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	res := db.HostReservation{
@@ -316,10 +296,10 @@ func (s *Server) handleReservationImport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Resolve the active profile's scopes ONCE into a subnet matcher: subnetIDForIP
-	// re-queries the active profile and re-decodes every scope on each call, an N+1
-	// over the whole file.
-	subnetFor := s.importSubnetMatcher()
+	// Resolve the active profile's scopes ONCE into a subnet matcher rather than
+	// re-querying the active profile and re-decoding every scope per row (an N+1 over
+	// the whole file).
+	subnetFor := s.reservationTarget()
 
 	// Hold reservationMu across the whole conflict-check + insert of this batch, so it
 	// is mutually exclusive with a single add (or another import) checking the same IPs
@@ -393,13 +373,13 @@ type importOwner struct{ ip, mac string }
 
 // buildImportReservations is the pure CSV-row decision core of handleReservationImport,
 // split out so it is testable without a live Server/DB. It validates each row (MAC, IP,
-// subnet membership via subnetFor, conflict via conflictFn) the same way the single-add
-// path does, fills a blank hostname from hostnameFor, drops blank/header/half/duplicate
-// rows, and returns the reservations to insert, their owners, the skip count, and up to
-// five human-readable skip reasons. It mutates nothing.
+// subnet membership and reservability via subnetFor, conflict via conflictFn) the same
+// way the single-add path does, fills a blank hostname from hostnameFor, drops
+// blank/header/half/duplicate rows, and returns the reservations to insert, their
+// owners, the skip count, and up to five human-readable skip reasons. It mutates nothing.
 func buildImportReservations(
 	records [][]string,
-	subnetFor func(net.IP) (int, bool),
+	subnetFor func(net.IP) (int, error),
 	conflictFn func(subnetID int, ipU uint32, ipStr string, id []byte, mac string) (string, bool),
 	hostnameFor func(mac string) string,
 ) (toInsert []db.HostReservation, owners []importOwner, skipped int, problems []string) {
@@ -447,9 +427,9 @@ func buildImportReservations(
 			skip(i+1, ipStr+" duplicated in file")
 			continue
 		}
-		subnetID, ok := subnetFor(ip)
-		if !ok {
-			skip(i+1, ipStr+" not in any configured subnet")
+		subnetID, err := subnetFor(ip)
+		if err != nil {
+			skip(i+1, err.Error())
 			continue
 		}
 		// Dedupe on MAC+subnet, not MAC alone: a trunked device legitimately reserves

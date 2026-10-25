@@ -149,6 +149,24 @@ func TestSubnetMatcherForScopesBadCIDR(t *testing.T) {
 	}
 }
 
+// TestReservationTargetForScopes: a new reservation keeps the plain matcher's
+// positional ids but refuses the addresses no device may hold - in a non-/24 scope too,
+// so the bounds come from the prefix rather than a .0/.1/.255 assumption - while the
+// bad-CIDR slot still keeps its position.
+func TestReservationTargetForScopes(t *testing.T) {
+	target := ReservationTargetForScopes(remapScopes("not-a-cidr", "10.8.0.0/24", "172.16.0.0/22"))
+	for ip, want := range map[string]int{"10.8.0.50": 2, "172.16.1.0": 3, "172.16.2.255": 3, "172.16.3.254": 3} {
+		if id, err := target(net.ParseIP(ip)); err != nil || id != want {
+			t.Errorf("%s = (%d, %v), want (%d, nil)", ip, id, err, want)
+		}
+	}
+	for _, ip := range []string{"10.8.0.0", "10.8.0.1", "10.8.0.255", "172.16.0.0", "172.16.0.1", "172.16.3.255", "10.7.0.50"} {
+		if _, err := target(net.ParseIP(ip)); err == nil {
+			t.Errorf("%s accepted, want refused", ip)
+		}
+	}
+}
+
 // TestRemapReservationSubnetsNoMariaDB: the reconcile-time remap is a silent no-op
 // without the optional MariaDB backend.
 func TestRemapReservationSubnetsNoMariaDB(t *testing.T) {
